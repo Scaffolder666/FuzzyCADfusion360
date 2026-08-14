@@ -39,7 +39,7 @@
     els.count = document.getElementById("count");
   }
 
-  var GLYPH = { move: "⇄", rotate: "↻", extrude: "⤒", fillet: "◜" };
+  var GLYPH = { move: "⇄", rotate: "↻", scale: "⤢", extrude: "⤒", fillet: "◜" };
   var STATUS_LABEL = { needs_input: "Needs Input", answered: "Answered", rejected: "Rejected" };
 
   var editTimers = {};

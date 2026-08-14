@@ -30,19 +30,26 @@
     .tool:active { background: var(--bg); }
     .tool--soon { opacity: 0.45; cursor: default; }
     .tool--soon:hover { border-color: var(--line); }
+    .tool--primary { width: 92px; background: var(--navy); color: #fff; border-color: var(--navy); }
+    .tool--primary small { font-size: 11px; }
+    .tool--primary:hover { border-color: var(--navy); filter: brightness(1.1); }
   </style>
 </head>
 <body>
   <div class="bar">
     <div class="group">
-      <span class="group__label">Needs Input</span>
+      <span class="group__label">Needs Input · easy mode</span>
       <div class="group__row">
-        <button class="tool" data-tool="move"><span>⇄</span><small>Move</small></button>
-        <button class="tool" data-tool="rotate"><span>↻</span><small>Rotate</small></button>
+        <button class="tool tool--primary" data-tool="transform" title="Move / Rotate / Scale — grab a handle">
+          <span>✥</span><small>Transform</small></button>
+      </div>
+    </div>
+    <div class="sep"></div>
+    <div class="group">
+      <span class="group__label">Advanced</span>
+      <div class="group__row">
         <button class="tool" data-tool="extrude"><span>⤒</span><small>Extrude</small></button>
         <button class="tool" data-tool="fillet"><span>◜</span><small>Fillet</small></button>
-        <button class="tool tool--soon" title="coming soon"><span>⤢</span><small>Scale</small></button>
-        <button class="tool tool--soon" title="coming soon"><span>↔</span><small>Stretch</small></button>
       </div>
     </div>
     <div class="sep"></div>
@@ -50,12 +57,6 @@
       <span class="group__label">Mark</span>
       <div class="group__row">
         <button class="tool tool--soon" title="coming soon"><span>◈</span><small>Note</small></button>
-      </div>
-    </div>
-    <div class="sep"></div>
-    <div class="group">
-      <span class="group__label">Conflict</span>
-      <div class="group__row">
         <button class="tool tool--soon" title="coming soon"><span>丫</span><small>Conflict</small></button>
       </div>
     </div>
