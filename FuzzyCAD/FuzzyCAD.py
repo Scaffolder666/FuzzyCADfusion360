@@ -367,17 +367,17 @@ def _draw_move(group, mark, rgb, amp):
     m = _op_matrix(mark)
     for i, loop in enumerate(_geom[mark["id"]]["edges"]):
         _sketchy(group, _apply_matrix(loop, m), rgb, amp * 0.8,
-                 mark["id"] * 100 + i, weight=2, strokes=1)
+                 mark["id"] * 100 + i, weight=1, strokes=2)
     a = mark["anchor"]
     _sketchy(group, [tuple(a), (a[0] + v[0], a[1] + v[1], a[2] + v[2])],
-             rgb, amp, mark["id"] * 7, weight=3)
+             rgb, amp, mark["id"] * 7, weight=2)
 
 
 def _draw_rotate(group, mark, rgb, amp):
     m = _op_matrix(mark)
     for i, loop in enumerate(_geom[mark["id"]]["edges"]):
         _sketchy(group, _apply_matrix(loop, m), rgb, amp * 0.8,
-                 mark["id"] * 100 + i, weight=2, strokes=1)
+                 mark["id"] * 100 + i, weight=1, strokes=2)
     _draw_ring(group, mark["anchor"], _dominant_axis(mark["rot"]),
                mark.get("size", 3.0) * 0.62, COLOR_WARN, mark["id"])
 
@@ -386,16 +386,16 @@ def _draw_scale(group, mark, rgb, amp):
     f = mark["factor"]; a = mark["anchor"]
     for i, loop in enumerate(_geom[mark["id"]]["edges"]):
         _sketchy(group, _scale_pts(loop, a, f), rgb, amp * 0.8,
-                 mark["id"] * 100 + i, weight=2, strokes=1)
+                 mark["id"] * 100 + i, weight=1, strokes=2)
 
 
 def _draw_extrude(group, mark, rgb, amp):
     g = _geom[mark["id"]]; d = g["normal"]; amt = mark["amount"]
     for i, loop in enumerate(g["loops"]):
         off = _translate(loop, d, amt)
-        _sketchy(group, off, rgb, amp, mark["id"] * 100 + i)
-        _sketchy(group, [loop[0], off[0]], rgb, amp, mark["id"] * 200 + i, weight=2)
-        _sketchy(group, [loop[-1], off[-1]], rgb, amp, mark["id"] * 300 + i, weight=2)
+        _sketchy(group, off, rgb, amp, mark["id"] * 100 + i, weight=1, strokes=2)
+        _sketchy(group, [loop[0], off[0]], rgb, amp, mark["id"] * 200 + i, weight=1)
+        _sketchy(group, [loop[-1], off[-1]], rgb, amp, mark["id"] * 300 + i, weight=1)
 
 
 def _draw_fillet(group, mark, rgb, amp):
@@ -411,12 +411,12 @@ def _draw_fillet(group, mark, rgb, amp):
             pts.append((mu * mu * a[0] + 2 * mu * u * P[0] + u * u * b[0],
                         mu * mu * a[1] + 2 * mu * u * P[1] + u * u * b[1],
                         mu * mu * a[2] + 2 * mu * u * P[2] + u * u * b[2]))
-        _sketchy(group, pts, rgb, amp * 0.6, mark["id"] * 100 + i, weight=4)
+        _sketchy(group, pts, rgb, amp * 0.6, mark["id"] * 100 + i, weight=2)
     if not stations:
         # couldn't compute a rounded profile — at least highlight the edge
         edge = g.get("edge") or []
         if len(edge) >= 2:
-            _sketchy(group, edge, rgb, amp, mark["id"] * 99, weight=4, strokes=2)
+            _sketchy(group, edge, rgb, amp, mark["id"] * 99, weight=2, strokes=2)
 
 
 def _draw_note(group, mark, rgb, amp):
@@ -442,9 +442,9 @@ _DRAW = {"move": _draw_move, "rotate": _draw_rotate, "scale": _draw_scale,
 
 
 def _style(mark):
-    if mark.get("status") == "answered":
-        return COLOR_ANSWERED, mark.get("size", 3.0) * SKETCH_AMP_FRAC * 0.3
-    return COLOR_FUZZY, mark.get("size", 3.0) * SKETCH_AMP_FRAC
+    # Absolute jitter (~0.4mm), like the Onshape version's 0.38mm variance — NOT
+    # a fraction of the body size, which made big assemblies look wildly jittery.
+    return COLOR_FUZZY, 0.04
 
 
 def _camera_xy():
