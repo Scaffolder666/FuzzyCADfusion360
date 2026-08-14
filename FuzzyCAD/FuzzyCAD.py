@@ -288,7 +288,7 @@ def _dominant_axis(rot):
     return "XYZ"[idx] if abs(rot[idx]) > 1e-9 else "Z"
 
 
-def _draw_ring(group, anchor, axis, r, rgb, seed):
+def _draw_ring(group, anchor, axis, r, rgb, seed, weight=3):
     """A ring in the plane perpendicular to `axis` — the rotate manipulator cue."""
     ax = _axis_unit(axis)
     u = _plane_basis(axis)
@@ -301,7 +301,22 @@ def _draw_ring(group, anchor, axis, r, rgb, seed):
         pts.append((anchor[0] + r * (c * u[0] + s * w[0]),
                     anchor[1] + r * (c * u[1] + s * w[1]),
                     anchor[2] + r * (c * u[2] + s * w[2])))
-    _sketchy(group, pts, rgb, r * 0.02, seed * 77, weight=3, strokes=1)
+    _sketchy(group, pts, rgb, r * 0.02, seed * 77, weight=weight, strokes=1)
+
+
+AXIS_COLOR = {"X": (210, 60, 50), "Y": (70, 160, 90), "Z": (70, 110, 190)}
+AXIS_SEED = {"X": 11, "Y": 22, "Z": 33}
+
+
+def _draw_rotate_guides(group, anchor, size, active):
+    """Faint grabbable axis rings (X red, Y green, Z blue) shown on the body so
+    you can pick which one to turn about. The active axis is skipped here — the
+    ghost draws it as a bold red ring instead."""
+    r = size * 0.62
+    for axis in ("X", "Y", "Z"):
+        if axis == active:
+            continue
+        _draw_ring(group, anchor, axis, r, AXIS_COLOR[axis], AXIS_SEED[axis], weight=1)
 
 
 def _draw_move(group, mark, rgb, amp):
@@ -648,6 +663,12 @@ class FuzzyInputChanged(adsk.core.InputChangedEventHandler):
                     _pending = _build_pending(_active_tool, _sel_input.selection(0).entity)
                     if _pending:
                         _place_manipulator()
+                        if _active_tool == "rotate":
+                            # show the axis rings the moment a body is picked
+                            _clear(GROUP_PREVIEW)
+                            _draw_rotate_guides(_group(GROUP_PREVIEW),
+                                                _pending["anchor"], _pending["size"], None)
+                            _app.activeViewport.refresh()
         except Exception:
             if _ui:
                 _ui.messageBox("FuzzyCAD inputChanged failed:\n{}".format(
@@ -657,10 +678,15 @@ class FuzzyInputChanged(adsk.core.InputChangedEventHandler):
 class FuzzyPreview(adsk.core.CommandEventHandler):
     def notify(self, args):
         try:
-            mark = _sync_live_mark(_current_op())
             _clear(GROUP_PREVIEW)
+            group = _group(GROUP_PREVIEW)
+            op = _current_op()
+            if _active_tool == "rotate" and _pending:
+                active = _dominant_axis(op["rot"]) if op else None
+                _draw_rotate_guides(group, _pending["anchor"], _pending["size"], active)
+            mark = _sync_live_mark(op)
             if mark is not None:
-                _draw_one(_group(GROUP_PREVIEW), mark)
+                _draw_one(group, mark)
             _app.activeViewport.refresh()
             args.isValidResult = True
         except Exception:
