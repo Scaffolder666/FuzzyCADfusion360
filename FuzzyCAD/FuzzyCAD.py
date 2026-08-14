@@ -100,19 +100,42 @@ def _redraw_graphics():
         line.color = colored
         line.weight = 3
 
-        # --- label placed just above the cross ---
+        # --- label placed just above the cross, oriented to face the camera ---
         anchor = adsk.core.Point3D.create(x, y + s, z)
-        transform = adsk.core.Matrix3D.create()
-        transform.translation = adsk.core.Vector3D.create(anchor.x, anchor.y, anchor.z)
+        transform = _label_transform(anchor)
         text = group.addText(mark["label"], "Arial", 1.2, transform)
         text.color = colored
 
-        # Make the label always face the camera. The billboarding class lives in
-        # different places across Fusion builds, and some builds don't expose it
-        # at all, so probe for it and degrade gracefully to fixed-orientation text.
+        # If this Fusion build exposes true billboarding, add it so the label
+        # keeps facing the camera as you orbit. Otherwise the transform above
+        # already faces it from the current view.
         _apply_billboard(text, anchor)
 
     _app.activeViewport.refresh()
+
+
+def _label_transform(anchor):
+    """A placement matrix that stands the label up and faces it toward the
+    current camera. This is 'good from the view where you added it' even on
+    builds without the live billboarding API."""
+    transform = adsk.core.Matrix3D.create()
+    try:
+        camera = _app.activeViewport.camera
+        eye, target = camera.eye, camera.target
+        # local Z = toward the viewer
+        z = adsk.core.Vector3D.create(eye.x - target.x, eye.y - target.y, eye.z - target.z)
+        z.normalize()
+        up = camera.upVector.copy()
+        up.normalize()
+        # local X = up x z, then re-derive a clean local Y
+        x = up.crossProduct(z)
+        x.normalize()
+        y = z.crossProduct(x)
+        y.normalize()
+        transform.setWithCoordinateSystem(anchor, x, y, z)
+    except Exception:
+        transform.translation = adsk.core.Vector3D.create(anchor.x, anchor.y, anchor.z)
+    return transform
 
 
 def _apply_billboard(text, anchor):
