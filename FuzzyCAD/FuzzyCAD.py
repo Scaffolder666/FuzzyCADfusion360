@@ -5,9 +5,10 @@ replace the fillet preview/range path, guard transient live-mark teardown,
 commit accepted proposals in their own Fusion command transaction, add a live
 TEXT COMMANDS debug monitor, trace manipulator values through final apply, flag
 when a sidebar Accept targets a different proposal from the active handle, trace
-the native manipulator inputChanged/executePreview events directly, and keep the
+the native manipulator inputChanged/executePreview events directly, keep the
 Fillet candidate/card synchronized even when Fusion emits inputChanged without
-executePreview.
+executePreview, and unify Move/Rotate/Scale/Extrude candidate visualization with
+the Fillet visual language.
 """
 import importlib.util
 import os
@@ -41,6 +42,8 @@ _handle_events = _load("fuzzycad_handle_event_trace", "fuzzycad_handle_event_tra
 _handle_events.install(_legacy)
 _fillet_live = _load("fuzzycad_fillet_input_sync", "fuzzycad_fillet_input_sync.py")
 _fillet_live.install(_legacy)
+_visuals = _load("fuzzycad_unified_visuals", "fuzzycad_unified_visuals.py")
+_visuals.install(_legacy)
 
 run = _legacy.run
 stop = _legacy.stop
