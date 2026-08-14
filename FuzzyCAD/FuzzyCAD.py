@@ -1,7 +1,7 @@
 """FuzzyCAD entry point.
 
-The original implementation is kept in FuzzyCAD_legacy.py. The runtime patch
-replaces only the fillet preview/range path so it is easy to test or revert
+The original implementation is kept in FuzzyCAD_legacy.py. Runtime patches
+replace the fillet preview/range path and guard transient live-mark teardown
 without disturbing the rest of the add-in.
 """
 import importlib.util
@@ -22,6 +22,8 @@ def _load(name, filename):
 _legacy = _load("fuzzycad_legacy", "FuzzyCAD_legacy.py")
 _patch = _load("fuzzycad_real_fillet", "fuzzycad_real_fillet.py")
 _patch.install(_legacy)
+_guard = _load("fuzzycad_sync_guard", "fuzzycad_sync_guard.py")
+_guard.install(_legacy)
 
 run = _legacy.run
 stop = _legacy.stop
