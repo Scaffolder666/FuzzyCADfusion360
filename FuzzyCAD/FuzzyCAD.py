@@ -20,7 +20,8 @@ native handle, strengthen original/proposed visual contrast, persist open
 collaboration state inside the Fusion design for reopen/handoff workflows, render
 non-Fillet proposals as edge-only geometry, emphasize the actual rounded Fillet
 region, treat multi-body Move as one proposal group, expose procedural stage
-feedback in a left-side tool rail, and profile the main preview paths.
+feedback in a left-side tool rail, profile the main preview paths, clear stale
+runtime graphics before persistence rehydration, and keep sketch strokes light.
 """
 import importlib.util
 import os
@@ -76,6 +77,8 @@ _move_polish = _load("fuzzycad_move_scope_polish", "fuzzycad_move_scope_polish.p
 _move_polish.install(_legacy)
 _contrast = _load("fuzzycad_visual_contrast", "fuzzycad_visual_contrast.py")
 _contrast.install(_legacy)
+_hygiene = _load("fuzzycad_startup_hygiene", "fuzzycad_startup_hygiene.py")
+_hygiene.install(_legacy)
 _store = _load("fuzzycad_persistence", "fuzzycad_persistence.py")
 _store.install(_legacy)
 _outline = _load("fuzzycad_outline_only_candidates", "fuzzycad_outline_only_candidates.py")
@@ -88,6 +91,8 @@ _stages = _load("fuzzycad_stage_ui", "fuzzycad_stage_ui.py")
 _stages.install(_legacy)
 _perf = _load("fuzzycad_perf_trace", "fuzzycad_perf_trace.py")
 _perf.install(_legacy)
+_tuning = _load("fuzzycad_sketch_tuning", "fuzzycad_sketch_tuning.py")
+_tuning.install(_legacy)
 
 run = _legacy.run
 stop = _legacy.stop
