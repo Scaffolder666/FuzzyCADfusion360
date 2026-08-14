@@ -1,15 +1,15 @@
 """Hover animation for Move proposal cards.
 
-A Move proposal already has a static destination candidate from
-fuzzycad_unified_visuals.  When the user hovers its sidebar card, this patch
-adds a second CustomGraphics BRep body that repeatedly travels from the original
-position to the proposed position.  The sidebar supplies throttled frame values;
-all Fusion API work stays inside palette callbacks on Fusion's main thread.
+The animation is intentionally cheap: build the primary/related BRep graphics
+once when hover starts, then animate the CustomGraphicsGroup transform.  Fusion
+therefore receives one transform update per frame even when a Together proposal
+contains several bodies.
 """
 
 HOVER_GROUP = "FuzzyCAD_HoverAnimation"
 CANDIDATE_RGB = (190, 190, 186)
-ANIM_OPACITY = 0.46
+PRIMARY_OPACITY = 0.46
+RELATED_OPACITY = 0.36
 
 
 def install(m):
@@ -20,7 +20,8 @@ def install(m):
 
     state = {
         "mid": None,
-        "graphic": None,
+        "group": None,
+        "body_count": 0,
         "frame": 0,
     }
 
@@ -51,10 +52,11 @@ def install(m):
             pass
 
     def stop_animation(refresh_view=True):
-        had_animation = state["mid"] is not None or state["graphic"] is not None
+        had_animation = state["mid"] is not None or state["group"] is not None
         clear_group()
         state["mid"] = None
-        state["graphic"] = None
+        state["group"] = None
+        state["body_count"] = 0
         state["frame"] = 0
         if had_animation:
             log("MOVE HOVER END")
@@ -71,6 +73,33 @@ def install(m):
         )
         return mat
 
+    def valid_body(body):
+        if body is None:
+            return False
+        try:
+            return bool(body.isValid)
+        except Exception:
+            return True
+
+    def animation_bodies(mark, primary):
+        bodies = [primary]
+        if mark.get("move_scope") == "together":
+            bodies.extend(mark.get("related_bodies") or [])
+        out = []
+        seen = set()
+        for body in bodies:
+            if not valid_body(body):
+                continue
+            try:
+                key = body.entityToken
+            except Exception:
+                key = str(id(body))
+            if key in seen:
+                continue
+            seen.add(key)
+            out.append(body)
+        return out
+
     def start_animation(mid):
         try:
             mid = int(mid)
@@ -82,37 +111,41 @@ def install(m):
             stop_animation()
             return
 
-        body = m._body.get(mid)
-        if body is None:
+        primary = m._body.get(mid)
+        if not valid_body(primary):
             stop_animation()
             return
-        try:
-            if not body.isValid:
-                stop_animation()
-                return
-        except Exception:
-            pass
 
         stop_animation(refresh_view=False)
         group = m._group(HOVER_GROUP)
         if group is None:
             return
 
+        bodies = animation_bodies(mark, primary)
+        if not bodies:
+            return
+
         try:
-            graphic = group.addBRepBody(body)
-            graphic.color = m._solid(CANDIDATE_RGB)
-            graphic.setOpacity(ANIM_OPACITY, True)
-            graphic.transform = move_matrix(mark, 0.0)
+            effect = m._solid(CANDIDATE_RGB)
+            for i, body in enumerate(bodies):
+                cg = group.addBRepBody(body)
+                cg.color = effect
+                cg.setOpacity(PRIMARY_OPACITY if i == 0 else RELATED_OPACITY, True)
+            # All bodies share one group transform. This is substantially cheaper
+            # than rebuilding or moving each BRep graphic every animation frame.
+            group.transform = move_matrix(mark, 0.0)
         except Exception as exc:
             clear_group()
             log("MOVE HOVER START failed mark={}: {}".format(mid, exc))
             return
 
         state["mid"] = mid
-        state["graphic"] = graphic
+        state["group"] = group
+        state["body_count"] = len(bodies)
         state["frame"] = 0
         vec_mm = [round(float(v) * 10.0, 3) for v in (mark.get("vec") or [0, 0, 0])]
-        log("MOVE HOVER START mark={} target_mm={}".format(mid, vec_mm))
+        log("MOVE HOVER START mark={} target_mm={} bodies={} scope={}".format(
+            mid, vec_mm, len(bodies), mark.get("move_scope", "only")))
         refresh()
 
     def animation_frame(mid, t):
@@ -122,7 +155,7 @@ def install(m):
         except Exception:
             return
 
-        if state["mid"] != mid or state["graphic"] is None:
+        if state["mid"] != mid or state["group"] is None:
             return
 
         mark = m._find(mid)
@@ -131,11 +164,11 @@ def install(m):
             return
 
         try:
-            state["graphic"].transform = move_matrix(mark, t)
+            state["group"].transform = move_matrix(mark, t)
             state["frame"] += 1
-            # Keep logging useful without flooding TEXT COMMANDS at every tick.
             if state["frame"] == 1 or state["frame"] % 10 == 0:
-                log("MOVE HOVER FRAME mark={} t={:.3f}".format(mid, t))
+                log("MOVE HOVER FRAME mark={} t={:.3f} bodies={}".format(
+                    mid, t, state["body_count"]))
             refresh()
         except Exception as exc:
             log("MOVE HOVER FRAME failed mark={}: {}".format(mid, exc))
@@ -168,8 +201,6 @@ def install(m):
                     stop_animation()
                 return
 
-            # Any operation that can resolve/change the active proposal should
-            # remove the transient animation immediately.
             if action in ("accept", "reject", "tool"):
                 stop_animation()
 
@@ -180,7 +211,7 @@ def install(m):
     def run(context):
         result = old_run(context)
         clear_group()
-        log("MOVE HOVER ANIMATION READY: hover a Move card")
+        log("MOVE HOVER ANIMATION READY: one group transform for Selected + Together bodies")
         return result
 
     def stop(context):
