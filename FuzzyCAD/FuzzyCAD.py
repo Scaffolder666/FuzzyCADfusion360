@@ -418,10 +418,26 @@ def _draw_fillet(group, mark, rgb, amp):
                         mu * mu * a[2] + 2 * mu * u * P[2] + u * u * b[2]))
         _sketchy(group, pts, rgb, amp * 0.6, mark["id"] * 100 + i, weight=2)
     if not stations:
-        # couldn't compute a rounded profile — at least highlight the edge
+        # no rolling-ball profile available (curved edge) — approximate: the edge
+        # plus two offset curves whose spread grows with the radius, so the ghost
+        # visibly changes as you drag/edit r.
         edge = g.get("edge") or []
         if len(edge) >= 2:
-            _sketchy(group, edge, rgb, amp, mark["id"] * 99, weight=2, strokes=2)
+            n = len(edge)
+            off1, off2 = [], []
+            for i in range(n):
+                a2 = edge[min(i + 1, n - 1)]
+                b2 = edge[max(i - 1, 0)]
+                px, py = (a2[1] - b2[1]), -(a2[0] - b2[0])   # perp to tangent, in XY
+                pl = math.hypot(px, py)
+                if pl < 1e-9:
+                    px, py, pl = 1.0, 0.0, 1.0
+                px, py = px / pl, py / pl
+                off1.append((edge[i][0] + px * r, edge[i][1] + py * r, edge[i][2]))
+                off2.append((edge[i][0] - px * r, edge[i][1] - py * r, edge[i][2]))
+            _sketchy(group, edge, rgb, amp, mark["id"] * 99, weight=1, strokes=1)
+            _sketchy(group, off1, rgb, amp, mark["id"] * 98, weight=2, strokes=2)
+            _sketchy(group, off2, rgb, amp, mark["id"] * 97, weight=2, strokes=2)
 
 
 def _draw_note(group, mark, rgb, amp):
@@ -891,6 +907,7 @@ class FuzzyPreview(adsk.core.CommandEventHandler):
                     if mark is not None:
                         _draw_one(group, mark)
                 _refresh_ghost()   # fade the original live while dragging
+                _send_state()      # keep the right-panel card in sync with the drag
             # NOTE: do NOT call activeViewport.refresh() here — forcing a refresh
             # mid-drag releases the manipulator, so the drag only worked once.
             # Fusion refreshes custom graphics after executePreview on its own.
