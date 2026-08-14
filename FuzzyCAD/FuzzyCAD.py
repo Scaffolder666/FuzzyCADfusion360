@@ -17,8 +17,9 @@ directional scale one-sided by default, prototype relationship-aware Move scope,
 render interaction choices in FuzzyCAD's own HTML UI instead of Fusion's native
 option controls, keep related-part Move previews synchronized directly from the
 native handle, strengthen original/proposed visual contrast, persist open
-collaboration state inside the Fusion design for reopen/handoff workflows, and
-render non-Fillet proposed bodies as transparent outline-only geometry.
+collaboration state inside the Fusion design for reopen/handoff workflows, render
+non-Fillet proposed bodies as transparent outline-only geometry, and emphasize
+the actual rounded Fillet region with an orange surface/boundary highlight.
 """
 import importlib.util
 import os
@@ -78,6 +79,8 @@ _store = _load("fuzzycad_persistence", "fuzzycad_persistence.py")
 _store.install(_legacy)
 _outline = _load("fuzzycad_outline_only_candidates", "fuzzycad_outline_only_candidates.py")
 _outline.install(_legacy)
+_fillet_color = _load("fuzzycad_fillet_highlight", "fuzzycad_fillet_highlight.py")
+_fillet_color.install(_legacy)
 
 run = _legacy.run
 stop = _legacy.stop
