@@ -38,11 +38,13 @@
     <div class="group">
       <span class="group__label">Need Input</span>
       <div class="group__row">
-        <button class="tool tool--wide" data-tool="transform" title="Move and XYZ Rotate">
+        <button class="tool tool--wide" data-tool="transform" title="Select a body, then drag Move or Rotate handles">
           <span>✥</span><small>Move / Rotate</small></button>
-        <button class="tool" data-tool="scale" title="Uniform scale or scale along X, Y, or Z">
-          <span>⤢</span><small>Scale</small></button>
-        <button class="tool tool--wide" data-tool="axis_rotate" title="Rotate around an axis inferred from a circular edge">
+        <button class="tool" data-tool="scale" title="Select a body, then drag one corner handle to scale the whole body">
+          <span>⤢</span><small>Scale All</small></button>
+        <button class="tool tool--wide" data-tool="directional_scale" title="Select a body, then drag X, Y, or Z to scale only that axis">
+          <span>⇥</span><small>Scale X/Y/Z</small></button>
+        <button class="tool tool--wide" data-tool="axis_rotate" title="Select the body first; FuzzyCAD automatically advances to selecting a circular edge as the axis">
           <span>↻</span><small>Axis Rotate</small></button>
         <button class="tool" data-tool="extrude"><span>⤒</span><small>Extrude</small></button>
         <button class="tool" data-tool="fillet"><span>◜</span><small>Fillet</small></button>
