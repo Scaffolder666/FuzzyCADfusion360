@@ -47,7 +47,7 @@ CMD_ID = {c: "FuzzyCAD_" + c.capitalize() for c in COMMANDS}
 CMD_ID["note"] = "FuzzyCAD_Note"
 CMD_LABEL = {"transform": "Transform", "extrude": "Fuzzy Extrude",
              "fillet": "Fuzzy Fillet", "note": "Note"}
-CMD_FILTER = {"transform": "SolidBodies", "extrude": "PlanarFaces", "fillet": "Edges"}
+CMD_FILTER = {"transform": "SolidBodies", "extrude": "Faces", "fillet": "Edges"}
 CMD_HINT = {"transform": "Select a body, then grab a move / rotate / scale handle.",
             "extrude": "Select a planar face, then drag it out.",
             "fillet": "Select an edge, then drag the radius."}
@@ -674,6 +674,26 @@ def _make_mark(tool, op):
     return mark
 
 
+def _seed_single(cat, amount):
+    """Create an extrude/fillet mark immediately with a default amount, so a
+    ghost shows on select even if the drag manipulator is unresponsive on this
+    build. The card's numeric field can then adjust it reliably."""
+    global _next_id
+    if _live.get(cat) is not None:
+        _find(_live[cat])["amount"] = amount
+        return
+    mid = _next_id
+    _next_id += 1
+    mark = _make_mark(cat, {"amount": amount})
+    mark["id"] = mid
+    _geom[mid] = _pending["geom"]
+    _entity[mid] = _pending["entity"]
+    _body[mid] = _pending["body"]
+    _marks.append(mark)
+    _live[cat] = mid
+    _send_state()
+
+
 def _sync_category(cat):
     """Create-or-update the live mark for a category as its handle is dragged."""
     global _next_id
@@ -770,7 +790,15 @@ class FuzzyInputChanged(adsk.core.InputChangedEventHandler):
             _pending = None
             if sel.selectionCount > 0:
                 _pending = _build_pending(_active_cmd, sel.selection(0).entity)
-                if _pending and _body_locked(_pending["body"]):
+                if _pending is None:
+                    _ui.messageBox("FuzzyCAD: can't use that selection for '{}'.\n{}".format(
+                        _active_cmd, CMD_HINT[_active_cmd]))
+                    try:
+                        sel.clearSelection()
+                    except Exception:
+                        pass
+                    return
+                if _body_locked(_pending["body"]):
                     _ui.messageBox("This object already has an open question — "
                                    "resolve it in the panel first.")
                     _pending = None
@@ -790,13 +818,14 @@ class FuzzyInputChanged(adsk.core.InputChangedEventHandler):
                     # you pick — the manipulator or the card can refine it. (Their
                     # drag can be finicky; this guarantees the tool 'works'.)
                     if _active_cmd in ("extrude", "fillet"):
+                        default = _pending["size"] * (0.2 if _active_cmd == "extrude" else 0.08)
                         it = _inputs.itemById("d")
-                        if it is not None and abs(it.value) < 1e-9:
+                        if it is not None:
                             try:
-                                it.value = _pending["size"] * (0.2 if _active_cmd == "extrude" else 0.08)
+                                it.value = default
                             except Exception:
                                 pass
-                        _sync_category(_active_cmd)
+                        _seed_single(_active_cmd, default)
                         mid = _live.get(_active_cmd)
                         if mid is not None:
                             _clear(GROUP_PREVIEW)
@@ -820,7 +849,15 @@ class FuzzyPreview(adsk.core.CommandEventHandler):
                     active = None if _is_default("rotate", rop) else _dominant_axis(rop["rot"])
                     _draw_rotate_guides(group, _pending["anchor"], _pending["size"], active)
                 for cat in cats:
-                    mark = _sync_category(cat)
+                    if cat in ("extrude", "fillet"):
+                        # only let a real drag change the seeded amount; if the
+                        # manipulator is unresponsive (value stays 0), keep the seed
+                        if abs(_val("d")) > 1e-6:
+                            _sync_category(cat)
+                        mid = _live.get(cat)
+                        mark = _find(mid) if mid is not None else None
+                    else:
+                        mark = _sync_category(cat)
                     if mark is not None:
                         _draw_one(group, mark)
             _app.activeViewport.refresh()
