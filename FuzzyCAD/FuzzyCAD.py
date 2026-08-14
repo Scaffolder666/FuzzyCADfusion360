@@ -67,7 +67,7 @@ MTYPE_LABEL = {"need_input": "Need Input", "constraint": "Constraint",
 MTYPE_COLOR = {"need_input": (200, 44, 32), "constraint": (183, 121, 31),
                "alternative": (128, 90, 180)}
 MTYPE_GLYPH = {"need_input": u"!", "constraint": u"‖", "alternative": u"⑂"}
-GHOST_OPACITY = 0.30
+GHOST_OPACITY = 0.16
 SKETCH_AMP_FRAC = 0.013
 EDGE_SAMPLES = 10
 
@@ -87,6 +87,7 @@ _live = {}          # category -> live mark id for the current drag session
 _ghosted = {}       # token -> body (faded originals to restore)
 _easy_mode = True   # FuzzyCAD is always continuous; use native Fusion for non-easy
 _note_inputs = None
+_note_live_id = None
 LAUNCH_EVENT_ID = "FuzzyCADLaunch"
 
 
@@ -445,28 +446,26 @@ def _camera_xy():
 
 
 def _draw_badge(group, mark):
-    """A refined, hand-drawn uncertainty badge floating over the object: a
-    sketchy ring in the camera plane with the mark-type glyph inside, coloured
-    by type (Need Input / Constraint / Alternative)."""
+    """A CRISP (not hand-drawn) uncertainty badge sitting on the ghost: a clean
+    warning triangle with a clear glyph inside, coloured by mark type."""
     mtype = mark.get("mtype", "need_input")
     rgb = MTYPE_COLOR.get(mtype, COLOR_WARN)
     a = mark["anchor"]; s = mark.get("size", 3.0)
     (xx, xy, xz), (yx, yy, yz) = _camera_xy()
-    lift = s * 1.35
+    lift = s * 0.95
     center = (a[0] + yx * lift, a[1] + yy * lift, a[2] + yz * lift)
-    r = s * 0.34
-    # hand-drawn ring in the camera plane
-    steps = 30
-    ring = []
-    for i in range(steps + 1):
-        t = 2 * math.pi * i / steps
-        c, sn = math.cos(t), math.sin(t)
-        ring.append((center[0] + r * (c * xx + sn * yx),
-                     center[1] + r * (c * xy + sn * yy),
-                     center[2] + r * (c * xz + sn * yz)))
-    _sketchy(group, ring, rgb, r * 0.07, mark["id"] * 555, weight=3, strokes=2)
-    # the glyph, always facing the camera
-    cp = adsk.core.Point3D.create(*center)
+    r = s * 0.42
+
+    def P(ux, uy):  # a point in the camera plane offset by (ux,uy)*r from center
+        return (center[0] + r * (ux * xx + uy * yx),
+                center[1] + r * (ux * xy + uy * yy),
+                center[2] + r * (ux * xz + uy * yz))
+
+    # clean, closed warning triangle (amp=0 -> straight crisp strokes)
+    top, bl, br = P(0.0, 1.0), P(-0.9, -0.75), P(0.9, -0.75)
+    _sketchy(group, [top, br, bl, top], rgb, 0.0, mark["id"] * 555, weight=4, strokes=1)
+    # the glyph, always facing the camera, centred a touch low inside the triangle
+    cp = adsk.core.Point3D.create(*P(0.0, -0.05))
     text = group.addText(MTYPE_GLYPH.get(mtype, u"!"), "Arial", s * 0.5,
                          _label_transform(cp))
     text.color = _solid(rgb)
@@ -819,8 +818,6 @@ class FuzzyExecute(adsk.core.CommandEventHandler):
 class FuzzyDestroy(adsk.core.CommandEventHandler):
     def notify(self, args):
         global _pending, _inputs, _active_cmd, _live
-        live_ids = list(_live.values())
-        was = _active_cmd
         try:
             _clear(GROUP_PREVIEW)
             for cat, mid in list(_live.items()):
@@ -831,18 +828,10 @@ class FuzzyDestroy(adsk.core.CommandEventHandler):
             _send_state()
         except Exception:
             pass
-        made = any(_find(mid) is not None for mid in live_ids)
         _pending = None
         _inputs = None
         _active_cmd = None
         _live = {}
-        # Easy mode: re-arm the transform tool so editing stays continuous.
-        # (Only after a real edit — an empty cancel breaks the loop to exit.)
-        if _easy_mode and made and was == "transform":
-            try:
-                _app.fireCustomEvent(LAUNCH_EVENT_ID, CMD_ID["transform"])
-            except Exception:
-                pass
 
 
 class LaunchHandler(adsk.core.CustomEventHandler):
@@ -879,44 +868,63 @@ def _note_point_size(ent):
     return center, size
 
 
-class FuzzyNoteExecute(adsk.core.CommandEventHandler):
+class NoteInputChanged(adsk.core.InputChangedEventHandler):
+    """Create the note the moment a location is picked — no OK needed — and keep
+    its text in sync as you type in the dialog (or later in the card)."""
     def notify(self, args):
-        global _next_id
+        global _note_live_id, _next_id
         try:
-            if _note_inputs is None:
-                return
-            sel = _note_inputs.itemById("nsel")
-            txt = _note_inputs.itemById("ntext")
-            if sel is None or sel.selectionCount == 0:
-                return
-            ent = sel.selection(0).entity
-            point, size = _note_point_size(ent)
-            num = _tool_count.get("note", 0) + 1
-            _tool_count["note"] = num
-            mid = _next_id
-            _next_id += 1
-            mark = {"id": mid, "tool": "note", "mtype": "constraint", "label": "",
-                    "anchor": point, "size": size, "num": num, "status": "open",
-                    "comments": [], "text": txt.value if txt else ""}
-            _geom[mid] = {}
-            _entity[mid] = ent
-            _body[mid] = _entity_body(ent)
-            _marks.append(mark)
-            _redraw_marks()
-            _focus_camera(point)
-            _send_state()
+            cid = args.input.id
+            inputs = args.inputs
+            if cid == "nsel":
+                sel = adsk.core.SelectionCommandInput.cast(args.input)
+                if sel and sel.selectionCount > 0 and _note_live_id is None:
+                    ent = sel.selection(0).entity
+                    point, size = _note_point_size(ent)
+                    num = _tool_count.get("note", 0) + 1
+                    _tool_count["note"] = num
+                    mid = _next_id
+                    _next_id += 1
+                    mark = {"id": mid, "tool": "note", "mtype": "constraint", "label": "",
+                            "anchor": point, "size": size, "num": num, "status": "open",
+                            "comments": [], "text": ""}
+                    _geom[mid] = {}
+                    _entity[mid] = ent
+                    _body[mid] = _entity_body(ent)
+                    _marks.append(mark)
+                    _note_live_id = mid
+                    _redraw_marks()
+                    _focus_camera(point)
+                    _send_state()
+            elif cid == "ntext" and _note_live_id is not None:
+                m = _find(_note_live_id)
+                it = inputs.itemById("ntext")
+                if m and it is not None:
+                    m["text"] = it.value
+                    _redraw_marks()
         except Exception:
             if _ui:
                 _ui.messageBox("FuzzyCAD note failed:\n{}".format(traceback.format_exc()))
 
 
+class NoteDestroy(adsk.core.CommandEventHandler):
+    def notify(self, args):
+        global _note_inputs, _note_live_id
+        try:
+            _send_state()
+        except Exception:
+            pass
+        _note_inputs = None
+        _note_live_id = None
+
+
 class FuzzyNoteCreated(adsk.core.CommandCreatedEventHandler):
     def notify(self, args):
-        global _note_inputs
+        global _note_inputs, _note_live_id
         try:
             cmd = args.command
             cmd.isRepeatable = False
-            cmd.okButtonText = "Add note"
+            cmd.okButtonText = "Done"
             inputs = cmd.commandInputs
             sel = inputs.addSelectionInput("nsel", "Location",
                                            "Click a point / face / edge on the object")
@@ -928,9 +936,11 @@ class FuzzyNoteCreated(adsk.core.CommandCreatedEventHandler):
             sel.setSelectionLimits(1, 1)
             inputs.addStringValueInput("ntext", "Note", "")
             _note_inputs = inputs
-            h = FuzzyNoteExecute()
-            cmd.execute.add(h)
-            _handlers.append(h)
+            _note_live_id = None
+            ic = NoteInputChanged()
+            cmd.inputChanged.add(ic); _handlers.append(ic)
+            dh = NoteDestroy()
+            cmd.destroy.add(dh); _handlers.append(dh)
         except Exception:
             if _ui:
                 _ui.messageBox("FuzzyCAD note setup failed:\n{}".format(traceback.format_exc()))

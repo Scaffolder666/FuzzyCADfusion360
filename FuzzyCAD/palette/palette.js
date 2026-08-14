@@ -76,24 +76,15 @@
       glyph.className = "mark__glyph"; glyph.textContent = GLYPH[m.tool] || "◆";
       var name = document.createElement("span");
       name.className = "mark__label"; name.textContent = m.label || m.title;
+      var mt = MTYPES.filter(function (t) { return t.key === mtype; })[0] || MTYPES[0];
+      var typeTag = document.createElement("span");
+      typeTag.className = "typetag typetag--" + mtype;
+      typeTag.textContent = mt.glyph + " " + mt.label;
       var pill = document.createElement("span");
       pill.className = "pill pill--" + m.status; pill.textContent = STATUS_LABEL[m.status] || m.status;
-      head.appendChild(glyph); head.appendChild(name); head.appendChild(pill);
+      head.appendChild(glyph); head.appendChild(name);
+      head.appendChild(typeTag); head.appendChild(pill);
       li.appendChild(head);
-
-      // mark-type selector (the three uncertainty kinds)
-      var typeRow = document.createElement("div");
-      typeRow.className = "mark__types";
-      MTYPES.forEach(function (mt) {
-        var b = document.createElement("button");
-        b.className = "typebtn typebtn--" + mt.key + (mt.key === mtype ? " on" : "");
-        b.innerHTML = "<span>" + mt.glyph + "</span>" + mt.label;
-        b.addEventListener("click", function (ev) {
-          stop(ev); send("mtype", { id: m.id, mtype: mt.key });
-        });
-        typeRow.appendChild(b);
-      });
-      li.appendChild(typeRow);
 
       // editable value fields
       var fields = document.createElement("div");
