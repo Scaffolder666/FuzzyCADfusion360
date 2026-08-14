@@ -1,9 +1,11 @@
 """Render proposed geometry as outline-only for clear before/after comparison.
 
-Move, Rotate, Scale, directional Scale, Axis Rotate, and Extrude candidates keep
-real BRep geometry for positioning and exact edge extraction, but their candidate
-fill is fully transparent. Fillet is intentionally excluded because its local
-surface change benefits from the existing filled candidate treatment.
+Move, Rotate, Scale, directional Scale, Axis Rotate, and Extrude candidates use
+cached/sampled edge geometry for their visible preview.  Because their faces are
+intentionally invisible, this patch does not create a CustomGraphics BRep body
+at all.  That removes a surprisingly expensive invisible object from the live
+drag path.  Fillet is intentionally excluded because its local surface change
+benefits from the existing filled candidate treatment.
 """
 
 
@@ -23,19 +25,14 @@ def install(m):
         except Exception:
             pass
 
-    class GraphicProxy:
-        def __init__(self, obj):
-            object.__setattr__(self, "_obj", obj)
-
-        def __getattr__(self, name):
-            return getattr(object.__getattribute__(self, "_obj"), name)
-
-        def __setattr__(self, name, value):
-            setattr(object.__getattribute__(self, "_obj"), name, value)
+    class NullGraphic:
+        """No-op stand-in for an intentionally invisible candidate BRep."""
+        def __init__(self):
+            self.transform = None
+            self.color = None
 
         def setOpacity(self, opacity, is_through):
-            # Geometry stays available for transform/reference, but faces vanish.
-            return object.__getattribute__(self, "_obj").setOpacity(0.0, is_through)
+            return None
 
     class GroupProxy:
         def __init__(self, group):
@@ -45,8 +42,10 @@ def install(m):
             return getattr(object.__getattribute__(self, "_group"), name)
 
         def addBRepBody(self, body):
-            obj = object.__getattribute__(self, "_group").addBRepBody(body)
-            return GraphicProxy(obj)
+            # The visible candidate is the sketch outline.  Earlier builds still
+            # created the full BRep and merely set opacity=0, which means Fusion
+            # paid the BRep graphics cost even though the user could not see it.
+            return NullGraphic()
 
     # Proposed outlines should remain visibly sketch-like after the fill is gone.
     # Only multi-stroke sketch geometry is thickened; dimensions/axis leaders stay
@@ -58,8 +57,8 @@ def install(m):
 
     m._sketchy = sketchy
 
-    # Wrap the final renderer chain so any candidate BRep created by earlier
-    # patches becomes transparent without duplicating their exact geometry logic.
+    # Wrap the final renderer chain so candidate BRep requests from earlier
+    # patches become no-ops while all exact edge/callout logic remains intact.
     for tool in ("move", "rotate", "scale", "scale_axis", "axis_rotate", "extrude"):
         prev = m._DRAW.get(tool)
         if prev is None:
@@ -74,7 +73,7 @@ def install(m):
 
     def run(context):
         result = old_run(context)
-        log("OUTLINE-ONLY CANDIDATES READY: transparent fill + stronger proposed sketch; Fillet unchanged")
+        log("OUTLINE-ONLY CANDIDATES READY: no invisible candidate BRep + stronger proposed sketch; Fillet unchanged")
         return result
 
     m.run = run
