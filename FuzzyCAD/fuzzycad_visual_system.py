@@ -12,103 +12,62 @@ import math
 import random
 
 
-# ---------------------------------------------------------------------------
-# Global visual tokens. Fusion CustomGraphics line weights are integer pixels.
-# ---------------------------------------------------------------------------
 VISUAL_TOKENS = {
-    "current_geometry": {
-        "opacity": 0.08,
-    },
+    "current_geometry": {"opacity": 0.08},
     "current_outline": {
-        "rgb": (145, 145, 142),
-        "weight": 1,
-        "strokes": 1,
-        "wobble_ratio": 0.0,
-        "wobble_min": 0.0,
-        "wobble_max": 0.0,
+        "rgb": (145, 145, 142), "weight": 1, "strokes": 1,
+        "wobble_ratio": 0.0, "wobble_min": 0.0, "wobble_max": 0.0,
     },
-    # Real BRep/topology edges inside a proposal. Keep these quiet; the apparent
-    # contour is responsible for the stronger outer boundary.
     "proposal_internal": {
-        "rgb": (86, 90, 94),
-        "weight": 1,
-        "strokes": 2,
-        "wobble_ratio": 0.0028,
-        "wobble_min": 0.0015,
-        "wobble_max": 0.018,
+        "rgb": (86, 90, 94), "weight": 1, "strokes": 2,
+        "wobble_ratio": 0.0028, "wobble_min": 0.0015, "wobble_max": 0.018,
     },
-    # View-dependent apparent contour / silhouette.
     "proposal_outer": {
-        "rgb": (58, 62, 66),
-        "weight": 2,
-        "strokes": 1,
-        "wobble_ratio": 0.0,
-        "wobble_min": 0.0,
-        "wobble_max": 0.0,
+        "rgb": (58, 62, 66), "weight": 2, "strokes": 1,
+        "wobble_ratio": 0.0, "wobble_min": 0.0, "wobble_max": 0.0,
     },
     "surface_scaffold": {
-        "rgb": (142, 146, 150),
-        "weight": 1,
-        "strokes": 1,
-        "wobble_ratio": 0.0010,
-        "wobble_min": 0.0008,
-        "wobble_max": 0.008,
+        "rgb": (142, 146, 150), "weight": 1, "strokes": 1,
+        "wobble_ratio": 0.0010, "wobble_min": 0.0008, "wobble_max": 0.008,
     },
     # Orange means where/how the change happens, never the whole proposal body.
     "operation_cue": {
-        "rgb": (225, 126, 38),
-        "weight": 2,
-        "strokes": 1,
-        "wobble_ratio": 0.0,
-        "wobble_min": 0.0,
-        "wobble_max": 0.0,
+        "rgb": (225, 126, 38), "weight": 2, "strokes": 1,
+        "wobble_ratio": 0.0, "wobble_min": 0.0, "wobble_max": 0.0,
     },
     "affected_candidate": {
-        "rgb": (225, 126, 38),
-        "weight": 1,
-        "strokes": 1,
-        "wobble_ratio": 0.0,
-        "wobble_min": 0.0,
-        "wobble_max": 0.0,
+        "rgb": (225, 126, 38), "weight": 1, "strokes": 1,
+        "wobble_ratio": 0.0, "wobble_min": 0.0, "wobble_max": 0.0,
+    },
+    # Local operations such as Fillet can use a surface patch plus a stronger
+    # boundary while still sharing the same semantic orange family.
+    "affected_surface": {
+        "rgb": (235, 132, 42), "opacity": 0.46,
+    },
+    "affected_boundary": {
+        "rgb": (245, 118, 24), "weight": 2, "strokes": 1,
+        "wobble_ratio": 0.0, "wobble_min": 0.0, "wobble_max": 0.0,
     },
     "axis_reference": {
-        "rgb": (125, 130, 135),
-        "weight": 1,
-        "strokes": 1,
-        "wobble_ratio": 0.0,
-        "wobble_min": 0.0,
-        "wobble_max": 0.0,
+        "rgb": (125, 130, 135), "weight": 1, "strokes": 1,
+        "wobble_ratio": 0.0, "wobble_min": 0.0, "wobble_max": 0.0,
     },
     "dimension": {
-        "rgb": (92, 92, 92),
-        "weight": 1,
-        "strokes": 1,
-        "wobble_ratio": 0.0,
-        "wobble_min": 0.0,
-        "wobble_max": 0.0,
+        "rgb": (92, 92, 92), "weight": 1, "strokes": 1,
+        "wobble_ratio": 0.0, "wobble_min": 0.0, "wobble_max": 0.0,
     },
     "annotation": {
-        "rgb": (77, 77, 77),
-        "weight": 1,
-        "strokes": 1,
-        "wobble_ratio": 0.0,
-        "wobble_min": 0.0,
-        "wobble_max": 0.0,
+        "rgb": (77, 77, 77), "weight": 1, "strokes": 1,
+        "wobble_ratio": 0.0, "wobble_min": 0.0, "wobble_max": 0.0,
     },
     "warning": {
-        "rgb": (200, 44, 32),
-        "weight": 2,
-        "strokes": 1,
-        "wobble_ratio": 0.0,
-        "wobble_min": 0.0,
-        "wobble_max": 0.0,
+        "rgb": (200, 44, 32), "weight": 2, "strokes": 1,
+        "wobble_ratio": 0.0, "wobble_min": 0.0, "wobble_max": 0.0,
     },
     "label_current": {"rgb": (112, 118, 124)},
     "label_proposed": {"rgb": (55, 62, 68)},
 }
 
-# Deterministic hand-drawn character. These values control the RANDOMNESS for
-# every role that has non-zero wobble.
 SKETCH_RANDOM = {
     "frequency_min": 0.90,
     "frequency_max": 1.10,
@@ -117,9 +76,6 @@ SKETCH_RANDOM = {
     "seed_stroke_step": 977,
 }
 
-# Migration bridge: older renderer patches used these literal colors. Mapping
-# them here means their weight/stroke/wobble arguments no longer create a second
-# competing visual system while we progressively remove the old literals.
 LEGACY_ROLE_BY_RGB = {
     (145, 145, 142): "current_outline",
     (70, 72, 74): "proposal_internal",
@@ -130,6 +86,7 @@ LEGACY_ROLE_BY_RGB = {
     (92, 92, 92): "dimension",
     (77, 77, 77): "annotation",
     (200, 44, 32): "warning",
+    (245, 118, 24): "affected_boundary",
 }
 
 
@@ -177,18 +134,14 @@ def install(m):
             return
         amp = max(0.0, float(amp or 0.0))
         strokes = max(1, int(strokes or 1))
-        # Coincident duplicate strokes only make a line look thicker. A role with
-        # no wobble is always a single crisp stroke.
         if amp <= 1e-12:
             strokes = 1
-
         color_obj = m._solid(tuple(rgb))
         fmin = float(SKETCH_RANDOM["frequency_min"])
         fmax = float(SKETCH_RANDOM["frequency_max"])
         phase_span = float(SKETCH_RANDOM["phase_span"])
         axis_step = int(SKETCH_RANDOM["seed_axis_step"])
         stroke_step = int(SKETCH_RANDOM["seed_stroke_step"])
-
         for s in range(strokes):
             rng = random.Random(int(seed) * axis_step + s * stroke_step)
             waves = []
@@ -225,23 +178,13 @@ def install(m):
             return "affected_candidate" if int(weight or 1) <= 1 else "operation_cue"
         if key in LEGACY_ROLE_BY_RGB:
             return LEGACY_ROLE_BY_RGB[key]
-        # Several older proposal renderers receive the collaboration-category
-        # gray dynamically. A dark neutral multi-stroke line is still a proposal
-        # internal edge, regardless of the historical literal.
         if max(key) - min(key) <= 18 and sum(key) / 3.0 < 125:
             return "proposal_internal"
         return None
 
-    # Compatibility path for renderers not yet rewritten to semantic roles. If a
-    # legacy call is recognizable, its local weight/stroke/amp values are ignored
-    # and the centralized token wins. Unknown special graphics keep their explicit
-    # arguments but still share the same deterministic random engine.
     def sketchy_compat(group, pts, rgb, amp, seed, weight=2, strokes=2):
         role = legacy_role(rgb, weight)
         if role:
-            # Use a geometric span estimate when the old caller did not provide a
-            # semantic object size. This keeps wobble scale-aware without restoring
-            # the old per-file size*0.010 rules.
             size = 3.0
             try:
                 xs = [p[0] for p in pts]; ys = [p[1] for p in pts]; zs = [p[2] for p in pts]
