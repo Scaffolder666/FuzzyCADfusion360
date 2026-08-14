@@ -850,6 +850,7 @@ class FuzzyInputChanged(adsk.core.InputChangedEventHandler):
                         if mid is not None:
                             _clear(GROUP_PREVIEW)
                             _draw_one(_group(GROUP_PREVIEW), _find(mid))
+                            _refresh_ghost()   # fade the original live, not just on close
                             _app.activeViewport.refresh()
         except Exception:
             if _ui:
@@ -880,6 +881,7 @@ class FuzzyPreview(adsk.core.CommandEventHandler):
                         mark = _sync_category(cat)
                     if mark is not None:
                         _draw_one(group, mark)
+                _refresh_ghost()   # fade the original live while dragging
             _app.activeViewport.refresh()
             args.isValidResult = True
         except Exception:
