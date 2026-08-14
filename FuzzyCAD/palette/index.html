@@ -12,16 +12,6 @@
     <div class="sub">open questions · resolve asynchronously</div>
   </header>
 
-  <section class="tools">
-    <span class="tools__label">Add a fuzzy op — then drag on the model:</span>
-    <div class="tools__row">
-      <button class="tool" data-tool="move"><span>⇄</span>Move</button>
-      <button class="tool" data-tool="rotate"><span>↻</span>Rotate</button>
-      <button class="tool" data-tool="extrude"><span>⤒</span>Extrude</button>
-      <button class="tool" data-tool="fillet"><span>◜</span>Fillet</button>
-    </div>
-  </section>
-
   <section class="list">
     <div class="list__head">
       <span id="openCount" class="chip chip--open">0 open</span>
@@ -30,7 +20,8 @@
     <ul id="marks" class="marks"></ul>
     <p id="empty" class="empty">
       No open questions yet.<br />
-      Pick a tool above, select geometry, and drag to propose an operation.
+      Pick a tool from the bottom bar, select geometry, and drag on the model to
+      propose a fuzzy operation.
     </p>
   </section>
 

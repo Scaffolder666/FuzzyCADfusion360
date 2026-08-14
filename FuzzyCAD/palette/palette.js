@@ -32,7 +32,6 @@
 
   var els = {};
   function cache() {
-    els.tools = Array.prototype.slice.call(document.querySelectorAll(".tool"));
     els.marks = document.getElementById("marks");
     els.empty = document.getElementById("empty");
     els.openCount = document.getElementById("openCount");
@@ -136,15 +135,7 @@
     return b;
   }
 
-  function wire() {
-    els.tools.forEach(function (btn) {
-      btn.addEventListener("click", function () {
-        send("tool", { tool: btn.getAttribute("data-tool") });
-      });
-    });
-  }
-
   document.addEventListener("DOMContentLoaded", function () {
-    cache(); wire(); render(); send("ready", {});
+    cache(); render(); send("ready", {});
   });
 })();

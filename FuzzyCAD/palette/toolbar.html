@@ -1,0 +1,84 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>FuzzyCAD Tools</title>
+  <style>
+    :root {
+      --navy: #21313f; --line: #e2e5ea; --bg: #f5f6f8; --muted: #7b8794; --text: #21313f;
+    }
+    * { box-sizing: border-box; }
+    html, body { margin: 0; padding: 0; height: 100%;
+      font-family: -apple-system, "Segoe UI", Roboto, sans-serif; background: var(--bg); }
+    .bar { display: flex; align-items: stretch; height: 100%; padding: 8px 10px; gap: 14px; }
+    .group { display: flex; flex-direction: column; gap: 4px; }
+    .group__label {
+      font-size: 9px; font-weight: 700; letter-spacing: 0.6px; color: var(--muted);
+      text-transform: uppercase;
+    }
+    .group__row { display: flex; gap: 6px; }
+    .sep { width: 1px; background: var(--line); margin: 2px 0; }
+    .tool {
+      display: flex; flex-direction: column; align-items: center; justify-content: center;
+      gap: 2px; width: 56px; padding: 6px 2px; border: 1px solid var(--line);
+      border-radius: 7px; background: #fff; cursor: pointer; color: var(--text);
+    }
+    .tool span { font-size: 18px; line-height: 1; }
+    .tool small { font-size: 10px; font-weight: 600; }
+    .tool:hover { border-color: var(--navy); }
+    .tool:active { background: var(--bg); }
+    .tool--soon { opacity: 0.45; cursor: default; }
+    .tool--soon:hover { border-color: var(--line); }
+  </style>
+</head>
+<body>
+  <div class="bar">
+    <div class="group">
+      <span class="group__label">Needs Input</span>
+      <div class="group__row">
+        <button class="tool" data-tool="move"><span>⇄</span><small>Move</small></button>
+        <button class="tool" data-tool="rotate"><span>↻</span><small>Rotate</small></button>
+        <button class="tool" data-tool="extrude"><span>⤒</span><small>Extrude</small></button>
+        <button class="tool" data-tool="fillet"><span>◜</span><small>Fillet</small></button>
+        <button class="tool tool--soon" title="coming soon"><span>⤢</span><small>Scale</small></button>
+        <button class="tool tool--soon" title="coming soon"><span>↔</span><small>Stretch</small></button>
+      </div>
+    </div>
+    <div class="sep"></div>
+    <div class="group">
+      <span class="group__label">Mark</span>
+      <div class="group__row">
+        <button class="tool tool--soon" title="coming soon"><span>◈</span><small>Note</small></button>
+      </div>
+    </div>
+    <div class="sep"></div>
+    <div class="group">
+      <span class="group__label">Conflict</span>
+      <div class="group__row">
+        <button class="tool tool--soon" title="coming soon"><span>丫</span><small>Conflict</small></button>
+      </div>
+    </div>
+  </div>
+
+  <script>
+    function send(action, data) {
+      if (window.adsk && typeof window.adsk.fusionSendData === "function") {
+        return window.adsk.fusionSendData(action, JSON.stringify(data || {}));
+      }
+      console.log("[FuzzyCAD toolbar]", action, data);
+      return Promise.resolve("{}");
+    }
+    // Fusion requires a handler to exist even if this view receives nothing.
+    window.fusionJavaScriptHandler = { handle: function () { return "{}"; } };
+    document.addEventListener("DOMContentLoaded", function () {
+      var tools = document.querySelectorAll(".tool[data-tool]");
+      Array.prototype.forEach.call(tools, function (btn) {
+        btn.addEventListener("click", function () {
+          send("tool", { tool: btn.getAttribute("data-tool") });
+        });
+      });
+    });
+  </script>
+</body>
+</html>

@@ -31,6 +31,8 @@ _ui = None
 PALETTE_ID = "FuzzyCAD_Palette"
 PALETTE_NAME = "FuzzyCAD"
 PALETTE_URL = "palette/index.html"
+TOOLBAR_ID = "FuzzyCAD_Toolbar"
+TOOLBAR_URL = "palette/toolbar.html"
 PANEL_CMD_ID = "FuzzyCAD_ShowPanel"
 PANEL_ID = "SolidScriptsAddinsPanel"
 GROUP_MARKS = "FuzzyCAD_Marks"
@@ -47,13 +49,14 @@ TOOL_HINT = {"move": "Select a body, then drag along the axis.",
              "extrude": "Select a planar face, then drag it out.",
              "fillet": "Select an edge, then drag the radius."}
 
-COLOR_FUZZY = (217, 47, 28)
-COLOR_RESOLVED = (46, 160, 67)
-SKETCH_AMP_FRAC = 0.012
-EDGE_SAMPLES = 6
-PREVIEW_ID = -1
+COLOR_FUZZY = (96, 120, 168)     # soft pencil blue — proposed / uncertain
+COLOR_RESOLVED = (70, 154, 104)  # calm green — decided
+SKETCH_AMP_FRAC = 0.010
+EDGE_SAMPLES = 10
 
-# Persistent store.
+# Persistent store — this IS the fuzziness data structure. (_marks holds the
+# JSON-safe fields; _geom holds the sampled base geometry per mark id. Roadmap:
+# serialize _marks into the document's Attributes so it saves with the .f3d.)
 _marks = []
 _geom = {}
 _next_id = 1
@@ -63,7 +66,8 @@ _active_tool = None
 _sel_input = None
 _val_input = None
 _axis_input = None
-_pending = None  # dict: geom + anchor + size + normal/axis for the live preview
+_pending = None   # dict: geom + anchor + size + normal for the live preview
+_live_id = None   # id of the mark being formed by the current drag session
 
 
 # --- CustomGraphics groups -------------------------------------------------
@@ -101,21 +105,36 @@ def _solid(rgb):
 
 # --- sketchy line drawing --------------------------------------------------
 def _sketchy(group, pts, rgb, amp, seed, weight=2, strokes=2):
-    if len(pts) < 2:
+    """Draw a polyline as soft, hand-drawn strokes. The deviation is a smooth,
+    low-frequency wave (not spiky per-point noise) that tapers to zero at the
+    ends, so lines look gently sketched rather than stiff/jagged.
+    amp=0 draws a single clean stroke (resolved marks)."""
+    n = len(pts)
+    if n < 2:
         return
     if amp <= 0:
         strokes = 1
     color = _solid(rgb)
     for s in range(strokes):
         rng = random.Random(seed * 131 + s * 977)
+        # a couple of random sine components per axis => smooth flowing wobble
+        waves = []
+        for _ax in range(3):
+            waves.append((1.0 + rng.random() * 1.4, 2.2 + rng.random() * 2.0,
+                          rng.random() * 6.2832, rng.random() * 6.2832))
         flat = []
         for i, (x, y, z) in enumerate(pts):
-            k = 0.0 if (i == 0 or i == len(pts) - 1) else amp
-            flat.extend([x + (rng.random() - 0.5) * 2 * k,
-                         y + (rng.random() - 0.5) * 2 * k,
-                         z + (rng.random() - 0.5) * 2 * k])
+            u = i / (n - 1)
+            taper = math.sin(math.pi * u)  # 0 at both ends, 1 in the middle
+            base = [x, y, z]
+            for ax in range(3):
+                f1, f2, p1, p2 = waves[ax]
+                dev = amp * taper * (0.6 * math.sin(u * 6.2832 * f1 + p1)
+                                     + 0.4 * math.sin(u * 6.2832 * f2 + p2))
+                base[ax] += dev
+            flat.extend(base)
         coords = adsk.fusion.CustomGraphicsCoordinates.create(flat)
-        line = group.addLines(coords, list(range(len(pts))), True)
+        line = group.addLines(coords, list(range(n)), True)
         line.color = color
         line.weight = weight
 
@@ -430,13 +449,13 @@ def _pending_amount():
     return _val_input.value                     # already cm
 
 
-def _preview_mark():
+def _make_mark(amount):
+    """Build a fresh mark dict (no id) from the pending selection + amount."""
     if not _pending:
         return None
-    mark = {"id": PREVIEW_ID, "tool": _active_tool, "label": "",
-            "axis": _pending_axis(), "resolved": False,
-            "anchor": _pending["anchor"], "size": _pending["size"],
-            "amount": _pending_amount()}
+    mark = {"tool": _active_tool, "label": "", "axis": _pending_axis(),
+            "resolved": False, "anchor": _pending["anchor"],
+            "size": _pending["size"], "amount": amount}
     if _active_tool == "extrude":
         mark["normal"] = _pending["normal"]
     return mark
@@ -489,15 +508,17 @@ class FuzzyInputChanged(adsk.core.InputChangedEventHandler):
     def notify(self, args):
         global _pending
         try:
-            changed = args.input
-            if changed == _sel_input:
+            # Compare by id — Fusion hands back fresh wrapper objects, so object
+            # identity ("changed == _sel_input") is unreliable.
+            cid = args.input.id
+            if cid == "sel":
                 _pending = None
                 if _sel_input.selectionCount > 0:
                     ent = _sel_input.selection(0).entity
                     _pending = _build_pending(_active_tool, ent)
                     if _pending:
                         _place_manipulator()
-            elif _axis_input is not None and changed == _axis_input and _pending:
+            elif cid == "axis" and _pending:
                 _place_manipulator()
         except Exception:
             if _ui:
@@ -505,17 +526,42 @@ class FuzzyInputChanged(adsk.core.InputChangedEventHandler):
                     traceback.format_exc()))
 
 
+def _sync_live_mark(amount):
+    """Create-or-update the mark being formed by the current drag. Returns it,
+    or None if there's nothing to draw yet. The mark lives in _marks the moment
+    you drag — no OK needed for it to exist (Tinkercad-style)."""
+    global _live_id, _next_id
+    if not _pending or abs(amount) < 1e-9:
+        return None
+    if _live_id is None:
+        mid = _next_id
+        _next_id += 1
+        mark = _make_mark(amount)
+        mark["id"] = mid
+        _geom[mid] = _pending["geom"]
+        _marks.append(mark)
+        _live_id = mid
+        palette = _ui.palettes.itemById(PALETTE_ID)
+        if palette:
+            _send_state(palette)
+    mark = _find(_live_id)
+    mark["amount"] = amount
+    mark["axis"] = _pending_axis()
+    if _active_tool == "extrude":
+        mark["normal"] = _pending["normal"]
+        _geom[_live_id]["normal"] = _pending["normal"]
+    return mark
+
+
 class FuzzyPreview(adsk.core.CommandEventHandler):
     def notify(self, args):
         try:
+            mark = _sync_live_mark(_pending_amount())
             _clear(GROUP_PREVIEW)
-            mark = _preview_mark()
-            if mark and abs(mark["amount"]) > 1e-9:
-                _geom[PREVIEW_ID] = _pending["geom"]
+            if mark is not None:
                 group = _group(GROUP_PREVIEW)
-                amp = mark["size"] * SKETCH_AMP_FRAC
-                _draw_one(group, mark, COLOR_FUZZY, amp)
-                _app.activeViewport.refresh()
+                _draw_one(group, mark, COLOR_FUZZY, mark["size"] * SKETCH_AMP_FRAC)
+            _app.activeViewport.refresh()
             args.isValidResult = True
         except Exception:
             if _ui:
@@ -525,20 +571,14 @@ class FuzzyPreview(adsk.core.CommandEventHandler):
 
 class FuzzyExecute(adsk.core.CommandEventHandler):
     def notify(self, args):
-        global _next_id
         try:
+            _sync_live_mark(_pending_amount())
             _clear(GROUP_PREVIEW)
-            _geom.pop(PREVIEW_ID, None)
-            mark = _preview_mark()
-            if not mark or abs(mark["amount"]) < 1e-9:
-                return
-            mid = _next_id
-            _next_id += 1
-            mark["id"] = mid
-            _geom[mid] = _pending["geom"]
-            _marks.append(mark)
             _redraw_marks()
-            _focus_camera(mark["anchor"])
+            if _live_id is not None:
+                mark = _find(_live_id)
+                if mark:
+                    _focus_camera(mark["anchor"])
             palette = _ui.palettes.itemById(PALETTE_ID)
             if palette:
                 _send_state(palette)
@@ -550,16 +590,25 @@ class FuzzyExecute(adsk.core.CommandEventHandler):
 
 class FuzzyDestroy(adsk.core.CommandEventHandler):
     def notify(self, args):
-        global _pending, _sel_input, _val_input, _axis_input, _active_tool
+        global _pending, _sel_input, _val_input, _axis_input, _active_tool, _live_id
         try:
             _clear(GROUP_PREVIEW)
-            _geom.pop(PREVIEW_ID, None)
-            _app.activeViewport.refresh()
+            # drop a live mark that never got a real amount (e.g. cancelled early)
+            if _live_id is not None:
+                m = _find(_live_id)
+                if m is None or abs(m["amount"]) < 1e-9:
+                    _marks[:] = [mm for mm in _marks if mm["id"] != _live_id]
+                    _geom.pop(_live_id, None)
+            _redraw_marks()
+            palette = _ui.palettes.itemById(PALETTE_ID)
+            if palette:
+                _send_state(palette)
         except Exception:
             pass
         _pending = None
         _sel_input = _val_input = _axis_input = None
         _active_tool = None
+        _live_id = None
 
 
 class FuzzyCommandCreated(adsk.core.CommandCreatedEventHandler):
@@ -568,10 +617,11 @@ class FuzzyCommandCreated(adsk.core.CommandCreatedEventHandler):
         self.tool = tool
 
     def notify(self, args):
-        global _active_tool, _sel_input, _val_input, _axis_input, _pending
+        global _active_tool, _sel_input, _val_input, _axis_input, _pending, _live_id
         try:
             _active_tool = self.tool
             _pending = None
+            _live_id = None
             cmd = args.command
             cmd.isRepeatable = False
             cmd.okButtonText = "Add fuzzy " + self.tool
@@ -681,19 +731,43 @@ class PaletteHTMLHandler(adsk.core.HTMLEventHandler):
                     traceback.format_exc()))
 
 
+def _dock_state(name):
+    docks = adsk.core.PaletteDockingStates
+    return getattr(docks, name, None) or docks.PaletteDockStateFloating
+
+
+def _ensure_palettes():
+    """Create (or re-show) both palettes: the right-side collaboration panel and
+    the separate bottom tool strip."""
+    palettes = _ui.palettes
+
+    side = palettes.itemById(PALETTE_ID)
+    if side is None:
+        side = palettes.add(PALETTE_ID, PALETTE_NAME, PALETTE_URL,
+                            True, True, True, 300, 480)
+        side.dockingState = _dock_state("PaletteDockStateRight")
+        h = PaletteHTMLHandler()
+        side.incomingFromHTML.add(h)
+        _handlers.append(h)
+    else:
+        side.isVisible = True
+
+    bar = palettes.itemById(TOOLBAR_ID)
+    if bar is None:
+        bar = palettes.add(TOOLBAR_ID, "FuzzyCAD Tools", TOOLBAR_URL,
+                           True, True, True, 760, 96)
+        bar.dockingState = _dock_state("PaletteDockStateBottom")
+        h2 = PaletteHTMLHandler()
+        bar.incomingFromHTML.add(h2)
+        _handlers.append(h2)
+    else:
+        bar.isVisible = True
+
+
 class ShowPaletteCreated(adsk.core.CommandCreatedEventHandler):
     def notify(self, args):
         try:
-            palette = _ui.palettes.itemById(PALETTE_ID)
-            if palette is None:
-                palette = _ui.palettes.add(
-                    PALETTE_ID, PALETTE_NAME, PALETTE_URL, True, True, True, 320, 520)
-                palette.dockingState = adsk.core.PaletteDockingStates.PaletteDockStateRight
-                h = PaletteHTMLHandler()
-                palette.incomingFromHTML.add(h)
-                _handlers.append(h)
-            else:
-                palette.isVisible = True
+            _ensure_palettes()
         except Exception:
             if _ui:
                 _ui.messageBox("FuzzyCAD failed to open panel:\n{}".format(
@@ -727,7 +801,7 @@ def run(context):
             _add_button(panel, TOOL_CMD[tool], TOOL_LABEL[tool], TOOL_HINT[tool],
                         FuzzyCommandCreated(tool))
 
-        _ui.commandDefinitions.itemById(PANEL_CMD_ID).execute()
+        _ensure_palettes()
     except Exception:
         if _ui:
             _ui.messageBox("FuzzyCAD failed to start:\n{}".format(traceback.format_exc()))
@@ -739,9 +813,10 @@ def stop(context):
         _clear(GROUP_PREVIEW)
         if _app and _app.activeViewport:
             _app.activeViewport.refresh()
-        palette = _ui.palettes.itemById(PALETTE_ID)
-        if palette:
-            palette.deleteMe()
+        for pid in (PALETTE_ID, TOOLBAR_ID):
+            palette = _ui.palettes.itemById(pid)
+            if palette:
+                palette.deleteMe()
         panel = _ui.allToolbarPanels.itemById(PANEL_ID)
         for cmd_id in [PANEL_CMD_ID] + list(TOOL_CMD.values()):
             if panel:
