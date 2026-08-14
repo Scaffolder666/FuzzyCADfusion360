@@ -7,8 +7,9 @@ TEXT COMMANDS debug monitor, trace manipulator values through final apply, flag
 when a sidebar Accept targets a different proposal from the active handle, trace
 the native manipulator inputChanged/executePreview events directly, keep the
 Fillet candidate/card synchronized even when Fusion emits inputChanged without
-executePreview, and unify Move/Rotate/Scale/Extrude candidate visualization with
-the Fillet visual language.
+executePreview, unify Move/Rotate/Scale/Extrude candidate visualization with
+the Fillet visual language, and replay Move proposals as a one-way animation
+while their sidebar card is hovered.
 """
 import importlib.util
 import os
@@ -44,6 +45,8 @@ _fillet_live = _load("fuzzycad_fillet_input_sync", "fuzzycad_fillet_input_sync.p
 _fillet_live.install(_legacy)
 _visuals = _load("fuzzycad_unified_visuals", "fuzzycad_unified_visuals.py")
 _visuals.install(_legacy)
+_move_hover = _load("fuzzycad_move_hover_animation", "fuzzycad_move_hover_animation.py")
+_move_hover.install(_legacy)
 
 run = _legacy.run
 stop = _legacy.stop
