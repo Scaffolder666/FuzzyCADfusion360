@@ -655,20 +655,31 @@ def _place_manipulator():
 # --- command handlers ------------------------------------------------------
 class FuzzyInputChanged(adsk.core.InputChangedEventHandler):
     def notify(self, args):
-        global _pending
+        global _pending, _inputs, _sel_input
         try:
-            if args.input.id == "sel":
-                _pending = None
-                if _sel_input.selectionCount > 0:
-                    _pending = _build_pending(_active_tool, _sel_input.selection(0).entity)
-                    if _pending:
-                        _place_manipulator()
-                        if _active_tool == "rotate":
-                            # show the axis rings the moment a body is picked
-                            _clear(GROUP_PREVIEW)
-                            _draw_rotate_guides(_group(GROUP_PREVIEW),
-                                                _pending["anchor"], _pending["size"], None)
-                            _app.activeViewport.refresh()
+            if _active_tool is None:
+                return
+            # Refresh from the event itself instead of trusting module globals
+            # (they can go stale across Stop/Run or duplicate handlers).
+            _inputs = args.inputs
+            changed = args.input
+            if changed.id != "sel":
+                return
+            sel = adsk.core.SelectionCommandInput.cast(changed)
+            if sel is None:
+                return
+            _sel_input = sel
+            _pending = None
+            if sel.selectionCount > 0:
+                _pending = _build_pending(_active_tool, sel.selection(0).entity)
+                if _pending:
+                    _place_manipulator()
+                    if _active_tool == "rotate":
+                        # show the axis rings the moment a body is picked
+                        _clear(GROUP_PREVIEW)
+                        _draw_rotate_guides(_group(GROUP_PREVIEW),
+                                            _pending["anchor"], _pending["size"], None)
+                        _app.activeViewport.refresh()
         except Exception:
             if _ui:
                 _ui.messageBox("FuzzyCAD inputChanged failed:\n{}".format(
@@ -962,12 +973,19 @@ class ShowPaletteCreated(adsk.core.CommandCreatedEventHandler):
 
 
 def _add_button(panel, cmd_id, name, tooltip, handler):
-    cd = _ui.commandDefinitions.itemById(cmd_id)
-    if cd is None:
-        cd = _ui.commandDefinitions.addButtonDefinition(cmd_id, name, tooltip, "")
+    # Delete any leftover definition/control from a prior Run so we never stack
+    # duplicate commandCreated handlers (that was corrupting the command state).
+    existing = _ui.commandDefinitions.itemById(cmd_id)
+    if existing:
+        existing.deleteMe()
+    if panel:
+        ctrl = panel.controls.itemById(cmd_id)
+        if ctrl:
+            ctrl.deleteMe()
+    cd = _ui.commandDefinitions.addButtonDefinition(cmd_id, name, tooltip, "")
     cd.commandCreated.add(handler)
     _handlers.append(handler)
-    if panel and panel.controls.itemById(cmd_id) is None:
+    if panel:
         panel.controls.addCommand(cd)
     return cd
 
