@@ -10,8 +10,9 @@ Fillet candidate/card synchronized even when Fusion emits inputChanged without
 executePreview, unify Move/Rotate/Scale/Extrude candidate visualization with
 the Fillet visual language, replay Move proposals as a one-way animation while
 their sidebar card is hovered, keep notes screen-facing while showing a
-lightweight active-candidate size frame, and separate Scale from Move/Rotate
-with directional scaling and circular-edge Axis Rotate.
+lightweight active-candidate size frame, separate the collaboration taxonomy,
+and preserve the direct body->manipulator interaction flow for scale and axis
+rotation.
 """
 import importlib.util
 import os
@@ -53,6 +54,8 @@ _annotations = _load("fuzzycad_note_dimensions", "fuzzycad_note_dimensions.py")
 _annotations.install(_legacy)
 _next_tools = _load("fuzzycad_scale_axis_rotate_taxonomy", "fuzzycad_scale_axis_rotate_taxonomy.py")
 _next_tools.install(_legacy)
+_direct = _load("fuzzycad_direct_interactions", "fuzzycad_direct_interactions.py")
+_direct.install(_legacy)
 
 run = _legacy.run
 stop = _legacy.stop
