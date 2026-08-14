@@ -50,7 +50,9 @@ TOOL_HINT = {"move": "Select a body, then drag an axis arrow.",
              "extrude": "Select a planar face, then drag it out.",
              "fillet": "Select an edge, then drag the radius."}
 
-COLOR_FUZZY = (96, 120, 168)
+COLOR_FUZZY = (96, 120, 168)     # soft blue — needs input / proposed
+COLOR_ANSWERED = (70, 154, 104)  # green — answered / decided
+COLOR_WARN = (200, 44, 32)       # red — the NEEDS INPUT badge
 GHOST_OPACITY = 0.30
 SKETCH_AMP_FRAC = 0.010
 EDGE_SAMPLES = 10
@@ -61,6 +63,7 @@ _geom = {}     # id -> sampled base geometry
 _entity = {}   # id -> live entity to operate on when accepted
 _body = {}     # id -> body to ghost while open
 _next_id = 1
+_tool_count = {}  # tool -> running count, for card titles ("Move 1")
 
 # Transient command state.
 _active_tool = None
@@ -323,9 +326,28 @@ _DRAW = {"move": _draw_move, "rotate": _draw_rotate,
          "extrude": _draw_extrude, "fillet": _draw_fillet}
 
 
-def _draw_one(group, mark, rgb, amp):
+def _style(mark):
+    if mark.get("status") == "answered":
+        return COLOR_ANSWERED, mark.get("size", 3.0) * SKETCH_AMP_FRAC * 0.3
+    return COLOR_FUZZY, mark.get("size", 3.0) * SKETCH_AMP_FRAC
+
+
+def _draw_warning(group, mark):
+    """A red, camera-facing NEEDS INPUT badge floating over the mark."""
+    a = mark["anchor"]
+    s = mark.get("size", 3.0)
+    tip = adsk.core.Point3D.create(a[0], a[1] + s * 1.25, a[2])
+    text = group.addText(u"▲ NEEDS INPUT", "Arial", s * 0.5, _label_transform(tip))
+    text.color = _solid(COLOR_WARN)
+    _apply_billboard(text, tip)
+
+
+def _draw_one(group, mark):
+    rgb, amp = _style(mark)
     _DRAW[mark["tool"]](group, mark, rgb, amp)
     _draw_label(group, mark, rgb)
+    if mark.get("status", "needs_input") == "needs_input":
+        _draw_warning(group, mark)
 
 
 def _summary(mark):
@@ -344,8 +366,10 @@ def _summary(mark):
 def _draw_label(group, mark, rgb):
     a = mark["anchor"]; off = mark.get("size", 3.0) * 0.9
     tip = adsk.core.Point3D.create(a[0], a[1] + off, a[2])
-    tag = mark["label"] or mark["tool"].capitalize()
-    text = group.addText(u"{} ~".format(tag), "Arial", 1.0, _label_transform(tip))
+    tag = "{} {}".format(mark["tool"].capitalize(), mark.get("num", 1))
+    if mark["label"]:
+        tag = mark["label"]
+    text = group.addText(tag, "Arial", 1.0, _label_transform(tip))
     text.color = _solid(rgb)
     _apply_billboard(text, tip)
 
@@ -358,7 +382,7 @@ def _redraw_marks():
             if mark["id"] not in _geom:
                 continue
             try:
-                _draw_one(group, mark, COLOR_FUZZY, mark.get("size", 3.0) * SKETCH_AMP_FRAC)
+                _draw_one(group, mark)
             except Exception:
                 if _ui:
                     _ui.messageBox("FuzzyCAD draw failed ({}):\n{}".format(
@@ -510,8 +534,12 @@ def _current_op():
 
 
 def _make_mark(op):
+    global _tool_count
+    num = _tool_count.get(_active_tool, 0) + 1
+    _tool_count[_active_tool] = num
     mark = {"tool": _active_tool, "label": "", "anchor": _pending["anchor"],
-            "size": _pending["size"]}
+            "size": _pending["size"], "num": num,
+            "status": "needs_input", "comments": []}
     mark.update(op)
     return mark
 
@@ -604,8 +632,7 @@ class FuzzyPreview(adsk.core.CommandEventHandler):
             mark = _sync_live_mark(_current_op())
             _clear(GROUP_PREVIEW)
             if mark is not None:
-                _draw_one(_group(GROUP_PREVIEW), mark, COLOR_FUZZY,
-                          mark["size"] * SKETCH_AMP_FRAC)
+                _draw_one(_group(GROUP_PREVIEW), mark)
             _app.activeViewport.refresh()
             args.isValidResult = True
         except Exception:
@@ -744,9 +771,41 @@ def _remove_mark(mid):
 
 
 # --- palette messaging -----------------------------------------------------
+def _fields(mark):
+    t = mark["tool"]
+    if t == "move":
+        return [{"key": "x", "label": "Move X", "value": round(mark["vec"][0] * 10, 2), "unit": "mm"},
+                {"key": "y", "label": "Move Y", "value": round(mark["vec"][1] * 10, 2), "unit": "mm"},
+                {"key": "z", "label": "Move Z", "value": round(mark["vec"][2] * 10, 2), "unit": "mm"}]
+    if t == "rotate":
+        return [{"key": "x", "label": "Rotate X", "value": round(mark["rot"][0], 1), "unit": "°"},
+                {"key": "y", "label": "Rotate Y", "value": round(mark["rot"][1], 1), "unit": "°"},
+                {"key": "z", "label": "Rotate Z", "value": round(mark["rot"][2], 1), "unit": "°"}]
+    if t == "extrude":
+        return [{"key": "d", "label": "Depth", "value": round(mark["amount"] * 10, 2), "unit": "mm"}]
+    return [{"key": "d", "label": "Radius", "value": round(mark["amount"] * 10, 2), "unit": "mm"}]
+
+
+def _apply_edit(mark, key, value):
+    try:
+        v = float(value)
+    except Exception:
+        return
+    t = mark["tool"]
+    if t == "move":
+        mark["vec"][{"x": 0, "y": 1, "z": 2}[key]] = v / 10.0
+    elif t == "rotate":
+        mark["rot"][{"x": 0, "y": 1, "z": 2}[key]] = v
+    else:
+        mark["amount"] = v / 10.0
+
+
 def _public(mark):
-    return {"id": mark["id"], "tool": mark["tool"],
-            "label": mark["label"], "summary": _summary(mark)}
+    return {"id": mark["id"], "tool": mark["tool"], "num": mark.get("num", 1),
+            "title": "{} {}".format(mark["tool"].capitalize(), mark.get("num", 1)),
+            "label": mark["label"], "status": mark.get("status", "needs_input"),
+            "summary": _summary(mark), "fields": _fields(mark),
+            "comments": mark.get("comments", [])}
 
 
 def _find(mid):
@@ -779,13 +838,32 @@ class PaletteHTMLHandler(adsk.core.HTMLEventHandler):
                 m = _find(data.get("id"))
                 if m:
                     _focus_camera(m["anchor"])
-            elif action == "accept":
+            elif action == "edit":
+                m = _find(data.get("id"))
+                if m:
+                    _apply_edit(m, data.get("key"), data.get("value"))
+                    _redraw_marks()
+                    _send_state()
+            elif action == "status":
+                m = _find(data.get("id"))
+                if m:
+                    m["status"] = data.get("status", "needs_input")
+                    _redraw_marks()
+                    _send_state()
+            elif action == "comment":
+                m = _find(data.get("id"))
+                if m:
+                    txt = (data.get("text") or "").strip()
+                    if txt:
+                        m.setdefault("comments", []).append({"text": txt})
+                        _send_state()
+            elif action == "apply":
                 m = _find(data.get("id"))
                 if m and _accept(m):
                     _remove_mark(m["id"])
                     _redraw_marks()
                     _send_state()
-            elif action == "delete":
+            elif action == "reject":
                 _remove_mark(data.get("id"))
                 _redraw_marks()
                 _send_state()
