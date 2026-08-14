@@ -11,7 +11,7 @@
     * { box-sizing: border-box; }
     html, body { margin: 0; padding: 0; height: 100%;
       font-family: -apple-system, "Segoe UI", Roboto, sans-serif; background: var(--bg); }
-    .bar { display: flex; align-items: stretch; height: 100%; padding: 8px 10px; gap: 14px; }
+    .bar { display: flex; align-items: stretch; height: 100%; padding: 8px 10px; gap: 12px; }
     .group { display: flex; flex-direction: column; gap: 4px; }
     .group__label {
       font-size: 9px; font-weight: 700; letter-spacing: 0.6px; color: var(--muted);
@@ -21,38 +21,51 @@
     .sep { width: 1px; background: var(--line); margin: 2px 0; }
     .tool {
       display: flex; flex-direction: column; align-items: center; justify-content: center;
-      gap: 2px; width: 56px; padding: 6px 2px; border: 1px solid var(--line);
+      gap: 2px; min-width: 58px; padding: 6px 7px; border: 1px solid var(--line);
       border-radius: 7px; background: #fff; cursor: pointer; color: var(--text);
     }
     .tool span { font-size: 18px; line-height: 1; }
-    .tool small { font-size: 10px; font-weight: 600; }
+    .tool small { font-size: 9.5px; font-weight: 600; white-space: nowrap; }
     .tool:hover { border-color: var(--navy); }
-    .tool:active { background: var(--bg); }
+    .tool:active { background: var(--navy); color: #fff; border-color: var(--navy); }
+    .tool--wide { min-width: 74px; }
     .tool--soon { opacity: 0.45; cursor: default; }
     .tool--soon:hover { border-color: var(--line); }
-    .tool--primary { width: 92px; }
-    .tool--primary small { font-size: 11px; }
-    /* brief press feedback so a click feels registered, but no permanent 'on' state */
-    .tool:active { background: var(--navy); color: #fff; border-color: var(--navy); }
   </style>
 </head>
 <body>
   <div class="bar">
     <div class="group">
-      <span class="group__label">Needs Input</span>
+      <span class="group__label">Need Input</span>
       <div class="group__row">
-        <button class="tool" data-tool="transform" title="Move / Rotate / Scale — grab a handle">
-          <span>✥</span><small>Transform</small></button>
+        <button class="tool tool--wide" data-tool="transform" title="Move and XYZ Rotate">
+          <span>✥</span><small>Move / Rotate</small></button>
+        <button class="tool" data-tool="scale" title="Uniform scale or scale along X, Y, or Z">
+          <span>⤢</span><small>Scale</small></button>
+        <button class="tool tool--wide" data-tool="axis_rotate" title="Rotate around an axis inferred from a circular edge">
+          <span>↻</span><small>Axis Rotate</small></button>
         <button class="tool" data-tool="extrude"><span>⤒</span><small>Extrude</small></button>
         <button class="tool" data-tool="fillet"><span>◜</span><small>Fillet</small></button>
       </div>
     </div>
+
     <div class="sep"></div>
+
     <div class="group">
-      <span class="group__label">Mark</span>
+      <span class="group__label">Mark Constraint</span>
       <div class="group__row">
-        <button class="tool" data-tool="note" title="Drop a note callout"><span>◈</span><small>Note (Constraint)</small></button>
-        <button class="tool tool--soon" title="coming soon"><span>丫</span><small>Conflict</small></button>
+        <button class="tool tool--wide" data-tool="note" title="Attach a constraint note to geometry">
+          <span>◈</span><small>Note</small></button>
+      </div>
+    </div>
+
+    <div class="sep"></div>
+
+    <div class="group">
+      <span class="group__label">Conflict</span>
+      <div class="group__row">
+        <button class="tool tool--wide tool--soon" title="Compare conflicting alternatives — coming next">
+          <span>⑂</span><small>Compare</small></button>
       </div>
     </div>
   </div>
@@ -65,7 +78,6 @@
       console.log("[FuzzyCAD toolbar]", action, data);
       return Promise.resolve("{}");
     }
-    // Fusion requires a handler to exist even if this view receives nothing.
     window.fusionJavaScriptHandler = { handle: function () { return "{}"; } };
     document.addEventListener("DOMContentLoaded", function () {
       var tools = document.querySelectorAll(".tool[data-tool]");
