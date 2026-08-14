@@ -18,8 +18,9 @@ render interaction choices in FuzzyCAD's own HTML UI instead of Fusion's native
 option controls, keep related-part Move previews synchronized directly from the
 native handle, strengthen original/proposed visual contrast, persist open
 collaboration state inside the Fusion design for reopen/handoff workflows, render
-non-Fillet proposed bodies as transparent outline-only geometry, and emphasize
-the actual rounded Fillet region with an orange surface/boundary highlight.
+non-Fillet proposals as edge-only geometry, emphasize the actual rounded Fillet
+region, treat multi-body Move as one proposal group, expose procedural stage
+feedback in a left-side tool rail, and profile the main preview paths.
 """
 import importlib.util
 import os
@@ -81,6 +82,12 @@ _outline = _load("fuzzycad_outline_only_candidates", "fuzzycad_outline_only_cand
 _outline.install(_legacy)
 _fillet_color = _load("fuzzycad_fillet_highlight", "fuzzycad_fillet_highlight.py")
 _fillet_color.install(_legacy)
+_groups = _load("fuzzycad_proposal_groups", "fuzzycad_proposal_groups.py")
+_groups.install(_legacy)
+_stages = _load("fuzzycad_stage_ui", "fuzzycad_stage_ui.py")
+_stages.install(_legacy)
+_perf = _load("fuzzycad_perf_trace", "fuzzycad_perf_trace.py")
+_perf.install(_legacy)
 
 run = _legacy.run
 stop = _legacy.stop
