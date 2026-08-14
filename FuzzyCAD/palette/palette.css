@@ -2,6 +2,7 @@
   --navy: #21313f;
   --red: #d92f1c;
   --green: #2ea043;
+  --amber: #b7791f;
   --blue: #3f7cba;
   --bg: #ffffff;
   --panel: #f5f6f8;
@@ -11,83 +12,50 @@
 }
 
 * { box-sizing: border-box; }
-
 html, body {
   margin: 0; padding: 0;
   font-family: -apple-system, "Segoe UI", Roboto, sans-serif;
   font-size: 13px; color: var(--text); background: var(--bg);
 }
-.muted { color: var(--muted); font-weight: 400; }
 
 .head { padding: 12px 14px 10px; border-bottom: 1px solid var(--line); }
 .brand { font-size: 15px; font-weight: 700; letter-spacing: 0.3px; }
 .sub { font-size: 11px; color: var(--muted); margin-top: 2px; }
 
-/* tool strip */
-.tools {
-  display: flex; gap: 6px; padding: 10px 12px;
-  border-bottom: 1px solid var(--line);
-}
+.tools { padding: 10px 14px; border-bottom: 1px solid var(--line); background: var(--panel); }
+.tools__label { display: block; font-size: 11px; color: var(--muted); margin-bottom: 8px; }
+.tools__row { display: flex; gap: 6px; }
 .tool {
   flex: 1; display: flex; flex-direction: column; align-items: center; gap: 3px;
   padding: 8px 2px; border: 1px solid var(--line); border-radius: 7px;
-  background: #fff; cursor: pointer; color: var(--muted);
+  background: #fff; cursor: pointer; color: var(--text); font-size: 10.5px; font-weight: 600;
 }
-.tool__glyph { font-size: 17px; line-height: 1; }
-.tool__name { font-size: 10.5px; font-weight: 600; }
-.tool:hover { background: var(--panel); }
-.tool.is-active { color: #fff; background: var(--navy); border-color: var(--navy); }
-
-.composer { padding: 12px 14px; border-bottom: 1px solid var(--line); background: var(--panel); }
-.field { display: block; margin-bottom: 10px; }
-.field__label { display: block; font-size: 11px; color: var(--muted); margin-bottom: 4px; }
-input[type="text"] {
-  width: 100%; padding: 7px 9px; border: 1px solid var(--line);
-  border-radius: 6px; font-size: 13px; background: #fff;
-}
-input[type="text"]:focus { outline: none; border-color: var(--blue); }
-
-.axisRow { margin-bottom: 12px; }
-.axes { display: flex; gap: 6px; }
-.axis {
-  flex: 1; padding: 6px 0; border: 1px solid var(--line); border-radius: 6px;
-  background: #fff; font-size: 13px; font-weight: 600; cursor: pointer; color: var(--muted);
-}
-.axis.is-active { color: #fff; background: var(--navy); border-color: var(--navy); }
-
-.add {
-  width: 100%; padding: 9px; border: none; border-radius: 6px;
-  background: var(--red); color: #fff; font-size: 13px; font-weight: 600; cursor: pointer;
-}
-.add:hover { filter: brightness(0.95); }
-.add:active { filter: brightness(0.88); }
-.hint { margin: 8px 0 0; font-size: 11px; color: var(--muted); }
+.tool span { font-size: 17px; line-height: 1; }
+.tool:hover { border-color: var(--navy); background: #fff; }
+.tool:active { background: var(--panel); }
 
 .list { padding: 12px 14px; }
-.list__head {
-  font-size: 11px; text-transform: uppercase; letter-spacing: 0.5px;
-  color: var(--muted); margin-bottom: 8px;
+.list__head { display: flex; gap: 6px; margin-bottom: 10px; }
+.chip {
+  font-size: 11px; font-weight: 600; padding: 2px 8px; border-radius: 10px;
 }
-.count {
-  display: inline-block; min-width: 16px; padding: 0 5px; border-radius: 8px;
-  background: var(--line); color: var(--text); text-align: center; font-size: 11px;
-}
+.chip--open { background: #fbe7e4; color: var(--red); }
+.chip--done { background: #e4f3e8; color: var(--green); }
 
 .marks { list-style: none; margin: 0; padding: 0; }
 .mark {
   border: 1px solid var(--line); border-left: 3px solid var(--red);
-  border-radius: 6px; margin-bottom: 8px; padding: 8px 9px; background: #fff;
+  border-radius: 6px; margin-bottom: 8px; padding: 9px 10px; background: #fff;
 }
-.mark--resolved { border-left-color: var(--green); }
+.mark--resolved { border-left-color: var(--green); background: #fbfdfb; }
 
 .mark__head { display: flex; align-items: center; gap: 8px; }
 .mark__dot { width: 9px; height: 9px; border-radius: 50%; background: var(--red); flex: none; }
 .mark--resolved .mark__dot { background: var(--green); }
 .mark__label {
-  font-size: 12px; font-weight: 600; white-space: nowrap;
-  overflow: hidden; text-overflow: ellipsis; max-width: 96px;
+  flex: 1; font-size: 13px; font-weight: 600; white-space: nowrap;
+  overflow: hidden; text-overflow: ellipsis;
 }
-.mark__tag { flex: 1; font-size: 11px; color: var(--muted); }
 .mark__icon {
   border: 1px solid var(--line); background: #fff; border-radius: 5px;
   width: 24px; height: 24px; font-size: 13px; cursor: pointer; color: var(--text);
@@ -96,20 +64,22 @@ input[type="text"]:focus { outline: none; border-color: var(--blue); }
 .mark__icon:hover { background: var(--panel); }
 .mark__icon--del { color: var(--red); border-color: #f2c7c1; }
 
-.mark__slider { display: flex; align-items: center; gap: 8px; margin-top: 8px; }
+.mark__meta { font-size: 11px; color: var(--muted); margin: 6px 0 8px; }
+
+.mark__slider { display: flex; align-items: center; gap: 8px; }
 .mark__slider input[type="range"] { flex: 1; accent-color: var(--red); }
 .mark--resolved .mark__slider input[type="range"] { accent-color: var(--green); }
 .mark__out {
-  font-size: 11px; color: var(--text); min-width: 46px; text-align: right;
-  font-variant-numeric: tabular-nums;
+  font-size: 11px; min-width: 46px; text-align: right; font-variant-numeric: tabular-nums;
 }
 
-.mark__resolve {
+.mark__foot {
   display: flex; align-items: center; gap: 6px;
-  margin-top: 8px; padding-top: 8px; border-top: 1px dashed var(--line);
+  margin-top: 9px; padding-top: 8px; border-top: 1px dashed var(--line);
 }
-.fuzzy-hint { flex: 1; font-size: 11px; color: var(--muted); font-style: italic; }
-.resolved-badge { flex: 1; font-size: 12px; color: var(--green); font-weight: 600; }
+.badge { flex: 1; font-size: 11px; font-weight: 600; }
+.badge--open { color: var(--amber); }
+.badge--done { color: var(--green); }
 .resolve-btn {
   border: none; background: var(--green); color: #fff; padding: 6px 12px;
   border-radius: 6px; font-size: 12px; font-weight: 600; cursor: pointer; flex: none;
@@ -117,4 +87,4 @@ input[type="text"]:focus { outline: none; border-color: var(--blue); }
 .resolve-btn:hover { filter: brightness(0.95); }
 .linkbtn { border: none; background: none; color: var(--blue); font-size: 12px; cursor: pointer; padding: 4px 6px; }
 
-.empty { font-size: 12px; color: var(--muted); text-align: center; padding: 8px 0; }
+.empty { font-size: 12px; color: var(--muted); text-align: center; line-height: 1.6; padding: 12px 0; }

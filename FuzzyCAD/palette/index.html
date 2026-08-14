@@ -9,47 +9,29 @@
 <body>
   <header class="head">
     <div class="brand">FuzzyCAD</div>
-    <div class="sub">fuzzy operations · sketchy = not final</div>
+    <div class="sub">open questions · resolve asynchronously</div>
   </header>
 
   <section class="tools">
-    <button class="tool is-active" data-tool="move" data-sel="body">
-      <span class="tool__glyph">⇄</span><span class="tool__name">Move</span>
-    </button>
-    <button class="tool" data-tool="rotate" data-sel="body">
-      <span class="tool__glyph">↻</span><span class="tool__name">Rotate</span>
-    </button>
-    <button class="tool" data-tool="extrude" data-sel="face">
-      <span class="tool__glyph">⤒</span><span class="tool__name">Extrude</span>
-    </button>
-    <button class="tool" data-tool="fillet" data-sel="edge">
-      <span class="tool__glyph">◜</span><span class="tool__name">Fillet</span>
-    </button>
-  </section>
-
-  <section class="composer">
-    <label class="field">
-      <span class="field__label">Label <span class="muted">(optional)</span></span>
-      <input id="label" type="text" placeholder="e.g. hinge angle" />
-    </label>
-
-    <div id="axisRow" class="axisRow">
-      <span class="field__label">Axis</span>
-      <div class="axes">
-        <button class="axis" data-axis="X">X</button>
-        <button class="axis" data-axis="Y">Y</button>
-        <button class="axis is-active" data-axis="Z">Z</button>
-      </div>
+    <span class="tools__label">Add a fuzzy op — then drag on the model:</span>
+    <div class="tools__row">
+      <button class="tool" data-tool="move"><span>⇄</span>Move</button>
+      <button class="tool" data-tool="rotate"><span>↻</span>Rotate</button>
+      <button class="tool" data-tool="extrude"><span>⤒</span>Extrude</button>
+      <button class="tool" data-tool="fillet"><span>◜</span>Fillet</button>
     </div>
-
-    <button id="add" class="add">+ Add fuzzy move at selection</button>
-    <p id="selHint" class="hint">Select a body (or a face of one) first.</p>
   </section>
 
   <section class="list">
-    <div class="list__head">Marks <span id="count" class="count">0</span></div>
+    <div class="list__head">
+      <span id="openCount" class="chip chip--open">0 open</span>
+      <span id="doneCount" class="chip chip--done">0 decided</span>
+    </div>
     <ul id="marks" class="marks"></ul>
-    <p id="empty" class="empty">No fuzzy operations yet.</p>
+    <p id="empty" class="empty">
+      No open questions yet.<br />
+      Pick a tool above, select geometry, and drag to propose an operation.
+    </p>
   </section>
 
   <script src="palette.js"></script>

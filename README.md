@@ -1,52 +1,50 @@
 # FuzzyCAD for Fusion 360
 
 A trial port of [FuzzyCAD](https://github.com/Scaffolder666/FuzzyCAD) from Onshape to
-Fusion 360, to see whether Fusion's add-in API removes the interaction ceilings we hit
-on Onshape.
+Fusion 360. The Onshape right-panel app kept hitting interaction ceilings; this tests
+whether Fusion's add-in API lets us build the interaction FuzzyCAD actually wants.
 
-FuzzyCAD is a tool for **uncertainty in CAD**: propose an operation without committing to
-it — "this part should move, roughly this way", "this edge should round over, about this
+FuzzyCAD is about **uncertainty in CAD**: propose an operation without committing —
+"this face should push out, roughly this far", "this edge should round over, about this
 much" — and let a collaborator resolve it later, asynchronously, by sharing the file.
 
-## The idea: a series of *fuzzy operation* tools
+## Two halves of the interaction
 
-Ported from the Onshape FeatureScript set. Each tool proposes a CAD operation and draws
-it as a **sketchy, hand-drawn ghost** in the viewport. **The sketchiness *is* the
-uncertainty** — it reads as "proposed, not final." You modify it easily with a slider
-(no ranges to type), and hit **Decide** when it's settled (the ghost snaps solid + green).
+**1. Direct manipulation in the viewport (SketchUp / Kyub style).**
+Pick a tool, then *drag right on the model*. A face pushes out, a body slides, an edge
+rounds over — and it draws as a **sketchy, hand-drawn ghost**. The sketchiness *is* the
+uncertainty: "proposed, not final." Each tool is a Fusion **Command** with a **drag
+manipulator** (`DistanceValueCommandInput` / `AngleValueCommandInput`); the
+`executePreview` event redraws the sketchy ghost live as you drag.
 
-| Tool | Select | Sketchy ghost shows |
+| Tool | Select | Drag to |
 | --- | --- | --- |
-| **Move** | a body | the body slid along an axis |
-| **Rotate** | a body | the body turned about an axis, + a sweep arc |
-| **Extrude** | a planar face | the face pushed out along its normal (a prism) |
-| **Fillet** | an edge | arcs rounding the corner across the edge |
+| **Move** | a body | slide it along an axis |
+| **Rotate** | a body | turn it about an axis |
+| **Extrude** | a planar face | push it out along its normal |
+| **Fillet** | an edge | round the corner over |
 
-Nothing is committed to real geometry — every tool draws **CustomGraphics overlay** only.
-The file carries the *proposed, uncertain* operation, to be shared and resolved later.
-That non-destructiveness is the whole point.
+**2. The right panel = the async-collaboration sidebar (think Overleaf).**
+Overleaf's right panel isn't a control surface — it's where collaborators see and resolve
+*comments*. FuzzyCAD's panel is the same idea: a list of **open questions**, each a fuzzy
+operation someone proposed. A collaborator reads it, nudges the amount if needed, and hits
+**Decide** — the ghost snaps solid + green. Reopen puts it back in question.
 
-### Interaction plumbing this leans on (all gated first)
-
-| Capability | Onshape | Here (Fusion add-in) |
-| --- | --- | --- |
-| Custom toolbar button → stateful side panel | limited iframe | **Palette** (a web view) |
-| Panel ⇄ CAD two-way messaging | narrow postMessage | `adsk.fusionSendData` ⇄ `sendInfoToHTML` |
-| Annotations in the viewport | drawn as *real bodies* (hacky) | **CustomGraphics** overlays (non-geometry) |
-| Hand-drawn "sketchy" strokes | not really possible | jittered `addLines` strokes |
-| Camera-facing labels / focus | not possible | camera basis + `viewport.camera` |
+Nothing is committed to real geometry — every ghost is **CustomGraphics overlay** only, so
+the `.f3d` file carries the *proposed, uncertain* operation. Sharing the file = sharing the
+open questions. That non-destructiveness is the whole point.
 
 ## Run it
 
-1. In Fusion 360: **Utilities → Add-Ins → Scripts and Add-Ins** (or press `Shift+S`).
-2. **Add-Ins** tab → the green **+** → **Add existing** → pick the `FuzzyCAD` folder.
-3. Select **FuzzyCAD** → **Run**. A **FuzzyCAD** button appears in the **Add-Ins** panel.
-4. In the panel: pick a **tool** (Move / Rotate / Extrude / Fillet), select the matching
-   geometry in the model (body / face / edge), optionally pick an axis, and click
-   **+ Add fuzzy … at selection**.
-5. A sketchy red ghost of the operation appears. Drag the mark's **slider** to change the
-   amount (the ghost updates live). Hit **Decide** to finalize (turns solid green);
-   **Reopen** to make it fuzzy again. **◎** focuses the camera; **×** deletes.
+1. In Fusion 360: **Utilities → Add-Ins → Scripts and Add-Ins** (or `Shift+S`).
+2. **Add-Ins** tab → green **+** → **Add existing** → pick the `FuzzyCAD` folder → **Run**.
+3. The **FuzzyCAD** panel opens (dock it wherever). The four tools also appear on the
+   toolbar's **Add-Ins** panel.
+4. In the panel, click a tool (**Move / Rotate / Extrude / Fillet**). Then in the
+   viewport, **select** the matching geometry and **drag** the manipulator arrow — a sketchy
+   ghost previews live. Click **OK** to add it as an open question.
+5. In the panel's list, drag a mark's slider to adjust the amount, or hit **Decide** to
+   finalize (solid green). **◎** focuses the camera; **×** deletes.
 
 If anything errors, Fusion pops a message box with the traceback — paste it back.
 
@@ -55,20 +53,23 @@ If anything errors, Fusion pops a message box with the traceback — paste it ba
 ```
 FuzzyCAD/
   FuzzyCAD.manifest     add-in manifest
-  FuzzyCAD.py           tools, sketchy-line renderer, messaging, camera
+  FuzzyCAD.py           tool commands + drag manipulators, sketchy renderer,
+                        live preview, the collaboration-panel messaging, camera
   palette/
-    index.html          tool strip + composer + mark list
+    index.html          tool launcher + open-questions list
     palette.css
     palette.js          plain JS + a tiny state store (swap for React later)
 ```
 
-## Roadmap
+## Notes & roadmap
 
-- **Sketch** tool (fuzzy 2D profiles) and more operation types.
-- In-viewport **drag manipulators** (Fusion `Command` + `DistanceValueCommandInput`)
-  instead of panel sliders — modify directly on the model.
-- Store marks in the document's **Attributes** so they travel with the `.f3d`
-  (lossless async sharing = share the file).
-- **Commit** a decided operation to real geometry via the modeling API — a deliberate,
-  separate act from proposing it.
-- Better fillet visualization (true rolling-ball arcs; current arcs are approximate).
+- **Drag manipulators**: if `setManipulator`'s signature differs on your Fusion build, the
+  tool falls back to a typed value field (no drag arrow) so it still works — tell us and
+  we'll fix the manipulator.
+- **Persistence**: store marks in the document's **Attributes** so they travel with the
+  `.f3d` (lossless async sharing).
+- **Comments**: give each open question a text thread, like an Overleaf comment.
+- **Commit**: optionally bake a decided operation into real geometry via the modeling API
+  — a deliberate, separate act from proposing it.
+- Fillet arcs are approximate (bezier across the corner); true rolling-ball fillets later.
+- **Sketch** tool (fuzzy 2D profiles).
