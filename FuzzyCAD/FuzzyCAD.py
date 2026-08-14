@@ -1,8 +1,9 @@
 """FuzzyCAD entry point.
 
 The original implementation is kept in FuzzyCAD_legacy.py. Runtime patches
-replace the fillet preview/range path, guard transient live-mark teardown, and
-add a live TEXT COMMANDS debug monitor for Fusion command transactions.
+replace the fillet preview/range path, guard transient live-mark teardown,
+commit accepted proposals in their own Fusion command transaction, and add a
+live TEXT COMMANDS debug monitor for Fusion command transactions.
 """
 import importlib.util
 import os
@@ -24,6 +25,8 @@ _patch = _load("fuzzycad_real_fillet", "fuzzycad_real_fillet.py")
 _patch.install(_legacy)
 _guard = _load("fuzzycad_sync_guard", "fuzzycad_sync_guard.py")
 _guard.install(_legacy)
+_commit = _load("fuzzycad_commit_bridge", "fuzzycad_commit_bridge.py")
+_commit.install(_legacy)
 _debug = _load("fuzzycad_debug_monitor", "fuzzycad_debug_monitor.py")
 _debug.install(_legacy)
 
