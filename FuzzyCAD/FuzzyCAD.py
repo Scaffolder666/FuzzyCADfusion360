@@ -22,11 +22,11 @@ inside the Fusion design for reopen/handoff workflows, render non-Fillet
 proposals as edge-only geometry, emphasize the actual rounded Fillet region,
 treat multi-body Move as one proposal group, expose procedural stage feedback in
 a left-side tool rail, profile the main preview paths, clear stale runtime
-graphics before persistence rehydration, keep sketch strokes light, add sparse
-surface scaffolds when smooth bodies have too few topology edges to communicate
-their 3D volume, add view-dependent apparent contours, add operation-specific
-motion rulers and lightweight card-hover replays, and restore the preferred
-FuzzyCAD panel layout on every add-in start.
+graphics before persistence rehydration, add sparse surface scaffolds when smooth
+bodies have too few topology edges, add view-dependent apparent contours, add
+operation-specific motion rulers and lightweight card-hover replays, centralize
+all known line hierarchy/colors/wobble into one semantic visual system, and
+restore the preferred FuzzyCAD panel layout on every add-in start.
 """
 import importlib.util
 import os
@@ -108,6 +108,8 @@ _cues = _load("fuzzycad_operation_cues", "fuzzycad_operation_cues.py")
 _cues.install(_legacy)
 _op_hover = _load("fuzzycad_operation_hover_animation", "fuzzycad_operation_hover_animation.py")
 _op_hover.install(_legacy)
+_visual_system = _load("fuzzycad_visual_system", "fuzzycad_visual_system.py")
+_visual_system.install(_legacy)
 _layout = _load("fuzzycad_layout_lock", "fuzzycad_layout_lock.py")
 _layout.install(_legacy)
 
