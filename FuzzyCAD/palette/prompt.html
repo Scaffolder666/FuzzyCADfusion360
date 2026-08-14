@@ -5,78 +5,139 @@
 <meta name="viewport" content="width=device-width, initial-scale=1" />
 <title>FuzzyCAD Decision</title>
 <style>
-:root{--navy:#21313f;--line:#e2e5ea;--muted:#7b8794;--orange:#e17e26;--bg:#fff;--panel:#f7f8fa}
+:root{--navy:#21313f;--line:#e2e5ea;--muted:#7b8794;--orange:#e17e26;--bg:#fff;--panel:#f7f8fa;--green:#2ea043}
 *{box-sizing:border-box}html,body{margin:0;padding:0;background:transparent;font-family:-apple-system,"Segoe UI",Roboto,sans-serif;color:var(--navy)}
 .card{margin:10px;padding:13px;border:1px solid var(--line);border-left:4px solid var(--orange);border-radius:10px;background:var(--bg);box-shadow:0 8px 24px rgba(20,31,43,.12)}
-.eyebrow{font-size:9px;text-transform:uppercase;letter-spacing:.8px;color:var(--muted);font-weight:700;margin-bottom:4px}
-.title{font-size:14px;font-weight:750;margin-bottom:4px}.message{font-size:11.5px;line-height:1.4;color:var(--muted);margin-bottom:7px}
-.legend{font-size:10.5px;line-height:1.35;color:#a8540c;background:#fff7ef;border-radius:6px;padding:6px 7px;margin-bottom:8px;display:none}
-.status{font-size:10.5px;line-height:1.35;color:var(--navy);font-weight:650;background:var(--panel);border-radius:6px;padding:6px 7px;margin-bottom:9px}
-.options{display:flex;gap:6px;flex-wrap:wrap}.choice{flex:1;min-width:82px;border:1px solid var(--line);border-radius:7px;padding:8px 7px;background:#fff;color:var(--navy);font-size:11px;font-weight:650;cursor:pointer}.choice:hover{border-color:var(--navy)}.choice.selected{border-color:var(--orange);background:#fff7ef;color:#a8540c;box-shadow:inset 0 0 0 1px var(--orange)}.glyph{display:block;font-size:16px;line-height:1.1;margin-bottom:2px}
+.eyebrow{font-size:9px;text-transform:uppercase;letter-spacing:.8px;color:var(--muted);font-weight:700;margin-bottom:5px}
+.title{font-size:15px;font-weight:760;line-height:1.25;margin-bottom:5px}.message{font-size:11.5px;line-height:1.45;color:var(--muted);margin-bottom:8px}
+.legend{font-size:10.5px;line-height:1.35;color:#a8540c;background:#fff7ef;border-radius:6px;padding:6px 7px;margin-bottom:9px;display:none}
+.choose{font-size:10px;font-weight:800;text-transform:uppercase;letter-spacing:.5px;color:var(--muted);margin:2px 0 6px}
+.options{display:flex;gap:7px;flex-wrap:wrap}.choice{flex:1;min-width:115px;border:1px solid var(--line);border-radius:8px;padding:9px 8px;background:#fff;color:var(--navy);font-size:11px;font-weight:700;cursor:pointer;line-height:1.25}.choice:hover{border-color:var(--navy);background:#fafbfc}.choice.selected{border-color:var(--orange);background:#fff7ef;color:#a8540c;box-shadow:inset 0 0 0 1px var(--orange)}.glyph{display:block;font-size:17px;line-height:1.1;margin-bottom:3px}.status{font-size:10.5px;line-height:1.35;color:var(--navy);font-weight:650;background:var(--panel);border-radius:6px;padding:6px 7px;margin-top:9px}.status.waiting{color:#8b5b1b;background:#fff8e8}
 </style>
 </head>
 <body>
 <div class="card">
   <div class="eyebrow">FuzzyCAD · Need Input</div>
   <div id="title" class="title">Preparing decision…</div>
-  <div id="message" class="message">Select geometry to continue.</div>
+  <div id="message" class="message">Waiting for the selected geometry.</div>
   <div id="legend" class="legend"></div>
-  <div id="status" class="status">Waiting for a FuzzyCAD choice.</div>
+  <div id="choose" class="choose">Choose one</div>
   <div id="options" class="options"></div>
+  <div id="status" class="status waiting">No choice received yet.</div>
 </div>
 <script>
 (function(){
   "use strict";
   var current={kind:null,selected:null,options:[]};
+  var receivedPrompt=false;
+  var readyTries=0;
+
   function send(action,data){
     if(window.adsk&&typeof window.adsk.fusionSendData==="function"){
       return window.adsk.fusionSendData(action,JSON.stringify(data||{}));
     }
     return Promise.resolve("{}");
   }
-  function statusText(data){
+
+  function moveQuestion(data){
+    var count=(data&&data.related_count)||null;
+    if(count){
+      return "Should the Selected part move by itself, or should R1–R"+count+" move with it?";
+    }
+    return "Should the Selected part move by itself, or should the highlighted nearby parts move with it?";
+  }
+
+  function optionLabel(data,opt){
     if(data.kind==="move_scope"){
-      return data.selected==="together"
-        ? "Current: Together — orange R1/R2 parts will follow the selected part."
-        : "Current: Only this — orange R1/R2 parts stay where they are.";
+      if(opt.value==="only") return "Move only Selected";
+      if(opt.value==="together") return "Move Selected + highlighted parts together";
     }
     if(data.kind==="scale_scope"){
-      if(data.selected==="negative") return "Current: - side moves; the opposite side stays fixed.";
-      if(data.selected==="both") return "Current: Both sides move symmetrically about the center.";
-      return "Current: + side moves; the opposite side stays fixed.";
+      if(opt.value==="positive") return "+ side moves";
+      if(opt.value==="negative") return "- side moves";
+      if(opt.value==="both") return "Both sides move";
+    }
+    return opt.label||opt.value;
+  }
+
+  function statusText(data){
+    if(!data || !data.kind) return "Waiting for a FuzzyCAD decision.";
+    if(data.kind==="move_scope"){
+      return data.selected==="together"
+        ? "Selected choice: TOGETHER — the highlighted parts should follow the Selected part."
+        : "Selected choice: ONLY THIS — the highlighted parts should stay where they are.";
+    }
+    if(data.kind==="scale_scope"){
+      if(data.selected==="negative") return "Selected choice: - side moves; the opposite side stays fixed.";
+      if(data.selected==="both") return "Selected choice: both sides move symmetrically about the center.";
+      return "Selected choice: + side moves; the opposite side stays fixed.";
     }
     return "Choose how this change should be scoped.";
   }
+
   function legendText(data){
-    if(data.kind==="move_scope") return "Viewport legend: Selected = the body you grabbed. R1, R2, … = nearby candidates outlined in orange.";
-    if(data.kind==="scale_scope") return "One-sided is the default. The fixed-end marker shows which side remains anchored.";
+    if(data.kind==="move_scope") return "Viewport: Selected = the part you grabbed. R1, R2, … = nearby parts highlighted in orange.";
+    if(data.kind==="scale_scope") return "One-sided scale is the default. The fixed-end marker shows the anchored side.";
     return "";
   }
+
   function render(data){
     current=data||{};
-    document.getElementById("title").textContent=current.title||"FuzzyCAD decision";
-    document.getElementById("message").textContent=current.message||"";
+    receivedPrompt=!!current.kind;
+
+    var title=current.title||"FuzzyCAD decision";
+    var message=current.message||"";
+    if(current.kind==="move_scope"){
+      title="How should this Move affect the highlighted parts?";
+      message=moveQuestion(current);
+    } else if(current.kind==="scale_scope"){
+      title="How should this Scale change the body?";
+      message="Choose which side moves, or scale symmetrically from the center.";
+    }
+    document.getElementById("title").textContent=title;
+    document.getElementById("message").textContent=message;
+
     var legend=document.getElementById("legend");
     var lt=legendText(current);legend.textContent=lt;legend.style.display=lt?"block":"none";
-    document.getElementById("status").textContent=statusText(current);
+
     var wrap=document.getElementById("options");wrap.innerHTML="";
     (current.options||[]).forEach(function(opt){
       var b=document.createElement("button");
       b.className="choice"+(current.selected===opt.value?" selected":"");
+      b.setAttribute("data-value",opt.value);
       var g=document.createElement("span");g.className="glyph";g.textContent=opt.glyph||"";
-      var t=document.createElement("span");t.textContent=opt.label||opt.value;
+      var t=document.createElement("span");t.textContent=optionLabel(current,opt);
       b.appendChild(g);b.appendChild(t);
       b.addEventListener("click",function(){
-        current.selected=opt.value;render(current);
+        current.selected=opt.value;
+        render(current);
         send("choice",{kind:current.kind,value:opt.value});
       });
       wrap.appendChild(b);
     });
+
+    var status=document.getElementById("status");
+    status.className="status";
+    status.textContent=statusText(current);
   }
+
   window.fusionJavaScriptHandler={handle:function(action,dataString){
-    try{var data=dataString?JSON.parse(dataString):{};if(action==="prompt")render(data);}catch(e){return JSON.stringify({ok:false,error:String(e)});}return JSON.stringify({ok:true});
+    try{
+      var data=dataString?JSON.parse(dataString):{};
+      if(action==="prompt") render(data);
+    }catch(e){return JSON.stringify({ok:false,error:String(e)});}
+    return JSON.stringify({ok:true});
   }};
-  document.addEventListener("DOMContentLoaded",function(){send("ready",{});});
+
+  document.addEventListener("DOMContentLoaded",function(){
+    function askForState(){
+      if(receivedPrompt || readyTries>=12) return;
+      readyTries+=1;
+      send("ready",{});
+      setTimeout(askForState,180);
+    }
+    askForState();
+  });
 })();
 </script>
 </body>
