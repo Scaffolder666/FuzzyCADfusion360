@@ -8,8 +8,9 @@ when a sidebar Accept targets a different proposal from the active handle, trace
 the native manipulator inputChanged/executePreview events directly, keep the
 Fillet candidate/card synchronized even when Fusion emits inputChanged without
 executePreview, unify Move/Rotate/Scale/Extrude candidate visualization with
-the Fillet visual language, and replay Move proposals as a one-way animation
-while their sidebar card is hovered.
+the Fillet visual language, replay Move proposals as a one-way animation while
+their sidebar card is hovered, and keep notes screen-facing while showing a
+lightweight active-candidate size frame.
 """
 import importlib.util
 import os
@@ -47,6 +48,8 @@ _visuals = _load("fuzzycad_unified_visuals", "fuzzycad_unified_visuals.py")
 _visuals.install(_legacy)
 _move_hover = _load("fuzzycad_move_hover_animation", "fuzzycad_move_hover_animation.py")
 _move_hover.install(_legacy)
+_annotations = _load("fuzzycad_note_dimensions", "fuzzycad_note_dimensions.py")
+_annotations.install(_legacy)
 
 run = _legacy.run
 stop = _legacy.stop
