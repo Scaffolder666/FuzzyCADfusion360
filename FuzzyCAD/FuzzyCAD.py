@@ -3,8 +3,9 @@
 The original implementation is kept in FuzzyCAD_legacy.py. Runtime patches
 replace the fillet preview/range path, guard transient live-mark teardown,
 commit accepted proposals in their own Fusion command transaction, add a live
-TEXT COMMANDS debug monitor, trace manipulator values through final apply, and
-flag when a sidebar Accept targets a different proposal from the active handle.
+TEXT COMMANDS debug monitor, trace manipulator values through final apply, flag
+when a sidebar Accept targets a different proposal from the active handle, and
+trace the native manipulator inputChanged/executePreview events directly.
 """
 import importlib.util
 import os
@@ -34,6 +35,8 @@ _values = _load("fuzzycad_value_trace", "fuzzycad_value_trace.py")
 _values.install(_legacy)
 _identity = _load("fuzzycad_accept_identity_trace", "fuzzycad_accept_identity_trace.py")
 _identity.install(_legacy)
+_handle_events = _load("fuzzycad_handle_event_trace", "fuzzycad_handle_event_trace.py")
+_handle_events.install(_legacy)
 
 run = _legacy.run
 stop = _legacy.stop
