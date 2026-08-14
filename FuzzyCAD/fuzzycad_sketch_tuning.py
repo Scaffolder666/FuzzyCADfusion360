@@ -1,9 +1,8 @@
 """Tune the hand-drawn proposal style to stay legible without becoming heavy.
 
-Earlier visual patches compounded line weight and jitter.  This final sketch
-renderer keeps the same two-stroke hand-drawn language, but uses a moderate
-2 px proposal stroke and a smaller wobble.  Explicit local emphasis (for
-example the orange Fillet boundary at weight 4) is preserved.
+The visual language keeps two slightly offset pencil strokes, but the normal
+proposal outline now uses Fusion's lightest practical line weight.  Local
+operation cues can still request stronger emphasis explicitly.
 """
 
 import math
@@ -34,12 +33,11 @@ def install(m):
         if amp <= 0:
             strokes = 1
         elif strokes >= 2:
-            # Keep the handmade offset, but avoid the very dark/thick result of
-            # several visual wrappers stacking their own amplification.
-            amp = float(amp) * 0.82
+            # Preserve the handmade offset, but keep the proposal itself light.
+            amp = float(amp) * 0.68
             strokes = min(int(strokes), 2)
-            if int(weight) < 4:
-                weight = 2
+            if int(weight) < 3:
+                weight = 1
 
         color = m._solid(rgb)
         for s in range(strokes):
@@ -65,7 +63,7 @@ def install(m):
 
     def run(context):
         result = old_run(context)
-        log("SKETCH TUNING READY: 2px proposal strokes + reduced wobble")
+        log("SKETCH TUNING READY: 1px proposal strokes + restrained two-stroke wobble")
         return result
 
     m.run = run
