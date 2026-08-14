@@ -394,7 +394,19 @@ def _draw_scale(group, mark, rgb, amp):
                  mark["id"] * 100 + i, weight=1, strokes=2)
 
 
+def _draw_real(group, mark, rgb, amp):
+    """Sketchy-fy the cached real-geometry edges. Returns True if it drew."""
+    real = _geom[mark["id"]].get("real")
+    if not real:
+        return False
+    for i, poly in enumerate(real):
+        _sketchy(group, poly, rgb, amp, mark["id"] * 400 + i, weight=1, strokes=2)
+    return True
+
+
 def _draw_extrude(group, mark, rgb, amp):
+    if _draw_real(group, mark, rgb, amp):
+        return
     g = _geom[mark["id"]]; d = g["normal"]; amt = mark["amount"]
     for i, loop in enumerate(g["loops"]):
         off = _translate(loop, d, amt)
@@ -404,6 +416,8 @@ def _draw_extrude(group, mark, rgb, amp):
 
 
 def _draw_fillet(group, mark, rgb, amp):
+    if _draw_real(group, mark, rgb, amp):
+        return
     g = _geom[mark["id"]]
     r = mark["amount"]
     stations = g.get("stations") or []
@@ -902,6 +916,10 @@ class FuzzyPreview(adsk.core.CommandEventHandler):
                             _sync_category(cat)
                         mid = _live.get(cat)
                         mark = _find(mid) if mid is not None else None
+                        if mid is not None:
+                            # dragging -> drop the cached real geometry so the fast
+                            # approximation follows the handle; recomputed on OK/edit
+                            _geom[mid].pop("real", None)
                     else:
                         mark = _sync_category(cat)
                     if mark is not None:
@@ -923,6 +941,12 @@ class FuzzyExecute(adsk.core.CommandEventHandler):
             if _pending:
                 for cat in CMD_CATS[_active_cmd]:
                     _sync_category(cat)
+                # 'release' -> compute the real geometry ghost for extrude/fillet
+                for cat in CMD_CATS[_active_cmd]:
+                    mid = _live.get(cat)
+                    m = _find(mid) if mid is not None else None
+                    if m and m["tool"] in ("extrude", "fillet"):
+                        _compute_real(m)
             _clear(GROUP_PREVIEW)
             _redraw_marks()
             if _pending:
@@ -1174,6 +1198,80 @@ def _accept(mark):
         return False
 
 
+def _real_extrude_edges(face, depth):
+    """Create a temporary extrude (new body), sample its edges, then delete it."""
+    comp = face.body.parentComponent
+    ext = comp.features.extrudeFeatures
+    ei = ext.createInput(face, adsk.fusion.FeatureOperations.NewBodyFeatureOperation)
+    ei.setDistanceExtent(False, adsk.core.ValueInput.createByReal(depth))
+    feat = ext.add(ei)
+    polys = []
+    try:
+        for i in range(feat.bodies.count):
+            b = feat.bodies.item(i)
+            for j in range(b.edges.count):
+                p = _sample_edge(b.edges.item(j))
+                if len(p) >= 2:
+                    polys.append(p)
+    finally:
+        try:
+            feat.deleteMe()
+        except Exception:
+            pass
+    return polys
+
+
+def _real_fillet_edges(edge, radius):
+    """Apply a temporary fillet, sample the new fillet-face edges, then undo it."""
+    comp = edge.body.parentComponent
+    fil = comp.features.filletFeatures
+    coll = adsk.core.ObjectCollection.create(); coll.add(edge)
+    fi = fil.createInput()
+    fi.addConstantRadiusEdgeSet(coll, adsk.core.ValueInput.createByReal(radius), True)
+    feat = fil.add(fi)
+    polys = []
+    try:
+        for i in range(feat.faces.count):
+            f = feat.faces.item(i)
+            for j in range(f.edges.count):
+                p = _sample_edge(f.edges.item(j))
+                if len(p) >= 2:
+                    polys.append(p)
+    finally:
+        try:
+            feat.deleteMe()
+        except Exception:
+            pass
+    return polys
+
+
+def _compute_real(mark):
+    """Compute the actual proposed geometry, extract its edges, and cache them so
+    the ghost is drawn from the real result. Falls back to the approximation on
+    any failure (e.g. radius too large). Deliberately only called at discrete
+    moments (drag release / card edit), not every frame — it builds and deletes a
+    real feature, which is comparatively expensive."""
+    if _design() is None or mark["id"] not in _geom:
+        return
+    ent = _entity.get(mark["id"])
+    if ent is None or abs(mark.get("amount", 0.0)) < 1e-9:
+        _geom[mark["id"]].pop("real", None)
+        return
+    try:
+        if mark["tool"] == "extrude":
+            polys = _real_extrude_edges(ent, mark["amount"])
+        elif mark["tool"] == "fillet":
+            polys = _real_fillet_edges(ent, mark["amount"])
+        else:
+            return
+        if polys:
+            _geom[mark["id"]]["real"] = polys
+        else:
+            _geom[mark["id"]].pop("real", None)
+    except Exception:
+        _geom[mark["id"]].pop("real", None)
+
+
 def _remove_mark(mid):
     _marks[:] = [m for m in _marks if m["id"] != mid]
     _geom.pop(mid, None)
@@ -1281,6 +1379,10 @@ class PaletteHTMLHandler(adsk.core.HTMLEventHandler):
                 m = _find(data.get("id"))
                 if m:
                     _apply_edit(m, data.get("key"), data.get("value"))
+                    # editing the number is a discrete 'release' — recompute the
+                    # real geometry ghost for extrude/fillet
+                    if m["tool"] in ("extrude", "fillet"):
+                        _compute_real(m)
                     # Redraw the 3D only — do NOT push state back, or the panel
                     # re-renders and the field you're typing in loses focus.
                     _redraw_marks()
