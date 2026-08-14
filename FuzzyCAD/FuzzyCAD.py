@@ -68,7 +68,7 @@ MTYPE_COLOR = {"need_input": (200, 44, 32), "constraint": (183, 121, 31),
                "alternative": (128, 90, 180)}
 MTYPE_GLYPH = {"need_input": u"!", "constraint": u"‖", "alternative": u"⑂"}
 GHOST_OPACITY = 0.16
-SKETCH_AMP_FRAC = 0.013
+SKETCH_AMP_FRAC = 0.008
 EDGE_SAMPLES = 10
 
 # Persistent store — the fuzziness data structure.
@@ -162,21 +162,19 @@ def _sketchy(group, pts, rgb, amp, seed, weight=2, strokes=2):
     import random
     for s in range(strokes):
         rng = random.Random(seed * 131 + s * 977)
+        # one gentle low-frequency bow per axis (not multi-frequency noise), so
+        # the stroke reads as a smooth hand-drawn curve, not a random zigzag.
         waves = []
         for _ax in range(3):
-            waves.append((1.0 + rng.random() * 1.4, 2.2 + rng.random() * 2.0,
-                          rng.random() * 6.2832, rng.random() * 6.2832))
+            waves.append((0.7 + rng.random() * 0.6, rng.random() * 6.2832))
         flat = []
         for i, (x, y, z) in enumerate(pts):
             u = i / (n - 1)
-            # ends keep a little wobble (0.35) instead of pinning to zero, so
-            # strokes overshoot slightly at corners — a hand-drawn look.
-            taper = 0.35 + 0.65 * math.sin(math.pi * u)
+            taper = math.sin(math.pi * u)  # smooth, zero at both ends
             base = [x, y, z]
             for ax in range(3):
-                f1, f2, p1, p2 = waves[ax]
-                base[ax] += amp * taper * (0.6 * math.sin(u * 6.2832 * f1 + p1)
-                                           + 0.4 * math.sin(u * 6.2832 * f2 + p2))
+                f1, p1 = waves[ax]
+                base[ax] += amp * taper * math.sin(u * 6.2832 * f1 + p1)
             flat.extend(base)
         coords = adsk.fusion.CustomGraphicsCoordinates.create(flat)
         line = group.addLines(coords, list(range(n)), True)
@@ -389,8 +387,10 @@ def _draw_extrude(group, mark, rgb, amp):
 
 
 def _draw_fillet(group, mark, rgb, amp):
+    g = _geom[mark["id"]]
     r = mark["amount"]
-    for i, (P, t1, t2) in enumerate(_geom[mark["id"]]["stations"]):
+    stations = g.get("stations") or []
+    for i, (P, t1, t2) in enumerate(stations):
         a = (P[0] + t1[0] * r, P[1] + t1[1] * r, P[2] + t1[2] * r)
         b = (P[0] + t2[0] * r, P[1] + t2[1] * r, P[2] + t2[2] * r)
         pts = []
@@ -399,7 +399,12 @@ def _draw_fillet(group, mark, rgb, amp):
             pts.append((mu * mu * a[0] + 2 * mu * u * P[0] + u * u * b[0],
                         mu * mu * a[1] + 2 * mu * u * P[1] + u * u * b[1],
                         mu * mu * a[2] + 2 * mu * u * P[2] + u * u * b[2]))
-        _sketchy(group, pts, rgb, amp * 0.6, mark["id"] * 100 + i, weight=3)
+        _sketchy(group, pts, rgb, amp * 0.6, mark["id"] * 100 + i, weight=4)
+    if not stations:
+        # couldn't compute a rounded profile — at least highlight the edge
+        edge = g.get("edge") or []
+        if len(edge) >= 2:
+            _sketchy(group, edge, rgb, amp, mark["id"] * 99, weight=4, strokes=2)
 
 
 def _draw_note(group, mark, rgb, amp):
@@ -446,27 +451,31 @@ def _camera_xy():
 
 
 def _draw_badge(group, mark):
-    """A CRISP (not hand-drawn) uncertainty badge sitting on the ghost: a clean
-    warning triangle with a clear glyph inside, coloured by mark type."""
+    """A crisp, standard-sized warning-triangle badge sitting just above the
+    ghost, with a clear glyph inside. Notes show themselves via their callout,
+    so they get no badge."""
+    if mark.get("tool") == "note":
+        return
     mtype = mark.get("mtype", "need_input")
     rgb = MTYPE_COLOR.get(mtype, COLOR_WARN)
     a = mark["anchor"]; s = mark.get("size", 3.0)
     (xx, xy, xz), (yx, yy, yz) = _camera_xy()
-    lift = s * 0.95
+    # standard size — clamp so a big body doesn't get a giant badge
+    bs = max(0.7, min(s * 0.14, 1.8))
+    lift = max(1.0, min(s * 0.3, 3.0)) + bs
     center = (a[0] + yx * lift, a[1] + yy * lift, a[2] + yz * lift)
-    r = s * 0.42
 
-    def P(ux, uy):  # a point in the camera plane offset by (ux,uy)*r from center
-        return (center[0] + r * (ux * xx + uy * yx),
-                center[1] + r * (ux * xy + uy * yy),
-                center[2] + r * (ux * xz + uy * yz))
+    def P(ux, uy):
+        return (center[0] + bs * (ux * xx + uy * yx),
+                center[1] + bs * (ux * xy + uy * yy),
+                center[2] + bs * (ux * xz + uy * yz))
 
     # clean, closed warning triangle (amp=0 -> straight crisp strokes)
-    top, bl, br = P(0.0, 1.0), P(-0.9, -0.75), P(0.9, -0.75)
-    _sketchy(group, [top, br, bl, top], rgb, 0.0, mark["id"] * 555, weight=4, strokes=1)
-    # the glyph, always facing the camera, centred a touch low inside the triangle
-    cp = adsk.core.Point3D.create(*P(0.0, -0.05))
-    text = group.addText(MTYPE_GLYPH.get(mtype, u"!"), "Arial", s * 0.5,
+    top, bl, br = P(0.0, 1.0), P(-0.92, -0.72), P(0.92, -0.72)
+    _sketchy(group, [top, br, bl, top], rgb, 0.0, mark["id"] * 555, weight=5, strokes=1)
+    # the glyph, upright and centred inside the triangle
+    cp = adsk.core.Point3D.create(*P(0.0, -0.12))
+    text = group.addText(MTYPE_GLYPH.get(mtype, u"!"), "Arial", bs * 0.95,
                          _label_transform(cp))
     text.color = _solid(rgb)
     _apply_billboard(text, cp)
@@ -616,11 +625,11 @@ def _build_pending(cmd, ent):
         if not isinstance(ent, adsk.fusion.BRepEdge):
             return None
         center, size = _bbox_center_size(ent)
-        stations = _fillet_stations(ent)
-        if not stations:
-            return None
-        return {"geom": {"stations": stations}, "anchor": center, "size": size,
-                "stations": stations, "entity": ent, "body": body}
+        stations = _fillet_stations(ent)   # may be [] on tricky edges
+        edge = _sample_edge(ent)
+        return {"geom": {"stations": stations, "edge": edge}, "anchor": center,
+                "size": size, "stations": stations, "edge": edge,
+                "entity": ent, "body": body}
     return None
 
 
@@ -725,14 +734,20 @@ def _place_manipulator():
             it.setManipulator(origin, adsk.core.Vector3D.create(*_pending["normal"]))
             _show("d")
         if "fillet" in cats:
-            st = _pending["stations"][len(_pending["stations"]) // 2]
-            P, t1, t2 = st
-            v = adsk.core.Vector3D.create((t1[0] + t2[0]) / 2, (t1[1] + t2[1]) / 2,
-                                          (t1[2] + t2[2]) / 2)
-            if v.length < 1e-6:
-                v = adsk.core.Vector3D.create(*t1)
+            stations = _pending.get("stations") or []
+            if stations:
+                P, t1, t2 = stations[len(stations) // 2]
+                v = adsk.core.Vector3D.create((t1[0] + t2[0]) / 2, (t1[1] + t2[1]) / 2,
+                                              (t1[2] + t2[2]) / 2)
+                if v.length < 1e-6:
+                    v = adsk.core.Vector3D.create(*t1)
+                origin_f = adsk.core.Point3D.create(*P)
+            else:
+                edge = _pending.get("edge") or [_pending["anchor"]]
+                origin_f = adsk.core.Point3D.create(*edge[len(edge) // 2])
+                v = adsk.core.Vector3D.create(0, 0, 1)
             v.normalize()
-            _inputs.itemById("d").setManipulator(adsk.core.Point3D.create(*P), v)
+            _inputs.itemById("d").setManipulator(origin_f, v)
             _show("d")
     except Exception:
         for cid in ("mX", "mY", "mZ", "rX", "rY", "rZ", "sc", "d"):
@@ -771,6 +786,22 @@ class FuzzyInputChanged(adsk.core.InputChangedEventHandler):
                         _draw_rotate_guides(_group(GROUP_PREVIEW),
                                             _pending["anchor"], _pending["size"], None)
                         _app.activeViewport.refresh()
+                    # Extrude/Fillet: seed a default so a ghost appears the moment
+                    # you pick — the manipulator or the card can refine it. (Their
+                    # drag can be finicky; this guarantees the tool 'works'.)
+                    if _active_cmd in ("extrude", "fillet"):
+                        it = _inputs.itemById("d")
+                        if it is not None and abs(it.value) < 1e-9:
+                            try:
+                                it.value = _pending["size"] * (0.2 if _active_cmd == "extrude" else 0.08)
+                            except Exception:
+                                pass
+                        _sync_category(_active_cmd)
+                        mid = _live.get(_active_cmd)
+                        if mid is not None:
+                            _clear(GROUP_PREVIEW)
+                            _draw_one(_group(GROUP_PREVIEW), _find(mid))
+                            _app.activeViewport.refresh()
         except Exception:
             if _ui:
                 _ui.messageBox("FuzzyCAD inputChanged failed:\n{}".format(
