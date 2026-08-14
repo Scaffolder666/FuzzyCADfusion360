@@ -1,10 +1,9 @@
 /* FuzzyCAD sidebar — the async-collaboration panel (Overleaf-style).
  *
- * Each card is an open question a teammate can act on:
- *   - editable value fields (Move X/Y/Z, angle, depth, radius) -> updates the 3D ghost
- *   - a status: Needs Input / Answered / Rejected
- *   - a comment thread
- *   - Apply, which turns it into real geometry
+ * Three collaboration states are explicit in the UI:
+ *   Need Input      geometry-changing questions that require a value/decision
+ *   Constraint      geometry-linked notes/requirements
+ *   Conflict        competing alternatives handled by Compare
  *
  * Bridge:  panel -> Fusion : adsk.fusionSendData(action, jsonString)
  *          Fusion -> panel : window.fusionJavaScriptHandler.handle(action, jsonString)
@@ -39,13 +38,24 @@
     els.count = document.getElementById("count");
   }
 
-  var GLYPH = { move: "⇄", rotate: "↻", scale: "⤢", extrude: "⤒", fillet: "◜", note: "◈" };
-  var STATUS_LABEL = { open: "Open", answered: "Answered" };
+  var GLYPH = {
+    move: "⇄", rotate: "↻", scale: "⤢", scale_axis: "⇥",
+    axis_rotate: "⟳", extrude: "⤒", fillet: "◜", note: "◈"
+  };
+
   var MTYPES = [
     { key: "need_input", label: "Need Input", glyph: "!" },
     { key: "constraint", label: "Constraint", glyph: "‖" },
-    { key: "alternative", label: "Alternative", glyph: "⑂" }
+    { key: "conflict", label: "Conflict", glyph: "⑂" }
   ];
+
+  function canonicalType(t) {
+    // Old builds called the conflict state "alternative". Render old cards with
+    // the new taxonomy without mutating their stored data.
+    if (t === "alternative") return "conflict";
+    if (t === "constraint" || t === "conflict") return t;
+    return "need_input";
+  }
 
   var editTimers = {};
   function editLive(id, key, value) {
@@ -57,14 +67,12 @@
   /* Move hover animation.
    * Keep the browser responsible only for timing. Fusion receives a throttled
    * normalized progress value and updates the CustomGraphics BRep on its main thread.
-   * 0.72 s travel + 0.22 s hold + 0.10 s reset gap, repeated while hovered.
    */
   var hoverMoveTimer = null;
   var hoverMoveId = null;
   var hoverMoveStarted = 0;
 
   function easeMove(t) {
-    // Smoothstep: directional, smooth at both ends, no reverse motion.
     return t * t * (3 - 2 * t);
   }
 
@@ -100,7 +108,6 @@
       } else if (cycle < 940) {
         t = 1.0;
       } else {
-        // Brief reset at the source makes every loop read in the same direction.
         t = 0.0;
       }
       send("hoverMoveFrame", { id: mark.id, t: t });
@@ -113,8 +120,6 @@
   function stop(ev) { ev.stopPropagation(); }
 
   function render() {
-    // A state refresh can replace the hovered DOM node. Do not leave its old
-    // timer running against a proposal/card that may have changed or disappeared.
     stopMoveHover(true);
 
     els.count.textContent = state.marks.length + (state.marks.length === 1 ? " open question" : " open questions");
@@ -122,7 +127,7 @@
     els.marks.innerHTML = "";
 
     state.marks.forEach(function (m) {
-      var mtype = m.mtype || "need_input";
+      var mtype = canonicalType(m.mtype);
       var li = document.createElement("li");
       li.className = "mark mark--" + m.status + " type--" + mtype;
       li.title = m.tool === "move"
@@ -136,27 +141,31 @@
         });
       }
 
-      // header
       var head = document.createElement("div");
       head.className = "mark__head";
       var glyph = document.createElement("span");
-      glyph.className = "mark__glyph"; glyph.textContent = GLYPH[m.tool] || "◆";
+      glyph.className = "mark__glyph";
+      glyph.textContent = GLYPH[m.tool] || "◆";
       var name = document.createElement("span");
-      name.className = "mark__label"; name.textContent = m.label || m.title;
+      name.className = "mark__label";
+      name.textContent = m.label || m.title;
       var mt = MTYPES.filter(function (t) { return t.key === mtype; })[0] || MTYPES[0];
       var typeTag = document.createElement("span");
       typeTag.className = "typetag typetag--" + mtype;
       typeTag.textContent = mt.glyph + " " + mt.label;
-      head.appendChild(glyph); head.appendChild(name); head.appendChild(typeTag);
+      head.appendChild(glyph);
+      head.appendChild(name);
+      head.appendChild(typeTag);
       li.appendChild(head);
 
-      // editable value fields
       var fields = document.createElement("div");
       fields.className = "mark__fields";
-      m.fields.forEach(function (f) {
+      (m.fields || []).forEach(function (f) {
         if (f.kind === "text") {
           var ta = document.createElement("textarea");
-          ta.className = "fld__text"; ta.value = f.value; ta.rows = 2;
+          ta.className = "fld__text";
+          ta.value = f.value;
+          ta.rows = 2;
           ta.placeholder = "Type the constraint / note…";
           ta.addEventListener("click", stop);
           ta.addEventListener("input", function () { editLive(m.id, f.key, ta.value); });
@@ -166,50 +175,69 @@
         var row = document.createElement("label");
         row.className = "fld";
         var lab = document.createElement("span");
-        lab.className = "fld__label"; lab.textContent = f.label;
+        lab.className = "fld__label";
+        lab.textContent = f.label;
         var inp = document.createElement("input");
-        inp.type = "number"; inp.value = f.value; inp.className = "fld__input";
+        inp.type = "number";
+        inp.value = f.value;
+        inp.className = "fld__input";
         inp.addEventListener("click", stop);
-        inp.addEventListener("input", function () { editLive(m.id, f.key, parseFloat(inp.value || "0")); });
+        inp.addEventListener("input", function () {
+          editLive(m.id, f.key, parseFloat(inp.value || "0"));
+        });
         var unit = document.createElement("span");
-        unit.className = "fld__unit"; unit.textContent = f.unit;
-        row.appendChild(lab); row.appendChild(inp); row.appendChild(unit);
+        unit.className = "fld__unit";
+        unit.textContent = f.unit;
+        row.appendChild(lab);
+        row.appendChild(inp);
+        row.appendChild(unit);
         fields.appendChild(row);
       });
       li.appendChild(fields);
 
-      // accept == apply to the real model (+ resolve); reject == discard
       var acts = document.createElement("div");
       acts.className = "mark__acts";
       var acceptLabel = m.tool === "note" ? "Accept" : "Accept (apply)";
       acts.appendChild(btn(acceptLabel, "act act--apply", function (ev) {
-        stop(ev); stopMoveHover(true); send("accept", { id: m.id });
+        stop(ev);
+        stopMoveHover(true);
+        send("accept", { id: m.id });
       }));
       acts.appendChild(btn("Reject", "act act--no", function (ev) {
-        stop(ev); stopMoveHover(true); send("reject", { id: m.id });
+        stop(ev);
+        stopMoveHover(true);
+        send("reject", { id: m.id });
       }));
       li.appendChild(acts);
 
-      // comments
       var cwrap = document.createElement("div");
       cwrap.className = "mark__comments";
       (m.comments || []).forEach(function (c) {
         var cm = document.createElement("div");
-        cm.className = "cmt"; cm.textContent = c.text;
+        cm.className = "cmt";
+        cm.textContent = c.text;
         cwrap.appendChild(cm);
       });
       var crow = document.createElement("div");
       crow.className = "cmt__row";
       var cin = document.createElement("input");
-      cin.type = "text"; cin.className = "cmt__input"; cin.placeholder = "Add a comment…";
+      cin.type = "text";
+      cin.className = "cmt__input";
+      cin.placeholder = "Add a comment…";
       cin.addEventListener("click", stop);
       var post = btn("Post", "cmt__post", function (ev) {
         stop(ev);
         var t = cin.value.trim();
-        if (t) { send("comment", { id: m.id, text: t }); cin.value = ""; }
+        if (t) {
+          send("comment", { id: m.id, text: t });
+          cin.value = "";
+        }
       });
-      cin.addEventListener("keydown", function (e) { if (e.key === "Enter") post.click(); });
-      crow.appendChild(cin); crow.appendChild(post);
+      cin.addEventListener("keydown", function (e) {
+        if (e.key === "Enter") post.click();
+      });
+      crow.appendChild(cin);
+      crow.appendChild(post);
       cwrap.appendChild(crow);
       li.appendChild(cwrap);
 
@@ -219,11 +247,15 @@
 
   function btn(text, cls, fn) {
     var b = document.createElement("button");
-    b.className = cls; b.textContent = text; b.addEventListener("click", fn);
+    b.className = cls;
+    b.textContent = text;
+    b.addEventListener("click", fn);
     return b;
   }
 
   document.addEventListener("DOMContentLoaded", function () {
-    cache(); render(); send("ready", {});
+    cache();
+    render();
+    send("ready", {});
   });
 })();
