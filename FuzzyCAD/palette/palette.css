@@ -13,151 +13,108 @@
 * { box-sizing: border-box; }
 
 html, body {
-  margin: 0;
-  padding: 0;
+  margin: 0; padding: 0;
   font-family: -apple-system, "Segoe UI", Roboto, sans-serif;
-  font-size: 13px;
-  color: var(--text);
-  background: var(--bg);
+  font-size: 13px; color: var(--text); background: var(--bg);
 }
+.muted { color: var(--muted); font-weight: 400; }
 
-.head {
-  padding: 12px 14px 10px;
-  border-bottom: 1px solid var(--line);
-}
+.head { padding: 12px 14px 10px; border-bottom: 1px solid var(--line); }
 .brand { font-size: 15px; font-weight: 700; letter-spacing: 0.3px; }
 .sub { font-size: 11px; color: var(--muted); margin-top: 2px; }
 
-.composer {
-  padding: 12px 14px;
+/* tool strip */
+.tools {
+  display: flex; gap: 6px; padding: 10px 12px;
   border-bottom: 1px solid var(--line);
-  background: var(--panel);
 }
-.lead {
-  margin: 0 0 12px;
-  font-size: 12px;
-  line-height: 1.45;
-  color: var(--muted);
+.tool {
+  flex: 1; display: flex; flex-direction: column; align-items: center; gap: 3px;
+  padding: 8px 2px; border: 1px solid var(--line); border-radius: 7px;
+  background: #fff; cursor: pointer; color: var(--muted);
 }
-.lead b { color: var(--text); }
+.tool__glyph { font-size: 17px; line-height: 1; }
+.tool__name { font-size: 10.5px; font-weight: 600; }
+.tool:hover { background: var(--panel); }
+.tool.is-active { color: #fff; background: var(--navy); border-color: var(--navy); }
 
+.composer { padding: 12px 14px; border-bottom: 1px solid var(--line); background: var(--panel); }
 .field { display: block; margin-bottom: 10px; }
-.field--half { margin-bottom: 0; }
-.field__label {
-  display: block;
-  font-size: 11px;
-  color: var(--muted);
-  margin-bottom: 4px;
+.field__label { display: block; font-size: 11px; color: var(--muted); margin-bottom: 4px; }
+input[type="text"] {
+  width: 100%; padding: 7px 9px; border: 1px solid var(--line);
+  border-radius: 6px; font-size: 13px; background: #fff;
 }
-input[type="text"], input[type="number"] {
-  width: 100%;
-  padding: 7px 9px;
-  border: 1px solid var(--line);
-  border-radius: 6px;
-  font-size: 13px;
-  background: #fff;
-}
-input:focus { outline: none; border-color: var(--blue); }
+input[type="text"]:focus { outline: none; border-color: var(--blue); }
 
-.axes { display: flex; gap: 6px; margin-bottom: 12px; }
+.axisRow { margin-bottom: 12px; }
+.axes { display: flex; gap: 6px; }
 .axis {
-  flex: 1;
-  padding: 7px 0;
-  border: 1px solid var(--line);
-  border-radius: 6px;
-  background: #fff;
-  font-size: 13px;
-  font-weight: 600;
-  cursor: pointer;
-  color: var(--muted);
+  flex: 1; padding: 6px 0; border: 1px solid var(--line); border-radius: 6px;
+  background: #fff; font-size: 13px; font-weight: 600; cursor: pointer; color: var(--muted);
 }
 .axis.is-active { color: #fff; background: var(--navy); border-color: var(--navy); }
 
-.range { display: flex; gap: 8px; margin-bottom: 12px; }
-.range .field { flex: 1; }
-
 .add {
-  width: 100%;
-  padding: 9px;
-  border: none;
-  border-radius: 6px;
-  background: var(--red);
-  color: #fff;
-  font-size: 13px;
-  font-weight: 600;
-  cursor: pointer;
+  width: 100%; padding: 9px; border: none; border-radius: 6px;
+  background: var(--red); color: #fff; font-size: 13px; font-weight: 600; cursor: pointer;
 }
 .add:hover { filter: brightness(0.95); }
 .add:active { filter: brightness(0.88); }
-
 .hint { margin: 8px 0 0; font-size: 11px; color: var(--muted); }
 
 .list { padding: 12px 14px; }
 .list__head {
-  font-size: 11px;
-  text-transform: uppercase;
-  letter-spacing: 0.5px;
-  color: var(--muted);
-  margin-bottom: 8px;
+  font-size: 11px; text-transform: uppercase; letter-spacing: 0.5px;
+  color: var(--muted); margin-bottom: 8px;
 }
 .count {
-  display: inline-block;
-  min-width: 16px;
-  padding: 0 5px;
-  border-radius: 8px;
-  background: var(--line);
-  color: var(--text);
-  text-align: center;
-  font-size: 11px;
+  display: inline-block; min-width: 16px; padding: 0 5px; border-radius: 8px;
+  background: var(--line); color: var(--text); text-align: center; font-size: 11px;
 }
 
 .marks { list-style: none; margin: 0; padding: 0; }
 .mark {
-  border: 1px solid var(--line);
-  border-left: 3px solid var(--red);
-  border-radius: 6px;
-  margin-bottom: 8px;
-  padding: 8px 9px;
-  background: #fff;
+  border: 1px solid var(--line); border-left: 3px solid var(--red);
+  border-radius: 6px; margin-bottom: 8px; padding: 8px 9px; background: #fff;
 }
 .mark--resolved { border-left-color: var(--green); }
 
 .mark__head { display: flex; align-items: center; gap: 8px; }
-.mark__dot {
-  width: 9px; height: 9px; border-radius: 50%;
-  background: var(--red); flex: none;
-}
+.mark__dot { width: 9px; height: 9px; border-radius: 50%; background: var(--red); flex: none; }
 .mark--resolved .mark__dot { background: var(--green); }
 .mark__label {
-  font-size: 12px; font-weight: 600;
-  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
-  max-width: 90px;
+  font-size: 12px; font-weight: 600; white-space: nowrap;
+  overflow: hidden; text-overflow: ellipsis; max-width: 96px;
 }
-.mark__val { flex: 1; font-size: 11px; color: var(--muted); }
+.mark__tag { flex: 1; font-size: 11px; color: var(--muted); }
 .mark__icon {
-  border: 1px solid var(--line); background: #fff;
-  border-radius: 5px; width: 24px; height: 24px;
-  font-size: 13px; cursor: pointer; color: var(--text);
+  border: 1px solid var(--line); background: #fff; border-radius: 5px;
+  width: 24px; height: 24px; font-size: 13px; cursor: pointer; color: var(--text);
   line-height: 1; flex: none;
 }
 .mark__icon:hover { background: var(--panel); }
 .mark__icon--del { color: var(--red); border-color: #f2c7c1; }
 
+.mark__slider { display: flex; align-items: center; gap: 8px; margin-top: 8px; }
+.mark__slider input[type="range"] { flex: 1; accent-color: var(--red); }
+.mark--resolved .mark__slider input[type="range"] { accent-color: var(--green); }
+.mark__out {
+  font-size: 11px; color: var(--text); min-width: 46px; text-align: right;
+  font-variant-numeric: tabular-nums;
+}
+
 .mark__resolve {
   display: flex; align-items: center; gap: 6px;
   margin-top: 8px; padding-top: 8px; border-top: 1px dashed var(--line);
 }
-.resolve-input { flex: 1; padding: 5px 7px; font-size: 12px; }
+.fuzzy-hint { flex: 1; font-size: 11px; color: var(--muted); font-style: italic; }
+.resolved-badge { flex: 1; font-size: 12px; color: var(--green); font-weight: 600; }
 .resolve-btn {
-  border: none; background: var(--green); color: #fff;
-  padding: 6px 10px; border-radius: 6px; font-size: 12px;
-  font-weight: 600; cursor: pointer; flex: none;
+  border: none; background: var(--green); color: #fff; padding: 6px 12px;
+  border-radius: 6px; font-size: 12px; font-weight: 600; cursor: pointer; flex: none;
 }
 .resolve-btn:hover { filter: brightness(0.95); }
-.resolved-badge { flex: 1; font-size: 12px; color: var(--green); font-weight: 600; }
-.linkbtn {
-  border: none; background: none; color: var(--blue);
-  font-size: 12px; cursor: pointer; padding: 4px 6px;
-}
+.linkbtn { border: none; background: none; color: var(--blue); font-size: 12px; cursor: pointer; padding: 4px 6px; }
 
 .empty { font-size: 12px; color: var(--muted); text-align: center; padding: 8px 0; }

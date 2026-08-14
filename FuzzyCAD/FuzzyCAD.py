@@ -1,36 +1,31 @@
 """
 FuzzyCAD — Fusion 360 add-in trial.
 
-This iteration tests FuzzyCAD's *actual contribution*: a real uncertainty
-REPRESENTATION, not a generic marker.
+A *series* of fuzzy operation tools, ported from the Onshape FeatureScript set.
+Each tool proposes a CAD operation (move / rotate / extrude / fillet) and draws
+it as a **sketchy, hand-drawn ghost** in the viewport. The sketchiness *is* the
+uncertainty: it reads as "proposed, not final yet." The user modifies it easily
+(a slider — no ranges to type), and resolves it (the ghost turns solid + green)
+when the decision is made.
 
-Representation built here: **Open Range (Needs Input)**.
-A geometric parameter (a rotation angle, here) whose value is not decided — it
-is an open range [min, max]. We render the *space of possibilities* directly in
-the viewport:
+Nothing is committed to real geometry — every tool draws CustomGraphics overlay
+only. The point of FuzzyCAD is that the file carries the *proposed, uncertain*
+operation, to be shared and resolved asynchronously.
 
-  * the real body stays put (the current design),
-  * two translucent ghost copies show the body rotated to min and to max,
-  * an arc sweeps the angular range,
-  * a camera-facing label reads  theta in [min, max].
-
-A collaborator resolves it asynchronously by picking a value — the envelope
-collapses to a single confirmed (green) ghost. Crucially we DO NOT commit the
-rotation to real geometry: the point of FuzzyCAD is that the file carries the
-*uncertainty itself*, to be shared and resolved later. Committing is a separate,
-deliberate act (roadmap).
-
-Everything lives in the CustomGraphics overlay layer — no real bodies are
-created — so the uncertainty is non-destructive annotation on top of the model.
+Tools:
+  move    — a body slides along an axis (sketchy ghost of the whole body)
+  rotate  — a body turns about an axis (sketchy ghost + arc)
+  extrude — a face pushes out along its normal (sketchy prism)
+  fillet  — an edge rounds over (sketchy arcs across the corner)
 """
 
 import math
+import random
 import traceback
 
 import adsk.core
 import adsk.fusion
 
-# Keep handlers alive for the lifetime of the add-in.
 _handlers = []
 _app = None
 _ui = None
@@ -42,20 +37,18 @@ CMD_TOOLTIP = "Open the FuzzyCAD uncertainty panel"
 PALETTE_ID = "FuzzyCAD_Palette"
 PALETTE_NAME = "FuzzyCAD"
 PALETTE_URL = "palette/index.html"
-PANEL_ID = "SolidScriptsAddinsPanel"  # the "Add-Ins" panel on the Design toolbar
+PANEL_ID = "SolidScriptsAddinsPanel"
 GRAPHICS_GROUP_ID = "FuzzyCAD_Marks"
 
-# Overlay palette.
-COLOR_RANGE = (217, 47, 28)     # red   — open / undecided
-COLOR_RESOLVED = (46, 160, 67)  # green — a value was chosen
-GHOST_OPACITY = 0.28
+COLOR_FUZZY = (217, 47, 28)     # red   — proposed / uncertain
+COLOR_RESOLVED = (46, 160, 67)  # green — decided
+SKETCH_AMP_FRAC = 0.012         # jitter as a fraction of model size
+EDGE_SAMPLES = 6
 
-# In-memory store for the trial. Real port persists to document Attributes so
-# marks travel with the .f3d. Each mark is a dict; the live BRepBody is held
-# separately (not JSON-serializable) keyed by mark id.
-_marks = []
-_bodies = {}
-_next_mark_id = 1
+# In-memory store for the trial. Real port persists to document Attributes.
+_marks = []          # list of public dicts (JSON-safe)
+_geom = {}           # id -> cached base geometry for redraw (Point tuples)
+_next_id = 1
 
 
 # --- CustomGraphics group --------------------------------------------------
@@ -65,161 +58,288 @@ def _graphics_group():
         return None
     root = design.rootComponent
     for i in range(root.customGraphicsGroups.count):
-        group = root.customGraphicsGroups.item(i)
-        if group.id == GRAPHICS_GROUP_ID:
-            return group
-    group = root.customGraphicsGroups.add()
-    group.id = GRAPHICS_GROUP_ID
-    return group
+        g = root.customGraphicsGroups.item(i)
+        if g.id == GRAPHICS_GROUP_ID:
+            return g
+    g = root.customGraphicsGroups.add()
+    g.id = GRAPHICS_GROUP_ID
+    return g
 
 
 def _clear_graphics():
-    group = _graphics_group()
-    if group:
-        group.deleteMe()
+    g = _graphics_group()
+    if g:
+        g.deleteMe()
 
 
-# --- geometry helpers ------------------------------------------------------
-def _axis_vector(axis):
-    return {"X": (1.0, 0.0, 0.0),
-            "Y": (0.0, 1.0, 0.0),
-            "Z": (0.0, 0.0, 1.0)}.get(axis, (0.0, 0.0, 1.0))
+def _solid(rgb):
+    r, g, b = rgb
+    return adsk.fusion.CustomGraphicsSolidColorEffect.create(
+        adsk.core.Color.create(r, g, b, 255))
+
+
+# --- sketchy line drawing --------------------------------------------------
+def _sketchy(group, pts, rgb, amp, seed, weight=2, strokes=2):
+    """Draw a polyline (list of (x,y,z)) as hand-drawn strokes.
+    amp=0 draws a single clean stroke (used for resolved/solid marks)."""
+    if len(pts) < 2:
+        return
+    if amp <= 0:
+        strokes = 1
+    color = _solid(rgb)
+    for s in range(strokes):
+        rng = random.Random(seed * 131 + s * 977)
+        flat = []
+        for i, (x, y, z) in enumerate(pts):
+            # No jitter at the very ends keeps strokes anchored; interior wobbles.
+            k = 0.0 if (i == 0 or i == len(pts) - 1) else amp
+            flat.extend([x + (rng.random() - 0.5) * 2 * k,
+                         y + (rng.random() - 0.5) * 2 * k,
+                         z + (rng.random() - 0.5) * 2 * k])
+        coords = adsk.fusion.CustomGraphicsCoordinates.create(flat)
+        line = group.addLines(coords, list(range(len(pts))), True)
+        line.color = color
+        line.weight = weight
+
+
+# --- sampling geometry into point tuples -----------------------------------
+def _sample_edge(edge, n=EDGE_SAMPLES):
+    pts = []
+    try:
+        ev = edge.geometry.evaluator
+        ok, tmin, tmax = ev.getParameterExtents()
+        for i in range(n + 1):
+            t = tmin + (tmax - tmin) * i / n
+            ok, p = ev.getPointAtParameter(t)
+            if ok:
+                pts.append((p.x, p.y, p.z))
+    except Exception:
+        try:
+            s = edge.startVertex.geometry
+            e = edge.endVertex.geometry
+            pts = [(s.x, s.y, s.z), (e.x, e.y, e.z)]
+        except Exception:
+            pts = []
+    return pts
+
+
+def _sample_body(body):
+    loops = []
+    for i in range(body.edges.count):
+        p = _sample_edge(body.edges.item(i))
+        if len(p) >= 2:
+            loops.append(p)
+    return loops
+
+
+def _sample_face(face):
+    loops = []
+    for i in range(face.edges.count):
+        p = _sample_edge(face.edges.item(i))
+        if len(p) >= 2:
+            loops.append(p)
+    return loops
+
+
+def _face_normal(face):
+    try:
+        geo = face.geometry
+        nrm = getattr(geo, "normal", None)
+        if nrm is not None:
+            v = nrm.copy()
+            v.normalize()
+            return (v.x, v.y, v.z)
+    except Exception:
+        pass
+    try:
+        ev = face.evaluator
+        ok, prange = ev.parametricRange()
+        u = (prange.minPoint.x + prange.maxPoint.x) / 2
+        v = (prange.minPoint.y + prange.maxPoint.y) / 2
+        ok, nrm = ev.getNormalAtParameter(adsk.core.Point2D.create(u, v))
+        nrm.normalize()
+        return (nrm.x, nrm.y, nrm.z)
+    except Exception:
+        return (0.0, 0.0, 1.0)
+
+
+def _fillet_stations(edge, n=5):
+    """Sample stations along an edge, each with two in-face directions to bevel
+    across. Returns list of (P, t1, t2) as tuples, or [] on failure."""
+    out = []
+    try:
+        faces = edge.faces
+        if faces.count < 2:
+            return out
+        f1, f2 = faces.item(0), faces.item(1)
+        ev = edge.geometry.evaluator
+        ok, tmin, tmax = ev.getParameterExtents()
+        for i in range(1, n):
+            t = tmin + (tmax - tmin) * i / n
+            ok, P = ev.getPointAtParameter(t)
+            ok2, tan = ev.getFirstDerivative(t)
+            if not (ok and ok2):
+                continue
+            tan.normalize()
+            ok3, n1 = f1.evaluator.getNormalAtPoint(P)
+            ok4, n2 = f2.evaluator.getNormalAtPoint(P)
+            if not (ok3 and ok4):
+                continue
+            # in-face directions perpendicular to the edge tangent
+            d1 = n1.crossProduct(tan); d1.normalize()
+            d2 = tan.crossProduct(n2); d2.normalize()
+            # orient each to point away from the other face
+            if d1.dotProduct(n2) > 0:
+                d1.scaleBy(-1)
+            if d2.dotProduct(n1) > 0:
+                d2.scaleBy(-1)
+            out.append(((P.x, P.y, P.z),
+                        (d1.x, d1.y, d1.z),
+                        (d2.x, d2.y, d2.z)))
+    except Exception:
+        return []
+    return out
+
+
+# --- transforms ------------------------------------------------------------
+def _translate(pts, dir_unit, amount):
+    dx, dy, dz = dir_unit
+    return [(x + dx * amount, y + dy * amount, z + dz * amount) for (x, y, z) in pts]
+
+
+def _rotate_pts(pts, anchor, axis, angle_deg):
+    m = adsk.core.Matrix3D.create()
+    ax, ay, az = {"X": (1, 0, 0), "Y": (0, 1, 0), "Z": (0, 0, 1)}.get(axis, (0, 0, 1))
+    m.setToRotation(math.radians(angle_deg),
+                    adsk.core.Vector3D.create(ax, ay, az),
+                    adsk.core.Point3D.create(*anchor))
+    out = []
+    for (x, y, z) in pts:
+        p = adsk.core.Point3D.create(x, y, z)
+        p.transformBy(m)
+        out.append((p.x, p.y, p.z))
+    return out
+
+
+def _axis_unit(axis):
+    return {"X": (1.0, 0.0, 0.0), "Y": (0.0, 1.0, 0.0), "Z": (0.0, 0.0, 1.0)}.get(axis, (0.0, 0.0, 1.0))
+
+
+# --- per-tool drawing ------------------------------------------------------
+def _draw_move(group, mark, rgb, amp):
+    d = _axis_unit(mark["axis"])
+    amt = mark["amount"]
+    for i, loop in enumerate(_geom[mark["id"]]["edges"]):
+        _sketchy(group, _translate(loop, d, amt), rgb, amp, mark["id"] * 100 + i)
+    a = mark["anchor"]
+    tip = (a[0] + d[0] * amt, a[1] + d[1] * amt, a[2] + d[2] * amt)
+    _sketchy(group, [tuple(a), tip], rgb, amp, mark["id"] * 7, weight=3)
+
+
+def _draw_rotate(group, mark, rgb, amp):
+    for i, loop in enumerate(_geom[mark["id"]]["edges"]):
+        rot = _rotate_pts(loop, mark["anchor"], mark["axis"], mark["amount"])
+        _sketchy(group, rot, rgb, amp, mark["id"] * 100 + i)
+    _draw_arc(group, mark, rgb, amp)
+
+
+def _draw_arc(group, mark, rgb, amp):
+    a = mark["anchor"]
+    r = mark.get("size", 3.0) * 0.6
+    (ux, uy, uz), (wx, wy, wz) = _plane_basis(mark["axis"])
+    steps = 28
+    pts = []
+    for i in range(steps + 1):
+        t = math.radians((mark["amount"]) * i / steps)
+        c, s = math.cos(t), math.sin(t)
+        pts.append((a[0] + r * (c * ux + s * wx),
+                    a[1] + r * (c * uy + s * wy),
+                    a[2] + r * (c * uz + s * wz)))
+    _sketchy(group, pts, rgb, amp * 0.5, mark["id"] * 13, weight=2)
 
 
 def _plane_basis(axis):
-    """Two orthonormal vectors spanning the rotation plane for the given axis."""
     if axis == "X":
         return (0.0, 1.0, 0.0), (0.0, 0.0, 1.0)
     if axis == "Y":
         return (0.0, 0.0, 1.0), (1.0, 0.0, 0.0)
-    return (1.0, 0.0, 0.0), (0.0, 1.0, 0.0)  # Z
+    return (1.0, 0.0, 0.0), (0.0, 1.0, 0.0)
 
 
-def _rotation_matrix(anchor, axis, angle_deg):
-    m = adsk.core.Matrix3D.create()
-    ax, ay, az = _axis_vector(axis)
-    m.setToRotation(
-        math.radians(angle_deg),
-        adsk.core.Vector3D.create(ax, ay, az),
-        adsk.core.Point3D.create(*anchor),
-    )
-    return m
+def _draw_extrude(group, mark, rgb, amp):
+    g = _geom[mark["id"]]
+    d = g["normal"]
+    amt = mark["amount"]
+    for i, loop in enumerate(g["loops"]):
+        off = _translate(loop, d, amt)
+        _sketchy(group, off, rgb, amp, mark["id"] * 100 + i)          # top loop
+        # vertical connectors at the loop's endpoints
+        _sketchy(group, [loop[0], off[0]], rgb, amp, mark["id"] * 200 + i, weight=2)
+        _sketchy(group, [loop[-1], off[-1]], rgb, amp, mark["id"] * 300 + i, weight=2)
 
 
-def _solid_color(rgb):
-    r, g, b = rgb
-    return adsk.fusion.CustomGraphicsSolidColorEffect.create(
-        adsk.core.Color.create(r, g, b, 255)
-    )
+def _draw_fillet(group, mark, rgb, amp):
+    r = mark["amount"]
+    for i, (P, t1, t2) in enumerate(_geom[mark["id"]]["stations"]):
+        a = (P[0] + t1[0] * r, P[1] + t1[1] * r, P[2] + t1[2] * r)
+        b = (P[0] + t2[0] * r, P[1] + t2[1] * r, P[2] + t2[2] * r)
+        # quadratic bezier from a to b, pulled toward the sharp corner P -> rounds it
+        pts = []
+        for k in range(9):
+            u = k / 8.0
+            mu = 1 - u
+            pts.append((mu * mu * a[0] + 2 * mu * u * P[0] + u * u * b[0],
+                        mu * mu * a[1] + 2 * mu * u * P[1] + u * u * b[1],
+                        mu * mu * a[2] + 2 * mu * u * P[2] + u * u * b[2]))
+        _sketchy(group, pts, rgb, amp * 0.6, mark["id"] * 100 + i, weight=3)
 
 
-# --- drawing one mark's envelope -------------------------------------------
-def _ghost_body(group, body, matrix, rgb, opacity):
-    """Draw a translucent transformed copy of `body` as overlay graphics.
-    Falls back to a wireframe bounding box if addBRepBody is unavailable."""
-    try:
-        ghost = group.addBRepBody(body)
-        ghost.transform = matrix
-        ghost.color = _solid_color(rgb)
-        try:
-            ghost.setOpacity(opacity, True)
-        except Exception:
-            pass
-        return
-    except Exception:
-        pass
-    # Fallback: transformed bounding-box wireframe so the envelope still reads.
-    bbox = body.boundingBox
-    mn, mx = bbox.minPoint, bbox.maxPoint
-    corners = [
-        (mn.x, mn.y, mn.z), (mx.x, mn.y, mn.z), (mx.x, mx.y, mn.z), (mn.x, mx.y, mn.z),
-        (mn.x, mn.y, mx.z), (mx.x, mn.y, mx.z), (mx.x, mx.y, mx.z), (mn.x, mx.y, mx.z),
-    ]
-    pts = []
-    for cx, cy, cz in corners:
-        p = adsk.core.Point3D.create(cx, cy, cz)
-        p.transformBy(matrix)
-        pts.extend([p.x, p.y, p.z])
-    coords = adsk.fusion.CustomGraphicsCoordinates.create(pts)
-    edges = [0, 1, 1, 2, 2, 3, 3, 0, 4, 5, 5, 6, 6, 7, 7, 4, 0, 4, 1, 5, 2, 6, 3, 7]
-    line = group.addLines(coords, edges, False)
-    line.color = _solid_color(rgb)
-    line.weight = 2
+_DRAW = {"move": _draw_move, "rotate": _draw_rotate,
+         "extrude": _draw_extrude, "fillet": _draw_fillet}
 
 
-def _arc_lines(group, anchor, axis, radius, a0_deg, a1_deg, rgb):
-    """A polyline arc in the rotation plane from a0 to a1 degrees."""
-    (ux, uy, uz), (wx, wy, wz) = _plane_basis(axis)
-    steps = 40
-    pts = []
-    for i in range(steps + 1):
-        t = math.radians(a0_deg + (a1_deg - a0_deg) * i / steps)
-        c, s = math.cos(t), math.sin(t)
-        pts.extend([
-            anchor[0] + radius * (c * ux + s * wx),
-            anchor[1] + radius * (c * uy + s * wy),
-            anchor[2] + radius * (c * uz + s * wz),
-        ])
-    coords = adsk.fusion.CustomGraphicsCoordinates.create(pts)
-    strip = list(range(steps + 1))
-    line = group.addLines(coords, strip, True)
-    line.color = _solid_color(rgb)
-    line.weight = 3
-
-
-def _draw_mark(group, mark):
-    anchor = mark["anchor"]
-    axis = mark["axis"]
-    radius = mark.get("radius", 3.0)
-    body = _bodies.get(mark["id"])
-    resolved = mark.get("resolved")
-
-    if resolved is not None:
-        # Collapsed: a single confirmed ghost at the chosen value.
-        if body is not None:
-            _ghost_body(group, body, _rotation_matrix(anchor, axis, resolved),
-                        COLOR_RESOLVED, GHOST_OPACITY + 0.12)
-        _arc_lines(group, anchor, axis, radius, 0.0, resolved, COLOR_RESOLVED)
-        label = u"{}  θ = {:g}°".format(mark["label"], resolved)
-        rgb = COLOR_RESOLVED
-    else:
-        # Open range: ghosts at min and max bracket the real body.
-        if body is not None:
-            _ghost_body(group, body, _rotation_matrix(anchor, axis, mark["min"]),
-                        COLOR_RANGE, GHOST_OPACITY)
-            _ghost_body(group, body, _rotation_matrix(anchor, axis, mark["max"]),
-                        COLOR_RANGE, GHOST_OPACITY)
-        _arc_lines(group, anchor, axis, radius, mark["min"], mark["max"], COLOR_RANGE)
-        label = u"{}  θ ∈ [{:g}°, {:g}°]".format(mark["label"], mark["min"], mark["max"])
-        rgb = COLOR_RANGE
-
-    _draw_label(group, anchor, radius, axis, label, rgb)
-
-
-def _draw_label(group, anchor, radius, axis, text_str, rgb):
-    (ux, uy, uz), _ = _plane_basis(axis)
-    tip = adsk.core.Point3D.create(
-        anchor[0] + radius * 1.15 * ux,
-        anchor[1] + radius * 1.15 * uy,
-        anchor[2] + radius * 1.15 * uz,
-    )
-    text = group.addText(text_str, "Arial", 1.0, _label_transform(tip))
-    text.color = _solid_color(rgb)
-    _apply_billboard(text, tip)
-
-
-def _redraw_graphics():
+def _redraw():
     _clear_graphics()
     group = _graphics_group()
     if group is None:
         return
     for mark in _marks:
+        if mark["id"] not in _geom:
+            continue
+        resolved = mark.get("resolved")
+        rgb = COLOR_RESOLVED if resolved else COLOR_FUZZY
+        amp = 0.0 if resolved else mark.get("size", 3.0) * SKETCH_AMP_FRAC
         try:
-            _draw_mark(group, mark)
+            _DRAW[mark["tool"]](group, mark, rgb, amp)
+            _draw_label(group, mark, rgb)
         except Exception:
             if _ui:
-                _ui.messageBox("FuzzyCAD draw failed:\n{}".format(traceback.format_exc()))
+                _ui.messageBox("FuzzyCAD draw failed ({}):\n{}".format(
+                    mark["tool"], traceback.format_exc()))
     _app.activeViewport.refresh()
+
+
+def _unit_str(mark):
+    return "°" if mark["tool"] in ("rotate",) else "mm"
+
+
+def _amount_display(mark):
+    v = mark["amount"]
+    return v if mark["tool"] == "rotate" else v * 10.0  # cm -> mm for display
+
+
+def _draw_label(group, mark, rgb):
+    a = mark["anchor"]
+    off = mark.get("size", 3.0) * 0.9
+    tip = adsk.core.Point3D.create(a[0], a[1] + off, a[2])
+    verb = mark["tool"].capitalize()
+    val = "{:g}{}".format(_amount_display(mark), _unit_str(mark))
+    tag = mark["label"] or verb
+    suffix = " ✓" if mark.get("resolved") else " ~"
+    text = group.addText(u"{}  {}{}".format(tag, val, suffix), "Arial", 1.0,
+                         _label_transform(tip))
+    text.color = _solid(rgb)
+    _apply_billboard(text, tip)
 
 
 # --- camera-facing label ---------------------------------------------------
@@ -230,12 +350,9 @@ def _label_transform(anchor):
         eye, target = camera.eye, camera.target
         z = adsk.core.Vector3D.create(eye.x - target.x, eye.y - target.y, eye.z - target.z)
         z.normalize()
-        up = camera.upVector.copy()
-        up.normalize()
-        x = up.crossProduct(z)
-        x.normalize()
-        y = z.crossProduct(x)
-        y.normalize()
+        up = camera.upVector.copy(); up.normalize()
+        x = up.crossProduct(z); x.normalize()
+        y = z.crossProduct(x); y.normalize()
         transform.setWithCoordinateSystem(anchor, x, y, z)
     except Exception:
         transform.translation = adsk.core.Vector3D.create(anchor.x, anchor.y, anchor.z)
@@ -243,15 +360,14 @@ def _label_transform(anchor):
 
 
 def _apply_billboard(text, anchor):
-    factory = getattr(adsk.fusion, "CustomGraphicsBillBoarding", None)
-    if factory is None:
-        factory = getattr(adsk.core, "CustomGraphicsBillBoarding", None)
+    factory = getattr(adsk.fusion, "CustomGraphicsBillBoarding", None) \
+        or getattr(adsk.core, "CustomGraphicsBillBoarding", None)
     if factory is None or not hasattr(factory, "create"):
         return
     try:
         billboard = factory.create(anchor)
-        styles = (getattr(adsk.fusion, "CustomGraphicsBillBoardStyles", None)
-                  or getattr(adsk.core, "CustomGraphicsBillBoardStyles", None))
+        styles = getattr(adsk.fusion, "CustomGraphicsBillBoardStyles", None) \
+            or getattr(adsk.core, "CustomGraphicsBillBoardStyles", None)
         if styles is not None:
             billboard.billBoardStyle = styles.ScreenBillBoardStyle
         text.billBoarding = billboard
@@ -273,115 +389,169 @@ def _focus_camera(point_cm):
     viewport.camera = camera
 
 
-# --- selection -> body + anchor + size -------------------------------------
-def _selection_body():
-    """Return (body, anchor_cm, radius_cm) for the current selection, or (None, ...)."""
+# --- selection -------------------------------------------------------------
+def _bbox_center_size(ent):
+    bbox = ent.boundingBox
+    mn, mx = bbox.minPoint, bbox.maxPoint
+    center = [(mn.x + mx.x) / 2, (mn.y + mx.y) / 2, (mn.z + mx.z) / 2]
+    size = max(mx.x - mn.x, mx.y - mn.y, mx.z - mn.z, 1.0)
+    return center, size
+
+
+def _selected():
     sels = _ui.activeSelections
     if sels.count == 0:
-        return None, None, None
-    ent = sels.item(0).entity
-    body = None
-    if isinstance(ent, adsk.fusion.BRepBody):
-        body = ent
-    elif isinstance(ent, adsk.fusion.BRepFace):
-        body = ent.body
-    if body is None:
-        return None, None, None
-    bbox = body.boundingBox
-    mn, mx = bbox.minPoint, bbox.maxPoint
-    anchor = [(mn.x + mx.x) / 2, (mn.y + mx.y) / 2, (mn.z + mx.z) / 2]
-    extent = max(mx.x - mn.x, mx.y - mn.y, mx.z - mn.z, 1.0)
-    return body, anchor, extent * 0.7
+        return None
+    return sels.item(0).entity
+
+
+# --- build a mark per tool -------------------------------------------------
+def _new_mark(tool, label, axis):
+    global _next_id
+    ent = _selected()
+    if ent is None:
+        _ui.messageBox("Select geometry first.")
+        return None
+
+    mid = _next_id
+    mark = {"id": mid, "tool": tool, "label": (label or "").strip(),
+            "axis": axis or "Z", "resolved": False}
+
+    if tool in ("move", "rotate"):
+        body = ent if isinstance(ent, adsk.fusion.BRepBody) else \
+            (ent.body if isinstance(ent, adsk.fusion.BRepFace) else None)
+        if body is None:
+            _ui.messageBox("Select a body (or a face of one) for {}.".format(tool))
+            return None
+        center, size = _bbox_center_size(body)
+        _geom[mid] = {"edges": _sample_body(body)}
+        mark["anchor"] = center
+        mark["size"] = size
+        mark["amount"] = size * 0.25 if tool == "move" else 30.0  # cm or deg
+
+    elif tool == "extrude":
+        if not isinstance(ent, adsk.fusion.BRepFace):
+            _ui.messageBox("Select a planar face for extrude.")
+            return None
+        center, size = _bbox_center_size(ent)
+        _geom[mid] = {"loops": _sample_face(ent), "normal": _face_normal(ent)}
+        mark["anchor"] = center
+        mark["size"] = size
+        mark["amount"] = size * 0.25
+
+    elif tool == "fillet":
+        if not isinstance(ent, adsk.fusion.BRepEdge):
+            _ui.messageBox("Select an edge for fillet.")
+            return None
+        center, size = _bbox_center_size(ent)
+        stations = _fillet_stations(ent)
+        if not stations:
+            _ui.messageBox("Couldn't read that edge's faces for a fillet.")
+            return None
+        _geom[mid] = {"stations": stations}
+        mark["anchor"] = center
+        mark["size"] = size
+        mark["amount"] = size * 0.08
+
+    else:
+        return None
+
+    _next_id += 1
+    _marks.append(mark)
+    return mark
+
+
+def _public(mark):
+    tool = mark["tool"]
+    size = mark.get("size", 3.0)
+    if tool == "rotate":
+        amin, amax, step, unit = -90.0, 90.0, 1.0, "°"
+        val = mark["amount"]
+    else:  # move / extrude / fillet -> distance in mm
+        val = mark["amount"] * 10.0
+        amax = size * 10.0 * (0.6 if tool != "fillet" else 0.25)
+        amin = 0.0
+        step = max(round(amax / 40.0, 1), 0.1)
+        unit = "mm"
+    return {"id": mark["id"], "tool": tool, "label": mark["label"],
+            "axis": mark["axis"], "value": round(val, 2),
+            "min": round(amin, 2), "max": round(amax, 2), "step": step,
+            "unit": unit, "resolved": bool(mark["resolved"])}
+
+
+def _apply_value(mark, display_value):
+    if mark["tool"] == "rotate":
+        mark["amount"] = float(display_value)
+    else:
+        mark["amount"] = float(display_value) / 10.0  # mm -> cm
+
+
+def _find(mid):
+    return next((m for m in _marks if m["id"] == mid), None)
 
 
 # --- palette messaging -----------------------------------------------------
-def _mark_public(mark):
-    return {k: mark[k] for k in
-            ("id", "label", "axis", "min", "max", "resolved", "hasBody")}
-
-
 def _send_state(palette):
     import json
-    payload = json.dumps({"marks": [_mark_public(m) for m in _marks]})
-    palette.sendInfoToHTML("state", payload)
-
-
-def _find(mark_id):
-    return next((m for m in _marks if m["id"] == mark_id), None)
+    palette.sendInfoToHTML("state", json.dumps({"marks": [_public(m) for m in _marks]}))
 
 
 class PaletteHTMLHandler(adsk.core.HTMLEventHandler):
     def notify(self, args):
-        global _next_mark_id
         try:
             import json
-            html_args = adsk.core.HTMLEventArgs.cast(args)
-            action = html_args.action
-            data = json.loads(html_args.data) if html_args.data else {}
+            e = adsk.core.HTMLEventArgs.cast(args)
+            action = e.action
+            data = json.loads(e.data) if e.data else {}
             palette = _ui.palettes.itemById(PALETTE_ID)
 
             if action == "ready":
                 _send_state(palette)
 
-            elif action == "addRange":
-                body, anchor, radius = _selection_body()
-                if body is None:
-                    _ui.messageBox("Select a body (or a face of one) first, "
-                                   "then add an open range.")
-                    html_args.returnData = json.dumps({"ok": False})
-                    return
-                lo = float(data.get("min", 0))
-                hi = float(data.get("max", 0))
-                if hi < lo:
-                    lo, hi = hi, lo
-                mark = {
-                    "id": _next_mark_id,
-                    "label": (data.get("label") or "Angle").strip(),
-                    "axis": data.get("axis") or "Z",
-                    "anchor": anchor,
-                    "radius": radius,
-                    "min": lo,
-                    "max": hi,
-                    "resolved": None,
-                    "hasBody": True,
-                }
-                _bodies[_next_mark_id] = body
-                _next_mark_id += 1
-                _marks.append(mark)
-                _redraw_graphics()
-                _focus_camera(anchor)
-                _send_state(palette)
-                html_args.returnData = json.dumps({"ok": True})
+            elif action == "add":
+                mark = _new_mark(data.get("tool"), data.get("label"), data.get("axis"))
+                if mark:
+                    _redraw()
+                    _focus_camera(mark["anchor"])
+                    _send_state(palette)
+                e.returnData = json.dumps({"ok": bool(mark)})
 
-            elif action == "resolveMark":
+            elif action == "adjust":
                 mark = _find(data.get("id"))
                 if mark:
-                    mark["resolved"] = float(data.get("value"))
-                    _redraw_graphics()
-                    _send_state(palette)
-                html_args.returnData = json.dumps({"ok": True})
+                    if "value" in data:
+                        _apply_value(mark, data["value"])
+                    if "axis" in data:
+                        mark["axis"] = data["axis"]
+                    _redraw()
+                e.returnData = json.dumps({"ok": True})
 
-            elif action == "reopenMark":
+            elif action == "resolve":
                 mark = _find(data.get("id"))
                 if mark:
-                    mark["resolved"] = None
-                    _redraw_graphics()
-                    _send_state(palette)
-                html_args.returnData = json.dumps({"ok": True})
+                    mark["resolved"] = True
+                    _redraw(); _send_state(palette)
+                e.returnData = json.dumps({"ok": True})
 
-            elif action == "focusMark":
+            elif action == "reopen":
+                mark = _find(data.get("id"))
+                if mark:
+                    mark["resolved"] = False
+                    _redraw(); _send_state(palette)
+                e.returnData = json.dumps({"ok": True})
+
+            elif action == "focus":
                 mark = _find(data.get("id"))
                 if mark:
                     _focus_camera(mark["anchor"])
-                html_args.returnData = json.dumps({"ok": True})
+                e.returnData = json.dumps({"ok": True})
 
-            elif action == "deleteMark":
+            elif action == "delete":
                 mid = data.get("id")
                 _marks[:] = [m for m in _marks if m["id"] != mid]
-                _bodies.pop(mid, None)
-                _redraw_graphics()
-                _send_state(palette)
-                html_args.returnData = json.dumps({"ok": True})
+                _geom.pop(mid, None)
+                _redraw(); _send_state(palette)
+                e.returnData = json.dumps({"ok": True})
 
         except Exception:
             if _ui:
@@ -395,13 +565,11 @@ class ShowPaletteCommandCreatedHandler(adsk.core.CommandCreatedEventHandler):
             palette = _ui.palettes.itemById(PALETTE_ID)
             if palette is None:
                 palette = _ui.palettes.add(
-                    PALETTE_ID, PALETTE_NAME, PALETTE_URL,
-                    True, True, True, 340, 520,
-                )
+                    PALETTE_ID, PALETTE_NAME, PALETTE_URL, True, True, True, 340, 560)
                 palette.dockingState = adsk.core.PaletteDockingStates.PaletteDockStateRight
-                on_html = PaletteHTMLHandler()
-                palette.incomingFromHTML.add(on_html)
-                _handlers.append(on_html)
+                h = PaletteHTMLHandler()
+                palette.incomingFromHTML.add(h)
+                _handlers.append(h)
             else:
                 palette.isVisible = True
         except Exception:
@@ -420,10 +588,9 @@ def run(context):
         if cmd_def is None:
             cmd_def = _ui.commandDefinitions.addButtonDefinition(
                 CMD_ID, CMD_NAME, CMD_TOOLTIP, "")
-
-        on_created = ShowPaletteCommandCreatedHandler()
-        cmd_def.commandCreated.add(on_created)
-        _handlers.append(on_created)
+        h = ShowPaletteCommandCreatedHandler()
+        cmd_def.commandCreated.add(h)
+        _handlers.append(h)
 
         panel = _ui.allToolbarPanels.itemById(PANEL_ID)
         if panel and panel.controls.itemById(CMD_ID) is None:
@@ -432,8 +599,7 @@ def run(context):
         cmd_def.execute()
     except Exception:
         if _ui:
-            _ui.messageBox("FuzzyCAD failed to start:\n{}".format(
-                traceback.format_exc()))
+            _ui.messageBox("FuzzyCAD failed to start:\n{}".format(traceback.format_exc()))
 
 
 def stop(context):
@@ -441,24 +607,19 @@ def stop(context):
         _clear_graphics()
         if _app and _app.activeViewport:
             _app.activeViewport.refresh()
-
         palette = _ui.palettes.itemById(PALETTE_ID)
         if palette:
             palette.deleteMe()
-
         panel = _ui.allToolbarPanels.itemById(PANEL_ID)
         if panel:
             ctrl = panel.controls.itemById(CMD_ID)
             if ctrl:
                 ctrl.deleteMe()
-
         cmd_def = _ui.commandDefinitions.itemById(CMD_ID)
         if cmd_def:
             cmd_def.deleteMe()
-
         _handlers.clear()
-        _bodies.clear()
+        _geom.clear()
     except Exception:
         if _ui:
-            _ui.messageBox("FuzzyCAD failed to stop:\n{}".format(
-                traceback.format_exc()))
+            _ui.messageBox("FuzzyCAD failed to stop:\n{}".format(traceback.format_exc()))

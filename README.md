@@ -4,84 +4,71 @@ A trial port of [FuzzyCAD](https://github.com/Scaffolder666/FuzzyCAD) from Onsha
 Fusion 360, to see whether Fusion's add-in API removes the interaction ceilings we hit
 on Onshape.
 
-FuzzyCAD is a tool for **uncertainty in CAD**: mark something as "not decided yet"
-(this angle is unknown, this part should move but by how much is open) and let a
-collaborator resolve it later — asynchronously, by sharing the file.
+FuzzyCAD is a tool for **uncertainty in CAD**: propose an operation without committing to
+it — "this part should move, roughly this way", "this edge should round over, about this
+much" — and let a collaborator resolve it later, asynchronously, by sharing the file.
 
-## What this trial proves
+## The idea: a series of *fuzzy operation* tools
 
-Two layers. First the **interaction plumbing** was gated — the things that were hard or
-impossible in an Onshape right‑panel app:
+Ported from the Onshape FeatureScript set. Each tool proposes a CAD operation and draws
+it as a **sketchy, hand-drawn ghost** in the viewport. **The sketchiness *is* the
+uncertainty** — it reads as "proposed, not final." You modify it easily with a slider
+(no ranges to type), and hit **Decide** when it's settled (the ghost snaps solid + green).
 
-| Capability | Onshape | Here (Fusion add‑in) |
+| Tool | Select | Sketchy ghost shows |
 | --- | --- | --- |
-| Custom toolbar button → stateful side panel | limited iframe | **Palette** (a web view; put React in it) |
-| Panel ⇄ CAD two‑way messaging | narrow postMessage | `adsk.fusionSendData` ⇄ `sendInfoToHTML` |
-| Annotations in the viewport | drawn as *real bodies* (hacky) | **CustomGraphics overlays** (non‑geometry) |
-| Text that always faces the camera | not possible | camera‑facing / **billboarded** text |
-| Focus the camera on a mark | not possible | `viewport.camera` (recenters on click) |
+| **Move** | a body | the body slid along an axis |
+| **Rotate** | a body | the body turned about an axis, + a sweep arc |
+| **Extrude** | a planar face | the face pushed out along its normal (a prism) |
+| **Fillet** | an edge | arcs rounding the corner across the edge |
 
-Then — the part that is the actual research contribution — a real **uncertainty
-representation**, not a generic marker:
+Nothing is committed to real geometry — every tool draws **CustomGraphics overlay** only.
+The file carries the *proposed, uncertain* operation, to be shared and resolved later.
+That non-destructiveness is the whole point.
 
-### Open Range (Needs Input)
+### Interaction plumbing this leans on (all gated first)
 
-A rotation angle marked as **not decided yet**: an open range `[min, max]`. Instead of a
-label, we render the *space of possibilities* in the viewport —
-
-- the real body stays put (the current design),
-- two translucent **ghost copies** show it rotated to `min` and to `max`,
-- an **arc** sweeps the angular range,
-- a camera‑facing label reads `θ ∈ [min°, max°]`.
-
-A collaborator resolves it asynchronously by typing a value → the envelope **collapses**
-to a single confirmed (green) ghost. We deliberately **do not commit** the rotation to
-real geometry: the whole point of FuzzyCAD is that the file carries the *uncertainty
-itself*, to be shared and resolved later. Committing is a separate, deliberate act.
-
-Everything is CustomGraphics overlay — no real bodies are created — so the mark is
-non‑destructive annotation on top of the model.
+| Capability | Onshape | Here (Fusion add-in) |
+| --- | --- | --- |
+| Custom toolbar button → stateful side panel | limited iframe | **Palette** (a web view) |
+| Panel ⇄ CAD two-way messaging | narrow postMessage | `adsk.fusionSendData` ⇄ `sendInfoToHTML` |
+| Annotations in the viewport | drawn as *real bodies* (hacky) | **CustomGraphics** overlays (non-geometry) |
+| Hand-drawn "sketchy" strokes | not really possible | jittered `addLines` strokes |
+| Camera-facing labels / focus | not possible | camera basis + `viewport.camera` |
 
 ## Run it
 
-1. In Fusion 360: **Utilities → Add‑Ins → Scripts and Add‑Ins** (or press `Shift+S`).
-2. **Add‑Ins** tab → the green **+** → **Add existing** → pick the `FuzzyCAD` folder in
-   this repo.
-3. Select **FuzzyCAD** → **Run**. A **FuzzyCAD** button appears in the **Add‑Ins** panel
-   of the Design toolbar.
-4. Click it to open the panel. Select a **body** (or a face of one), set an axis and a
-   min/max angle, click **+ Add open range at selection** — the body ghosts at both ends
-   of the range, an arc sweeps it, and a label reads `θ ∈ [min°, max°]`.
-5. In a mark's row, type a value and hit **Resolve** — the envelope collapses to one
-   green ghost. **Reopen** puts it back to a range. **◎** recenters the camera; **×**
-   deletes.
+1. In Fusion 360: **Utilities → Add-Ins → Scripts and Add-Ins** (or press `Shift+S`).
+2. **Add-Ins** tab → the green **+** → **Add existing** → pick the `FuzzyCAD` folder.
+3. Select **FuzzyCAD** → **Run**. A **FuzzyCAD** button appears in the **Add-Ins** panel.
+4. In the panel: pick a **tool** (Move / Rotate / Extrude / Fillet), select the matching
+   geometry in the model (body / face / edge), optionally pick an axis, and click
+   **+ Add fuzzy … at selection**.
+5. A sketchy red ghost of the operation appears. Drag the mark's **slider** to change the
+   amount (the ghost updates live). Hit **Decide** to finalize (turns solid green);
+   **Reopen** to make it fuzzy again. **◎** focuses the camera; **×** deletes.
 
-If anything errors, Fusion pops a message box with the traceback — paste it back and
-we'll fix it (same loop as the FeatureScript work).
+If anything errors, Fusion pops a message box with the traceback — paste it back.
 
 ## Layout
 
 ```
 FuzzyCAD/
   FuzzyCAD.manifest     add-in manifest
-  FuzzyCAD.py           entry: toolbar button, palette, messaging, the Open Range
-                        representation (ghost envelope + arc + label), camera
+  FuzzyCAD.py           tools, sketchy-line renderer, messaging, camera
   palette/
-    index.html          the side panel
+    index.html          tool strip + composer + mark list
     palette.css
     palette.js          plain JS + a tiny state store (swap for React later)
 ```
 
-## Roadmap (porting FuzzyCAD's real features)
+## Roadmap
 
-- The other three representations from the paper:
-  - **Competing alternatives (Compare)** — two geometric states overlaid (A solid, B ghost).
-  - **Unaddressed concern** — a highlighted region/face + concern note.
-  - **Established / consensus** — the confirmed baseline state.
-- Drag **manipulators** on the range ends instead of numeric-only entry.
-- Interactive picking via a proper Fusion **Command** with `SelectionCommandInput`
-  (event-driven: activate / inputChanged / preview / execute).
+- **Sketch** tool (fuzzy 2D profiles) and more operation types.
+- In-viewport **drag manipulators** (Fusion `Command` + `DistanceValueCommandInput`)
+  instead of panel sliders — modify directly on the model.
 - Store marks in the document's **Attributes** so they travel with the `.f3d`
   (lossless async sharing = share the file).
-- **Commit** a resolved value to real geometry via the modeling API (a deliberate,
-  separate act from resolving the uncertainty).
+- **Commit** a decided operation to real geometry via the modeling API — a deliberate,
+  separate act from proposing it.
+- Better fillet visualization (true rolling-ball arcs; current arcs are approximate).

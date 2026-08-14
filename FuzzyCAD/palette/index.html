@@ -9,47 +9,47 @@
 <body>
   <header class="head">
     <div class="brand">FuzzyCAD</div>
-    <div class="sub">Needs Input · open range</div>
+    <div class="sub">fuzzy operations · sketchy = not final</div>
   </header>
 
-  <section class="composer">
-    <p class="lead">
-      Mark a rotation angle as <b>not decided yet</b> — an open range. The
-      viewport shows the body ghosted at both ends of the range; a collaborator
-      resolves it later.
-    </p>
+  <section class="tools">
+    <button class="tool is-active" data-tool="move" data-sel="body">
+      <span class="tool__glyph">⇄</span><span class="tool__name">Move</span>
+    </button>
+    <button class="tool" data-tool="rotate" data-sel="body">
+      <span class="tool__glyph">↻</span><span class="tool__name">Rotate</span>
+    </button>
+    <button class="tool" data-tool="extrude" data-sel="face">
+      <span class="tool__glyph">⤒</span><span class="tool__name">Extrude</span>
+    </button>
+    <button class="tool" data-tool="fillet" data-sel="edge">
+      <span class="tool__glyph">◜</span><span class="tool__name">Fillet</span>
+    </button>
+  </section>
 
+  <section class="composer">
     <label class="field">
-      <span class="field__label">Label</span>
+      <span class="field__label">Label <span class="muted">(optional)</span></span>
       <input id="label" type="text" placeholder="e.g. hinge angle" />
     </label>
 
-    <span class="field__label">Rotation axis</span>
-    <div class="axes" role="radiogroup" aria-label="Rotation axis">
-      <button class="axis" data-axis="X">X</button>
-      <button class="axis" data-axis="Y">Y</button>
-      <button class="axis is-active" data-axis="Z">Z</button>
+    <div id="axisRow" class="axisRow">
+      <span class="field__label">Axis</span>
+      <div class="axes">
+        <button class="axis" data-axis="X">X</button>
+        <button class="axis" data-axis="Y">Y</button>
+        <button class="axis is-active" data-axis="Z">Z</button>
+      </div>
     </div>
 
-    <div class="range">
-      <label class="field field--half">
-        <span class="field__label">Min °</span>
-        <input id="min" type="number" value="-30" step="5" />
-      </label>
-      <label class="field field--half">
-        <span class="field__label">Max °</span>
-        <input id="max" type="number" value="30" step="5" />
-      </label>
-    </div>
-
-    <button id="add" class="add">+ Add open range at selection</button>
-    <p class="hint">Select a body (or a face of one) in the model first.</p>
+    <button id="add" class="add">+ Add fuzzy move at selection</button>
+    <p id="selHint" class="hint">Select a body (or a face of one) first.</p>
   </section>
 
   <section class="list">
     <div class="list__head">Marks <span id="count" class="count">0</span></div>
     <ul id="marks" class="marks"></ul>
-    <p id="empty" class="empty">No marks yet.</p>
+    <p id="empty" class="empty">No fuzzy operations yet.</p>
   </section>
 
   <script src="palette.js"></script>
