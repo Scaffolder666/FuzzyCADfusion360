@@ -11,7 +11,7 @@
   --muted: #7b8794;
   --t-need: #c82c20;
   --t-constraint: #b7791f;
-  --t-alt: #805ab4;
+  --t-conflict: #805ab4;
 }
 
 * { box-sizing: border-box; }
@@ -56,13 +56,13 @@ html, body {
 .mark:hover { background: #fcfcfd; }
 .mark.type--need_input { border-left-color: var(--t-need); }
 .mark.type--constraint { border-left-color: var(--t-constraint); }
-.mark.type--alternative { border-left-color: var(--t-alt); }
+.mark.type--conflict, .mark.type--alternative { border-left-color: var(--t-conflict); }
 .mark--answered { border-left-color: var(--green) !important; }
 
 .typetag { font-size: 10px; font-weight: 700; padding: 2px 7px; border-radius: 9px; flex: none; color: #fff; }
 .typetag--need_input { background: var(--t-need); }
 .typetag--constraint { background: var(--t-constraint); }
-.typetag--alternative { background: var(--t-alt); }
+.typetag--conflict, .typetag--alternative { background: var(--t-conflict); }
 
 .mark__head { display: flex; align-items: center; gap: 8px; }
 .mark__glyph { font-size: 15px; color: var(--blue); width: 16px; text-align: center; flex: none; }
