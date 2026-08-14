@@ -31,10 +31,10 @@ def install(m):
         if n < 2:
             return
         if amp <= 0:
-            strokes = 1
+            strokes = 2
         elif strokes >= 2:
             # Preserve the handmade offset, but keep the proposal itself light.
-            amp = float(amp) * 0.68
+            amp = float(amp) * 0.30
             strokes = min(int(strokes), 2)
             if int(weight) < 3:
                 weight = 1
