@@ -16,8 +16,9 @@ rotation, restore the missing Uniform Scale body-selection pending state, make
 directional scale one-sided by default, prototype relationship-aware Move scope,
 render interaction choices in FuzzyCAD's own HTML UI instead of Fusion's native
 option controls, keep related-part Move previews synchronized directly from the
-native handle, strengthen original/proposed visual contrast, and persist open
-collaboration state inside the Fusion design for reopen/handoff workflows.
+native handle, strengthen original/proposed visual contrast, persist open
+collaboration state inside the Fusion design for reopen/handoff workflows, and
+render non-Fillet proposed bodies as transparent outline-only geometry.
 """
 import importlib.util
 import os
@@ -75,6 +76,8 @@ _contrast = _load("fuzzycad_visual_contrast", "fuzzycad_visual_contrast.py")
 _contrast.install(_legacy)
 _store = _load("fuzzycad_persistence", "fuzzycad_persistence.py")
 _store.install(_legacy)
+_outline = _load("fuzzycad_outline_only_candidates", "fuzzycad_outline_only_candidates.py")
+_outline.install(_legacy)
 
 run = _legacy.run
 stop = _legacy.stop
