@@ -1,9 +1,9 @@
 """Strengthen the Fillet visual language without changing other tools.
 
-The exact fillet candidate already exists as a transient BRep.  This patch uses
-its cached fillet-boundary edges to identify the corresponding candidate face(s)
-and overlays those rounded surfaces in orange.  The rest of the candidate keeps
-the existing Fillet treatment.
+The exact fillet candidate already exists as a transient BRep. This patch uses
+its cached fillet-boundary edges to identify corresponding candidate faces and
+overlays those rounded surfaces. Color/opacity/boundary styling are supplied by
+the centralized visual system.
 """
 
 
@@ -11,10 +11,6 @@ def install(m):
     adsk = m.adsk
     previous_draw = m._DRAW.get("fillet")
     old_run = m.run
-
-    FILLET_FACE_RGB = (235, 132, 42)
-    FILLET_EDGE_RGB = (245, 118, 24)
-    FILLET_FACE_OPACITY = 0.46
 
     def log(msg):
         try:
@@ -27,6 +23,12 @@ def install(m):
             (m._app or adsk.core.Application.get()).log("[FuzzyCAD FILLET COLOR] " + msg)
         except Exception:
             pass
+
+    def vstyle(role, fallback):
+        try:
+            return m._visual_style(role)
+        except Exception:
+            return fallback
 
     def point_key(p, digits=4):
         return (round(float(p[0]), digits),
@@ -84,14 +86,11 @@ def install(m):
                             matched += 1
                 except Exception:
                     continue
-
                 if matched:
                     best.append((matched, total, face))
 
             if best:
                 max_match = max(row[0] for row in best)
-                # A created fillet face normally owns most/all highlighted
-                # boundaries. Adjacent faces tend to share only one edge.
                 for matched, total, face in best:
                     strong = matched >= 2 and matched >= max(2, total // 2)
                     strongest = matched == max_match and max_match >= 2
@@ -113,12 +112,14 @@ def install(m):
         return found
 
     def draw_colored_region(group, mark):
-        # Surface color communicates exactly where the local geometric change is.
+        face_style = vstyle("affected_surface", {"rgb": (235, 132, 42), "opacity": 0.46})
+        face_rgb = tuple(face_style.get("rgb", (235, 132, 42)))
+        face_opacity = float(face_style.get("opacity", 0.46))
         for body in find_fillet_face_bodies(mark):
             try:
                 cg = group.addBRepBody(body)
-                cg.color = m._solid(FILLET_FACE_RGB)
-                cg.setOpacity(FILLET_FACE_OPACITY, True)
+                cg.color = m._solid(face_rgb)
+                cg.setOpacity(face_opacity, True)
                 try:
                     cg.depthPriority = 5
                 except Exception:
@@ -126,17 +127,16 @@ def install(m):
             except Exception:
                 pass
 
-        # Reinforce the same region at its boundaries. These are intentionally
-        # stronger than the general proposal sketch, but only for Fillet.
+        size = float(mark.get("size", 3.0))
         g = m._geom.get(mark.get("id"), {})
-        amp = max(0.012, float(mark.get("size", 3.0)) * 0.0035)
         for i, poly in enumerate(g.get("fillet_edges", []) or []):
             try:
-                m._sketchy(group, poly, FILLET_EDGE_RGB, amp,
-                           mark.get("id", 1) * 19001 + i,
-                           weight=4, strokes=2)
+                m._visual_stroke(group, poly, "affected_boundary",
+                                 mark.get("id", 1) * 19001 + i, size=size)
             except Exception:
-                pass
+                m._sketchy(group, poly, (245, 118, 24), 0.0,
+                           mark.get("id", 1) * 19001 + i,
+                           weight=2, strokes=1)
 
     def draw_fillet(group, mark, rgb, amp):
         if previous_draw is not None:
@@ -148,7 +148,7 @@ def install(m):
 
     def run(context):
         result = old_run(context)
-        log("FILLET COLOR READY: rounded region orange + stronger boundary")
+        log("FILLET COLOR READY: affected surface/boundary use central visual tokens")
         return result
 
     m.run = run
