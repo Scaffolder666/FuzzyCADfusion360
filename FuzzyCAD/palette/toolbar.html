@@ -30,15 +30,16 @@
     .tool:active { background: var(--bg); }
     .tool--soon { opacity: 0.45; cursor: default; }
     .tool--soon:hover { border-color: var(--line); }
-    .tool--primary { width: 92px; background: var(--navy); color: #fff; border-color: var(--navy); }
+    .tool--primary { width: 92px; }
     .tool--primary small { font-size: 11px; }
-    .tool--primary:hover { border-color: var(--navy); filter: brightness(1.1); }
+    /* brief press feedback so a click feels registered, but no permanent 'on' state */
+    .tool:active { background: var(--navy); color: #fff; border-color: var(--navy); }
   </style>
 </head>
 <body>
   <div class="bar">
     <div class="group">
-      <span class="group__label">Needs Input · easy mode</span>
+      <span class="group__label">Needs Input</span>
       <div class="group__row">
         <button class="tool tool--primary" data-tool="transform" title="Move / Rotate / Scale — grab a handle">
           <span>✥</span><small>Transform</small></button>

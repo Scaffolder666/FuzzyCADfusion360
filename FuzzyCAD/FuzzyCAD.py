@@ -85,9 +85,9 @@ _inputs = None
 _pending = None
 _live = {}          # category -> live mark id for the current drag session
 _ghosted = {}       # token -> body (faded originals to restore)
-_easy_mode = False  # continuous "direct edit" mode (auto re-arm the tool)
+_easy_mode = True   # FuzzyCAD is always continuous; use native Fusion for non-easy
 _note_inputs = None
-REARM_EVENT_ID = "FuzzyCADRearmTransform"
+LAUNCH_EVENT_ID = "FuzzyCADLaunch"
 
 
 def _body_locked(body):
@@ -840,15 +840,18 @@ class FuzzyDestroy(adsk.core.CommandEventHandler):
         # (Only after a real edit — an empty cancel breaks the loop to exit.)
         if _easy_mode and made and was == "transform":
             try:
-                _app.fireCustomEvent(REARM_EVENT_ID)
+                _app.fireCustomEvent(LAUNCH_EVENT_ID, CMD_ID["transform"])
             except Exception:
                 pass
 
 
-class RearmHandler(adsk.core.CustomEventHandler):
+class LaunchHandler(adsk.core.CustomEventHandler):
+    """Launch a command on the main thread. Executing a command directly inside
+    a palette HTML event is unreliable, so we defer through this custom event."""
     def notify(self, args):
         try:
-            cd = _ui.commandDefinitions.itemById(CMD_ID["transform"])
+            cmd_id = args.additionalInfo
+            cd = _ui.commandDefinitions.itemById(cmd_id) if cmd_id else None
             if cd:
                 cd.execute()
         except Exception:
@@ -1132,9 +1135,9 @@ class PaletteHTMLHandler(adsk.core.HTMLEventHandler):
             if action == "ready":
                 _send_state()
             elif action == "tool":
-                cd = _ui.commandDefinitions.itemById(CMD_ID.get(data.get("tool")))
-                if cd:
-                    cd.execute()
+                # Defer to the main thread — executing a command straight from a
+                # palette event is unreliable.
+                _app.fireCustomEvent(LAUNCH_EVENT_ID, CMD_ID.get(data.get("tool"), ""))
             elif action == "focus":
                 m = _find(data.get("id"))
                 if m:
@@ -1143,7 +1146,9 @@ class PaletteHTMLHandler(adsk.core.HTMLEventHandler):
                 m = _find(data.get("id"))
                 if m:
                     _apply_edit(m, data.get("key"), data.get("value"))
-                    _redraw_marks(); _send_state()
+                    # Redraw the 3D only — do NOT push state back, or the panel
+                    # re-renders and the field you're typing in loses focus.
+                    _redraw_marks()
             elif action == "status":
                 m = _find(data.get("id"))
                 if m:
@@ -1167,13 +1172,6 @@ class PaletteHTMLHandler(adsk.core.HTMLEventHandler):
                     _remove_mark(m["id"]); _redraw_marks(); _send_state()
             elif action == "reject":
                 _remove_mark(data.get("id")); _redraw_marks(); _send_state()
-            elif action == "easymode":
-                global _easy_mode
-                _easy_mode = bool(data.get("on"))
-                if _easy_mode:
-                    cd = _ui.commandDefinitions.itemById(CMD_ID["transform"])
-                    if cd:
-                        cd.execute()
         except Exception:
             if _ui:
                 _ui.messageBox("FuzzyCAD panel message failed:\n{}".format(
@@ -1245,12 +1243,12 @@ def run(context):
                     "Drop a note callout on the model (a Constraint mark)",
                     FuzzyNoteCreated())
         try:
-            _app.unregisterCustomEvent(REARM_EVENT_ID)
+            _app.unregisterCustomEvent(LAUNCH_EVENT_ID)
         except Exception:
             pass
         try:
-            evt = _app.registerCustomEvent(REARM_EVENT_ID)
-            rh = RearmHandler(); evt.add(rh); _handlers.append(rh)
+            evt = _app.registerCustomEvent(LAUNCH_EVENT_ID)
+            rh = LaunchHandler(); evt.add(rh); _handlers.append(rh)
         except Exception:
             pass
         _ensure_palettes()
@@ -1280,7 +1278,7 @@ def stop(context):
             if cd:
                 cd.deleteMe()
         try:
-            _app.unregisterCustomEvent(REARM_EVENT_ID)
+            _app.unregisterCustomEvent(LAUNCH_EVENT_ID)
         except Exception:
             pass
         _handlers.clear()

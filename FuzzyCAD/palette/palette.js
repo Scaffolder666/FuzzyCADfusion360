@@ -37,12 +37,6 @@
     els.marks = document.getElementById("marks");
     els.empty = document.getElementById("empty");
     els.count = document.getElementById("count");
-    els.easy = document.getElementById("easy");
-    if (els.easy) {
-      els.easy.addEventListener("change", function () {
-        send("easymode", { on: els.easy.checked });
-      });
-    }
   }
 
   var GLYPH = { move: "⇄", rotate: "↻", scale: "⤢", extrude: "⤒", fillet: "◜", note: "◈" };
