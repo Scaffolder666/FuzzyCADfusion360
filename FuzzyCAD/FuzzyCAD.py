@@ -10,22 +10,23 @@ Fillet candidate/card synchronized even when Fusion emits inputChanged without
 executePreview, unify Move/Rotate/Scale/Extrude candidate visualization with
 the Fillet visual language, replay Move proposals as a one-way animation while
 their sidebar card is hovered, keep notes screen-facing while showing a
-lightweight active-candidate size frame, separate the collaboration taxonomy,
-preserve the direct body->manipulator interaction flow for scale and axis
-rotation, restore the missing Uniform Scale body-selection pending state, make
-directional scale one-sided by default, prototype relationship-aware Move scope,
-render interaction choices in FuzzyCAD's own HTML UI instead of Fusion's native
-option controls, keep related-part Move previews synchronized directly from the
-native handle, strengthen original/proposed visual contrast, persist open
-collaboration state inside the Fusion design for reopen/handoff workflows, render
-non-Fillet proposals as edge-only geometry, emphasize the actual rounded Fillet
-region, treat multi-body Move as one proposal group, expose procedural stage
-feedback in a left-side tool rail, profile the main preview paths, clear stale
-runtime graphics before persistence rehydration, keep sketch strokes light, add
-sparse surface scaffolds when smooth bodies have too few topology edges to
-communicate their 3D volume, add view-dependent apparent contours, add
-operation-specific motion rulers and lightweight card-hover replays, and restore
-the preferred FuzzyCAD panel layout on every add-in start.
+lightweight active-candidate size frame, keep Note annotation-only without
+fading its referenced body, separate the collaboration taxonomy, preserve the
+direct body->manipulator interaction flow for scale and axis rotation, restore
+the missing Uniform Scale body-selection pending state, make directional scale
+one-sided by default, prototype relationship-aware Move scope, render interaction
+choices in FuzzyCAD's own HTML UI instead of Fusion's native option controls,
+keep related-part Move previews synchronized directly from the native handle,
+strengthen original/proposed visual contrast, persist open collaboration state
+inside the Fusion design for reopen/handoff workflows, render non-Fillet
+proposals as edge-only geometry, emphasize the actual rounded Fillet region,
+treat multi-body Move as one proposal group, expose procedural stage feedback in
+a left-side tool rail, profile the main preview paths, clear stale runtime
+graphics before persistence rehydration, keep sketch strokes light, add sparse
+surface scaffolds when smooth bodies have too few topology edges to communicate
+their 3D volume, add view-dependent apparent contours, add operation-specific
+motion rulers and lightweight card-hover replays, and restore the preferred
+FuzzyCAD panel layout on every add-in start.
 """
 import importlib.util
 import os
@@ -65,6 +66,8 @@ _move_hover = _load("fuzzycad_move_hover_animation", "fuzzycad_move_hover_animat
 _move_hover.install(_legacy)
 _annotations = _load("fuzzycad_note_dimensions", "fuzzycad_note_dimensions.py")
 _annotations.install(_legacy)
+_note_visual = _load("fuzzycad_note_no_ghost", "fuzzycad_note_no_ghost.py")
+_note_visual.install(_legacy)
 _next_tools = _load("fuzzycad_scale_axis_rotate_taxonomy", "fuzzycad_scale_axis_rotate_taxonomy.py")
 _next_tools.install(_legacy)
 _direct = _load("fuzzycad_direct_interactions", "fuzzycad_direct_interactions.py")
