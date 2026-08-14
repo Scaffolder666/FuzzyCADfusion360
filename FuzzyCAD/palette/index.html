@@ -9,29 +9,41 @@
 <body>
   <header class="head">
     <div class="brand">FuzzyCAD</div>
-    <div class="sub">uncertainty marks · trial</div>
+    <div class="sub">Needs Input · open range</div>
   </header>
 
   <section class="composer">
+    <p class="lead">
+      Mark a rotation angle as <b>not decided yet</b> — an open range. The
+      viewport shows the body ghosted at both ends of the range; a collaborator
+      resolves it later.
+    </p>
+
     <label class="field">
       <span class="field__label">Label</span>
-      <input id="label" type="text" placeholder="e.g. angle not decided" />
+      <input id="label" type="text" placeholder="e.g. hinge angle" />
     </label>
 
-    <div class="kinds" role="radiogroup" aria-label="Mark kind">
-      <button class="kind kind--needs_input is-active" data-kind="needs_input">
-        <span class="dot"></span>Needs input
-      </button>
-      <button class="kind kind--note" data-kind="note">
-        <span class="dot"></span>Note
-      </button>
-      <button class="kind kind--conflict" data-kind="conflict">
-        <span class="dot"></span>Conflict
-      </button>
+    <span class="field__label">Rotation axis</span>
+    <div class="axes" role="radiogroup" aria-label="Rotation axis">
+      <button class="axis" data-axis="X">X</button>
+      <button class="axis" data-axis="Y">Y</button>
+      <button class="axis is-active" data-axis="Z">Z</button>
     </div>
 
-    <button id="add" class="add">+ Add mark at selection</button>
-    <p class="hint">Select a face / body / point in the model first.</p>
+    <div class="range">
+      <label class="field field--half">
+        <span class="field__label">Min °</span>
+        <input id="min" type="number" value="-30" step="5" />
+      </label>
+      <label class="field field--half">
+        <span class="field__label">Max °</span>
+        <input id="max" type="number" value="30" step="5" />
+      </label>
+    </div>
+
+    <button id="add" class="add">+ Add open range at selection</button>
+    <p class="hint">Select a body (or a face of one) in the model first.</p>
   </section>
 
   <section class="list">
