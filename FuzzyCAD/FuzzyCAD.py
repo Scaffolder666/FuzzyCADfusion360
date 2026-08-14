@@ -75,6 +75,29 @@ _inputs = None
 _pending = None
 _live = {}          # category -> live mark id for the current drag session
 _ghosted = {}       # token -> body (faded originals to restore)
+_easy_mode = False  # continuous "direct edit" mode (auto re-arm the tool)
+REARM_EVENT_ID = "FuzzyCADRearmTransform"
+
+
+def _body_locked(body):
+    """A body with an unresolved (needs_input) mark is locked: it can't get a
+    new fuzzy op until that one is answered/applied/rejected."""
+    if body is None:
+        return False
+    try:
+        tok = body.entityToken
+    except Exception:
+        return False
+    for m in _marks:
+        b = _body.get(m["id"])
+        if b is None:
+            continue
+        try:
+            if b.entityToken == tok and m.get("status", "needs_input") == "needs_input":
+                return True
+        except Exception:
+            continue
+    return False
 
 
 # --- CustomGraphics ---------------------------------------------------------
@@ -664,6 +687,15 @@ class FuzzyInputChanged(adsk.core.InputChangedEventHandler):
             _pending = None
             if sel.selectionCount > 0:
                 _pending = _build_pending(_active_cmd, sel.selection(0).entity)
+                if _pending and _body_locked(_pending["body"]):
+                    _ui.messageBox("This object already has an open question — "
+                                   "resolve it in the panel first.")
+                    _pending = None
+                    try:
+                        sel.clearSelection()
+                    except Exception:
+                        pass
+                    return
                 if _pending:
                     _place_manipulator()
                     if "rotate" in CMD_CATS[_active_cmd]:
@@ -718,6 +750,8 @@ class FuzzyExecute(adsk.core.CommandEventHandler):
 class FuzzyDestroy(adsk.core.CommandEventHandler):
     def notify(self, args):
         global _pending, _inputs, _active_cmd, _live
+        live_ids = list(_live.values())
+        was = _active_cmd
         try:
             _clear(GROUP_PREVIEW)
             for cat, mid in list(_live.items()):
@@ -728,10 +762,28 @@ class FuzzyDestroy(adsk.core.CommandEventHandler):
             _send_state()
         except Exception:
             pass
+        made = any(_find(mid) is not None for mid in live_ids)
         _pending = None
         _inputs = None
         _active_cmd = None
         _live = {}
+        # Easy mode: re-arm the transform tool so editing stays continuous.
+        # (Only after a real edit — an empty cancel breaks the loop to exit.)
+        if _easy_mode and made and was == "transform":
+            try:
+                _app.fireCustomEvent(REARM_EVENT_ID)
+            except Exception:
+                pass
+
+
+class RearmHandler(adsk.core.CustomEventHandler):
+    def notify(self, args):
+        try:
+            cd = _ui.commandDefinitions.itemById(CMD_ID["transform"])
+            if cd:
+                cd.execute()
+        except Exception:
+            pass
 
 
 class FuzzyCommandCreated(adsk.core.CommandCreatedEventHandler):
@@ -953,6 +1005,13 @@ class PaletteHTMLHandler(adsk.core.HTMLEventHandler):
                     _remove_mark(m["id"]); _redraw_marks(); _send_state()
             elif action == "reject":
                 _remove_mark(data.get("id")); _redraw_marks(); _send_state()
+            elif action == "easymode":
+                global _easy_mode
+                _easy_mode = bool(data.get("on"))
+                if _easy_mode:
+                    cd = _ui.commandDefinitions.itemById(CMD_ID["transform"])
+                    if cd:
+                        cd.execute()
         except Exception:
             if _ui:
                 _ui.messageBox("FuzzyCAD panel message failed:\n{}".format(
@@ -1020,6 +1079,15 @@ def run(context):
         for cmd in COMMANDS:
             _add_button(panel, CMD_ID[cmd], CMD_LABEL[cmd], CMD_HINT[cmd],
                         FuzzyCommandCreated(cmd))
+        try:
+            _app.unregisterCustomEvent(REARM_EVENT_ID)
+        except Exception:
+            pass
+        try:
+            evt = _app.registerCustomEvent(REARM_EVENT_ID)
+            rh = RearmHandler(); evt.add(rh); _handlers.append(rh)
+        except Exception:
+            pass
         _ensure_palettes()
     except Exception:
         if _ui:
@@ -1046,6 +1114,10 @@ def stop(context):
             cd = _ui.commandDefinitions.itemById(cmd_id)
             if cd:
                 cd.deleteMe()
+        try:
+            _app.unregisterCustomEvent(REARM_EVENT_ID)
+        except Exception:
+            pass
         _handlers.clear()
         _geom.clear(); _entity.clear(); _body.clear()
     except Exception:

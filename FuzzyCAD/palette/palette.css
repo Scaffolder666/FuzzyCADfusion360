@@ -19,8 +19,24 @@ html, body {
 }
 
 .head { padding: 12px 14px 10px; border-bottom: 1px solid var(--line); }
+.head__row { display: flex; align-items: flex-start; justify-content: space-between; gap: 8px; }
 .brand { font-size: 15px; font-weight: 700; letter-spacing: 0.3px; }
 .sub { font-size: 11px; color: var(--muted); margin-top: 2px; }
+
+.switch { display: flex; align-items: center; gap: 5px; cursor: pointer; user-select: none; }
+.switch input { position: absolute; opacity: 0; width: 0; height: 0; }
+.switch__track {
+  width: 32px; height: 18px; border-radius: 9px; background: var(--line);
+  position: relative; transition: background 0.15s; flex: none;
+}
+.switch__knob {
+  position: absolute; top: 2px; left: 2px; width: 14px; height: 14px;
+  border-radius: 50%; background: #fff; transition: left 0.15s;
+  box-shadow: 0 1px 2px rgba(0,0,0,0.25);
+}
+.switch input:checked + .switch__track { background: var(--green); }
+.switch input:checked + .switch__track .switch__knob { left: 16px; }
+.switch__label { font-size: 11px; font-weight: 600; color: var(--muted); }
 
 .list { padding: 12px 14px; }
 .list__head { margin-bottom: 10px; }
