@@ -151,11 +151,16 @@ def _clear(gid):
     if design is None:
         return
     root = design.rootComponent
-    for i in range(root.customGraphicsGroups.count):
-        g = root.customGraphicsGroups.item(i)
-        if g.id == gid:
-            g.deleteMe()
-            return
+    # Delete EVERY group with this id, not just the first — otherwise stale
+    # duplicates linger and their graphics (badges, lines) stack up, so one
+    # operation looks like several. Iterate backwards since deleteMe shifts indices.
+    for i in range(root.customGraphicsGroups.count - 1, -1, -1):
+        try:
+            g = root.customGraphicsGroups.item(i)
+            if g is not None and g.id == gid:
+                g.deleteMe()
+        except Exception:
+            pass
 
 
 def _solid(rgb):
@@ -838,7 +843,11 @@ class FuzzyInputChanged(adsk.core.InputChangedEventHandler):
                     # you pick — the manipulator or the card can refine it. (Their
                     # drag can be finicky; this guarantees the tool 'works'.)
                     if _active_cmd in ("extrude", "fillet"):
-                        default = _pending["size"] * (0.2 if _active_cmd == "extrude" else 0.08)
+                        # sensible, capped default (cm): extrude 5–30mm, fillet 2–10mm
+                        if _active_cmd == "extrude":
+                            default = max(0.5, min(_pending["size"] * 0.2, 3.0))
+                        else:
+                            default = max(0.2, min(_pending["size"] * 0.08, 1.0))
                         it = _inputs.itemById("d")
                         if it is not None:
                             try:
@@ -882,7 +891,9 @@ class FuzzyPreview(adsk.core.CommandEventHandler):
                     if mark is not None:
                         _draw_one(group, mark)
                 _refresh_ghost()   # fade the original live while dragging
-            _app.activeViewport.refresh()
+            # NOTE: do NOT call activeViewport.refresh() here — forcing a refresh
+            # mid-drag releases the manipulator, so the drag only worked once.
+            # Fusion refreshes custom graphics after executePreview on its own.
             args.isValidResult = True
         except Exception:
             if _ui:
