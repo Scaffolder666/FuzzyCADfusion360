@@ -100,17 +100,39 @@ def _redraw_graphics():
         line.color = colored
         line.weight = 3
 
-        # --- billboarded label that always faces the camera ---
-        text = group.addText(mark["label"], "Arial", 1.2,
-                             adsk.core.Matrix3D.create())
+        # --- label placed just above the cross ---
+        anchor = adsk.core.Point3D.create(x, y + s, z)
+        transform = adsk.core.Matrix3D.create()
+        transform.translation = adsk.core.Vector3D.create(anchor.x, anchor.y, anchor.z)
+        text = group.addText(mark["label"], "Arial", 1.2, transform)
         text.color = colored
-        billboard = adsk.fusion.CustomGraphicsBillBoarding.create(
-            adsk.core.Point3D.create(x, y + s, z)
-        )
-        billboard.billBoardStyle = adsk.fusion.CustomGraphicsBillBoardStyles.ScreenBillBoardStyle
-        text.billBoarding = billboard
+
+        # Make the label always face the camera. The billboarding class lives in
+        # different places across Fusion builds, and some builds don't expose it
+        # at all, so probe for it and degrade gracefully to fixed-orientation text.
+        _apply_billboard(text, anchor)
 
     _app.activeViewport.refresh()
+
+
+def _apply_billboard(text, anchor):
+    """Best-effort: make a CustomGraphicsText always face the camera.
+    No-op if this Fusion build doesn't expose the billboarding API."""
+    factory = getattr(adsk.fusion, "CustomGraphicsBillBoarding", None)
+    if factory is None:
+        factory = getattr(adsk.core, "CustomGraphicsBillBoarding", None)
+    if factory is None or not hasattr(factory, "create"):
+        return
+    try:
+        billboard = factory.create(anchor)
+        styles = (getattr(adsk.fusion, "CustomGraphicsBillBoardStyles", None)
+                  or getattr(adsk.core, "CustomGraphicsBillBoardStyles", None))
+        if styles is not None:
+            billboard.billBoardStyle = styles.ScreenBillBoardStyle
+        text.billBoarding = billboard
+    except Exception:
+        # Text still renders; it just won't rotate to face the camera.
+        pass
 
 
 # --- camera ----------------------------------------------------------------
