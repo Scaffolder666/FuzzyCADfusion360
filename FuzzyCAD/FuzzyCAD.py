@@ -23,8 +23,9 @@ region, treat multi-body Move as one proposal group, expose procedural stage
 feedback in a left-side tool rail, profile the main preview paths, clear stale
 runtime graphics before persistence rehydration, keep sketch strokes light, add
 sparse surface scaffolds when smooth bodies have too few topology edges to
-communicate their 3D volume, and restore the preferred FuzzyCAD panel layout on
-every add-in start.
+communicate their 3D volume, add operation-specific motion rulers and lightweight
+card-hover replays, and restore the preferred FuzzyCAD panel layout on every
+add-in start.
 """
 import importlib.util
 import os
@@ -98,6 +99,10 @@ _tuning = _load("fuzzycad_sketch_tuning", "fuzzycad_sketch_tuning.py")
 _tuning.install(_legacy)
 _scaffold = _load("fuzzycad_surface_scaffold", "fuzzycad_surface_scaffold.py")
 _scaffold.install(_legacy)
+_cues = _load("fuzzycad_operation_cues", "fuzzycad_operation_cues.py")
+_cues.install(_legacy)
+_op_hover = _load("fuzzycad_operation_hover_animation", "fuzzycad_operation_hover_animation.py")
+_op_hover.install(_legacy)
 _layout = _load("fuzzycad_layout_lock", "fuzzycad_layout_lock.py")
 _layout.install(_legacy)
 
