@@ -12,7 +12,9 @@
 .title{font-size:15px;font-weight:760;line-height:1.25;margin-bottom:5px}.message{font-size:11.5px;line-height:1.45;color:var(--muted);margin-bottom:8px}
 .legend{font-size:10.5px;line-height:1.35;color:#a8540c;background:#fff7ef;border-radius:6px;padding:6px 7px;margin-bottom:9px;display:none}
 .choose{font-size:10px;font-weight:800;text-transform:uppercase;letter-spacing:.5px;color:var(--muted);margin:2px 0 6px}
-.options{display:flex;gap:7px;flex-wrap:wrap}.choice{flex:1;min-width:115px;border:1px solid var(--line);border-radius:8px;padding:9px 8px;background:#fff;color:var(--navy);font-size:11px;font-weight:700;cursor:pointer;line-height:1.25}.choice:hover{border-color:var(--navy);background:#fafbfc}.choice.selected{border-color:var(--orange);background:#fff7ef;color:#a8540c;box-shadow:inset 0 0 0 1px var(--orange)}.glyph{display:block;font-size:17px;line-height:1.1;margin-bottom:3px}.status{font-size:10.5px;line-height:1.35;color:var(--navy);font-weight:650;background:var(--panel);border-radius:6px;padding:6px 7px;margin-top:9px}.status.waiting{color:#8b5b1b;background:#fff8e8}
+.options{display:flex;gap:7px;flex-wrap:wrap}.choice{flex:1;min-width:115px;border:1px solid var(--line);border-radius:8px;padding:9px 8px;background:#fff;color:var(--navy);font-size:11px;font-weight:700;cursor:pointer;line-height:1.25}.choice:hover{border-color:var(--navy);background:#fafbfc}.choice.selected{border-color:var(--orange);background:#fff7ef;color:#a8540c;box-shadow:inset 0 0 0 1px var(--orange)}.glyph{display:block;font-size:17px;line-height:1.1;margin-bottom:3px}
+.status{font-size:10.5px;line-height:1.35;color:var(--navy);font-weight:650;background:var(--panel);border-radius:6px;padding:6px 7px;margin-top:9px}
+.confirm{width:100%;margin-top:8px;padding:8px 10px;border:1px solid var(--green);border-radius:8px;background:var(--green);color:#fff;font-size:11.5px;font-weight:750;cursor:pointer}.confirm:hover{filter:brightness(.96)}.confirm:disabled{background:#d8dde2;border-color:#d8dde2;color:#8b949e;cursor:default;filter:none}
 </style>
 </head>
 <body>
@@ -21,14 +23,16 @@
   <div id="title" class="title">Preparing decision…</div>
   <div id="message" class="message">Waiting for the selected geometry.</div>
   <div id="legend" class="legend"></div>
-  <div id="choose" class="choose">Choose one</div>
+  <div class="choose">Choose one</div>
   <div id="options" class="options"></div>
-  <div id="status" class="status waiting">No choice received yet.</div>
+  <div id="status" class="status">Choose an option, then confirm.</div>
+  <button id="confirm" class="confirm" disabled>Confirm</button>
 </div>
 <script>
 (function(){
   "use strict";
   var current={kind:null,selected:null,options:[]};
+  var draft=null;
   var receivedPrompt=false;
   var readyTries=0;
 
@@ -42,48 +46,60 @@
   function moveQuestion(data){
     var count=(data&&data.related_count)||null;
     if(count){
-      return "Should the Selected part move by itself, or should R1–R"+count+" move with it?";
+      return "Move only the Selected part, or move the Selected part together with R1–R"+count+"?";
     }
-    return "Should the Selected part move by itself, or should the highlighted nearby parts move with it?";
+    return "Move only the Selected part, or move it together with the highlighted nearby parts?";
   }
 
   function optionLabel(data,opt){
     if(data.kind==="move_scope"){
-      if(opt.value==="only") return "Move only Selected";
-      if(opt.value==="together") return "Move Selected + highlighted parts together";
+      if(opt.value==="only") return "Move that object";
+      if(opt.value==="together") return "Move together";
     }
     if(data.kind==="scale_scope"){
-      if(opt.value==="positive") return "+ side moves";
-      if(opt.value==="negative") return "- side moves";
-      if(opt.value==="both") return "Both sides move";
+      if(opt.value==="positive") return "+ side";
+      if(opt.value==="negative") return "- side";
+      if(opt.value==="both") return "Both sides";
     }
     return opt.label||opt.value;
   }
 
-  function statusText(data){
-    if(!data || !data.kind) return "Waiting for a FuzzyCAD decision.";
+  function draftStatus(data){
+    if(!data||!data.kind) return "Waiting for a FuzzyCAD decision.";
+    var value=draft;
     if(data.kind==="move_scope"){
-      return data.selected==="together"
-        ? "Selected choice: TOGETHER — the highlighted parts should follow the Selected part."
-        : "Selected choice: ONLY THIS — the highlighted parts should stay where they are.";
+      if(value==="together") return "Pending: Move together — R1/R2/… will follow the Selected part.";
+      if(value==="only") return "Pending: Move that object — highlighted parts will stay in place.";
+      return "Choose whether the highlighted parts should follow the Selected part.";
     }
     if(data.kind==="scale_scope"){
-      if(data.selected==="negative") return "Selected choice: - side moves; the opposite side stays fixed.";
-      if(data.selected==="both") return "Selected choice: both sides move symmetrically about the center.";
-      return "Selected choice: + side moves; the opposite side stays fixed.";
+      if(value==="negative") return "Pending: - side moves; the opposite side stays fixed.";
+      if(value==="both") return "Pending: both sides move symmetrically.";
+      if(value==="positive") return "Pending: + side moves; the opposite side stays fixed.";
+      return "Choose the moving side or symmetric scaling.";
     }
-    return "Choose how this change should be scoped.";
+    return "Choose an option, then confirm.";
   }
 
   function legendText(data){
-    if(data.kind==="move_scope") return "Viewport: Selected = the part you grabbed. R1, R2, … = nearby parts highlighted in orange.";
-    if(data.kind==="scale_scope") return "One-sided scale is the default. The fixed-end marker shows the anchored side.";
+    if(data.kind==="move_scope") return "Viewport: Selected = the part you grabbed. R1, R2, … = nearby parts outlined in orange.";
+    if(data.kind==="scale_scope") return "The fixed-end marker shows the anchored side. One-sided scale is the default.";
     return "";
+  }
+
+  function paintSelection(){
+    var buttons=document.querySelectorAll(".choice");
+    Array.prototype.forEach.call(buttons,function(b){
+      b.classList.toggle("selected",b.getAttribute("data-value")===draft);
+    });
+    document.getElementById("status").textContent=draftStatus(current);
+    document.getElementById("confirm").disabled=!draft;
   }
 
   function render(data){
     current=data||{};
     receivedPrompt=!!current.kind;
+    draft=null;
 
     var title=current.title||"FuzzyCAD decision";
     var message=current.message||"";
@@ -103,35 +119,40 @@
     var wrap=document.getElementById("options");wrap.innerHTML="";
     (current.options||[]).forEach(function(opt){
       var b=document.createElement("button");
-      b.className="choice"+(current.selected===opt.value?" selected":"");
+      b.className="choice";
       b.setAttribute("data-value",opt.value);
       var g=document.createElement("span");g.className="glyph";g.textContent=opt.glyph||"";
       var t=document.createElement("span");t.textContent=optionLabel(current,opt);
       b.appendChild(g);b.appendChild(t);
       b.addEventListener("click",function(){
-        current.selected=opt.value;
-        render(current);
-        send("choice",{kind:current.kind,value:opt.value});
+        draft=opt.value;
+        paintSelection();
       });
       wrap.appendChild(b);
     });
-
-    var status=document.getElementById("status");
-    status.className="status";
-    status.textContent=statusText(current);
+    paintSelection();
   }
+
+  document.getElementById("confirm").addEventListener("click",function(){
+    if(!draft||!current.kind) return;
+    var btn=this;btn.disabled=true;btn.textContent="Confirmed";
+    send("confirm",{kind:current.kind,value:draft});
+  });
 
   window.fusionJavaScriptHandler={handle:function(action,dataString){
     try{
       var data=dataString?JSON.parse(dataString):{};
-      if(action==="prompt") render(data);
+      if(action==="prompt"){
+        document.getElementById("confirm").textContent="Confirm";
+        render(data);
+      }
     }catch(e){return JSON.stringify({ok:false,error:String(e)});}
     return JSON.stringify({ok:true});
   }};
 
   document.addEventListener("DOMContentLoaded",function(){
     function askForState(){
-      if(receivedPrompt || readyTries>=12) return;
+      if(receivedPrompt||readyTries>=12) return;
       readyTries+=1;
       send("ready",{});
       setTimeout(askForState,180);
