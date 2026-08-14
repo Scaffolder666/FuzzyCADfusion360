@@ -21,7 +21,9 @@ collaboration state inside the Fusion design for reopen/handoff workflows, rende
 non-Fillet proposals as edge-only geometry, emphasize the actual rounded Fillet
 region, treat multi-body Move as one proposal group, expose procedural stage
 feedback in a left-side tool rail, profile the main preview paths, clear stale
-runtime graphics before persistence rehydration, and keep sketch strokes light.
+runtime graphics before persistence rehydration, keep sketch strokes light, and
+add sparse surface scaffolds when smooth bodies have too few topology edges to
+communicate their 3D volume.
 """
 import importlib.util
 import os
@@ -93,6 +95,8 @@ _perf = _load("fuzzycad_perf_trace", "fuzzycad_perf_trace.py")
 _perf.install(_legacy)
 _tuning = _load("fuzzycad_sketch_tuning", "fuzzycad_sketch_tuning.py")
 _tuning.install(_legacy)
+_scaffold = _load("fuzzycad_surface_scaffold", "fuzzycad_surface_scaffold.py")
+_scaffold.install(_legacy)
 
 run = _legacy.run
 stop = _legacy.stop
