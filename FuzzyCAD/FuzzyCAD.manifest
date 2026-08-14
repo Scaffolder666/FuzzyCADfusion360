@@ -1,0 +1,10 @@
+{
+    "autodeskProduct": "Fusion360",
+    "type": "addin",
+    "author": "FuzzyCAD",
+    "description": {
+        "": "FuzzyCAD trial: stateful palette, two-way messaging, CustomGraphics overlays, camera focus."
+    },
+    "supportedOS": "windows|mac",
+    "editEnabled": true
+}

@@ -1,0 +1,45 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>FuzzyCAD</title>
+  <link rel="stylesheet" href="palette.css" />
+</head>
+<body>
+  <header class="head">
+    <div class="brand">FuzzyCAD</div>
+    <div class="sub">uncertainty marks · trial</div>
+  </header>
+
+  <section class="composer">
+    <label class="field">
+      <span class="field__label">Label</span>
+      <input id="label" type="text" placeholder="e.g. angle not decided" />
+    </label>
+
+    <div class="kinds" role="radiogroup" aria-label="Mark kind">
+      <button class="kind kind--needs_input is-active" data-kind="needs_input">
+        <span class="dot"></span>Needs input
+      </button>
+      <button class="kind kind--note" data-kind="note">
+        <span class="dot"></span>Note
+      </button>
+      <button class="kind kind--conflict" data-kind="conflict">
+        <span class="dot"></span>Conflict
+      </button>
+    </div>
+
+    <button id="add" class="add">+ Add mark at selection</button>
+    <p class="hint">Select a face / body / point in the model first.</p>
+  </section>
+
+  <section class="list">
+    <div class="list__head">Marks <span id="count" class="count">0</span></div>
+    <ul id="marks" class="marks"></ul>
+    <p id="empty" class="empty">No marks yet.</p>
+  </section>
+
+  <script src="palette.js"></script>
+</body>
+</html>
