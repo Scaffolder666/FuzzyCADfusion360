@@ -1,0 +1,58 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>FuzzyCAD Decision</title>
+<style>
+:root{--navy:#21313f;--line:#e2e5ea;--muted:#7b8794;--orange:#e17e26;--bg:#fff;--panel:#f7f8fa}
+*{box-sizing:border-box}html,body{margin:0;padding:0;background:transparent;font-family:-apple-system,"Segoe UI",Roboto,sans-serif;color:var(--navy)}
+.card{margin:10px;padding:13px;border:1px solid var(--line);border-left:4px solid var(--orange);border-radius:10px;background:var(--bg);box-shadow:0 8px 24px rgba(20,31,43,.12)}
+.eyebrow{font-size:9px;text-transform:uppercase;letter-spacing:.8px;color:var(--muted);font-weight:700;margin-bottom:4px}
+.title{font-size:14px;font-weight:750;margin-bottom:4px}.message{font-size:11.5px;line-height:1.4;color:var(--muted);margin-bottom:10px}
+.options{display:flex;gap:6px;flex-wrap:wrap}.choice{flex:1;min-width:82px;border:1px solid var(--line);border-radius:7px;padding:8px 7px;background:#fff;color:var(--navy);font-size:11px;font-weight:650;cursor:pointer}.choice:hover{border-color:var(--navy)}.choice.selected{border-color:var(--orange);background:#fff7ef;color:#a8540c}.glyph{display:block;font-size:16px;line-height:1.1;margin-bottom:2px}
+</style>
+</head>
+<body>
+<div class="card">
+  <div class="eyebrow">FuzzyCAD · Need Input</div>
+  <div id="title" class="title">Decision</div>
+  <div id="message" class="message"></div>
+  <div id="options" class="options"></div>
+</div>
+<script>
+(function(){
+  "use strict";
+  var current={kind:null,selected:null,options:[]};
+  function send(action,data){
+    if(window.adsk&&typeof window.adsk.fusionSendData==="function"){
+      return window.adsk.fusionSendData(action,JSON.stringify(data||{}));
+    }
+    return Promise.resolve("{}");
+  }
+  function render(data){
+    current=data||{};
+    document.getElementById("title").textContent=current.title||"Decision";
+    document.getElementById("message").textContent=current.message||"";
+    var wrap=document.getElementById("options");wrap.innerHTML="";
+    (current.options||[]).forEach(function(opt){
+      var b=document.createElement("button");
+      b.className="choice"+(current.selected===opt.value?" selected":"");
+      var g=document.createElement("span");g.className="glyph";g.textContent=opt.glyph||"";
+      var t=document.createElement("span");t.textContent=opt.label||opt.value;
+      b.appendChild(g);b.appendChild(t);
+      b.addEventListener("click",function(){
+        current.selected=opt.value;render(current);
+        send("choice",{kind:current.kind,value:opt.value});
+      });
+      wrap.appendChild(b);
+    });
+  }
+  window.fusionJavaScriptHandler={handle:function(action,dataString){
+    try{var data=dataString?JSON.parse(dataString):{};if(action==="prompt")render(data);}catch(e){return JSON.stringify({ok:false,error:String(e)});}return JSON.stringify({ok:true});
+  }};
+  document.addEventListener("DOMContentLoaded",function(){send("ready",{});});
+})();
+</script>
+</body>
+</html>
