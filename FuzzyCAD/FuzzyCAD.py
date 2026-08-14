@@ -4,8 +4,10 @@ The original implementation is kept in FuzzyCAD_legacy.py. Runtime patches
 replace the fillet preview/range path, guard transient live-mark teardown,
 commit accepted proposals in their own Fusion command transaction, add a live
 TEXT COMMANDS debug monitor, trace manipulator values through final apply, flag
-when a sidebar Accept targets a different proposal from the active handle, and
-trace the native manipulator inputChanged/executePreview events directly.
+when a sidebar Accept targets a different proposal from the active handle, trace
+the native manipulator inputChanged/executePreview events directly, and keep the
+Fillet candidate/card synchronized even when Fusion emits inputChanged without
+executePreview.
 """
 import importlib.util
 import os
@@ -37,6 +39,8 @@ _identity = _load("fuzzycad_accept_identity_trace", "fuzzycad_accept_identity_tr
 _identity.install(_legacy)
 _handle_events = _load("fuzzycad_handle_event_trace", "fuzzycad_handle_event_trace.py")
 _handle_events.install(_legacy)
+_fillet_live = _load("fuzzycad_fillet_input_sync", "fuzzycad_fillet_input_sync.py")
+_fillet_live.install(_legacy)
 
 run = _legacy.run
 stop = _legacy.stop
