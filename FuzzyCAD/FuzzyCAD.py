@@ -11,8 +11,8 @@ executePreview, unify Move/Rotate/Scale/Extrude candidate visualization with
 the Fillet visual language, replay Move proposals as a one-way animation while
 their sidebar card is hovered, keep notes screen-facing while showing a
 lightweight active-candidate size frame, separate the collaboration taxonomy,
-and preserve the direct body->manipulator interaction flow for scale and axis
-rotation.
+preserve the direct body->manipulator interaction flow for scale and axis
+rotation, and restore the missing Uniform Scale body-selection pending state.
 """
 import importlib.util
 import os
@@ -56,6 +56,8 @@ _next_tools = _load("fuzzycad_scale_axis_rotate_taxonomy", "fuzzycad_scale_axis_
 _next_tools.install(_legacy)
 _direct = _load("fuzzycad_direct_interactions", "fuzzycad_direct_interactions.py")
 _direct.install(_legacy)
+_scale_fix = _load("fuzzycad_scale_pending_fix", "fuzzycad_scale_pending_fix.py")
+_scale_fix.install(_legacy)
 
 run = _legacy.run
 stop = _legacy.stop
