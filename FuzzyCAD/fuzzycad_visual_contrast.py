@@ -1,19 +1,14 @@
-"""Make FuzzyCAD proposals read unmistakably as before -> proposed geometry.
+"""Before/proposed contrast wrapper.
 
-Candidate sketch strokes are darker/thicker/more hand-drawn, while the original
-geometry gets a quiet single-stroke outline.  Move and Rotate also receive small
-screen-facing Original / Proposed labels at corresponding reference points.
+This module now contributes structure only: it adds the quiet source outline and
+before/after labels.  Colors, line weights, opacity, and sketch randomness are
+owned by fuzzycad_visual_system.py.
 """
 
 
 def install(m):
     adsk = m.adsk
-    old_sketchy = m._sketchy
     old_run = m.run
-
-    BEFORE_RGB = (145, 145, 142)
-    ORIGINAL_LABEL_RGB = (112, 118, 124)
-    PROPOSED_LABEL_RGB = (55, 62, 68)
 
     def log(msg):
         try:
@@ -27,19 +22,23 @@ def install(m):
         except Exception:
             pass
 
-    # A proposal should visually separate from the original body.  This is the
-    # same low original opacity used by the FeatureScript reference language.
-    m.GHOST_OPACITY = 0.08
+    # Fallback until the centralized visual system is installed later in the
+    # loader. The central token becomes authoritative before the add-in runs.
+    if not hasattr(m, "GHOST_OPACITY"):
+        m.GHOST_OPACITY = 0.08
 
-    def sketchy(group, pts, rgb, amp, seed, weight=2, strokes=2):
-        # Multi-stroke geometry is the proposal sketch. Strengthen it without
-        # thickening dimension leaders, warning marks, or axis guides.
-        if strokes >= 2 and amp > 0:
-            amp = amp * 1.65
-            weight = max(2, weight)
-        return old_sketchy(group, pts, rgb, amp, seed, weight=weight, strokes=strokes)
+    def vcolor(role, fallback):
+        try:
+            return m._visual_color(role)
+        except Exception:
+            return fallback
 
-    m._sketchy = sketchy
+    def vstroke(group, pts, role, seed, size=3.0):
+        try:
+            return m._visual_stroke(group, pts, role, seed, size=size)
+        except Exception:
+            rgb = vcolor(role, (145, 145, 142))
+            return m._sketchy(group, pts, rgb, 0.0, seed, weight=1, strokes=1)
 
     def original_polys(mark):
         g = m._geom.get(mark.get("id"), {})
@@ -52,11 +51,11 @@ def install(m):
         return []
 
     def draw_original(group, mark):
+        size = float(mark.get("size", 3.0))
         for i, poly in enumerate(original_polys(mark)):
             if poly and len(poly) >= 2:
-                old_sketchy(group, poly, BEFORE_RGB, 0.0,
-                            mark.get("id", 1) * 15001 + i,
-                            weight=1, strokes=1)
+                vstroke(group, poly, "current_outline",
+                        mark.get("id", 1) * 15001 + i, size=size)
 
     def farthest_point(mark):
         a = mark.get("anchor") or [0.0, 0.0, 0.0]
@@ -89,12 +88,12 @@ def install(m):
         except Exception:
             return None
 
-    def label(group, xyz, text, rgb, size):
+    def label(group, xyz, text, role, size):
         try:
             p = adsk.core.Point3D.create(*xyz)
             t = group.addText(text, "Arial", max(0.38, min(size * 0.075, 0.62)),
                               m._label_transform(p))
-            t.color = m._solid(rgb)
+            t.color = m._solid(vcolor(role, (80, 84, 88)))
             m._apply_billboard(t, p)
         except Exception:
             pass
@@ -110,11 +109,9 @@ def install(m):
         if d2 < 1e-5:
             return
         size = mark.get("size", 3.0)
-        label(group, p0, "Original", ORIGINAL_LABEL_RGB, size)
-        label(group, p1, "Proposed", PROPOSED_LABEL_RGB, size)
+        label(group, p0, "Original", "label_current", size)
+        label(group, p1, "Proposed", "label_proposed", size)
 
-    # Wrap current renderers last so all existing exact BRep / related-body
-    # behavior remains intact.
     for tool in ("move", "rotate", "scale", "scale_axis", "axis_rotate", "extrude", "fillet"):
         previous = m._DRAW.get(tool)
         if previous is None:
@@ -130,7 +127,7 @@ def install(m):
 
     def run(context):
         result = old_run(context)
-        log("VISUAL CONTRAST READY: original single-line + stronger proposed sketch")
+        log("VISUAL CONTRAST READY: source outline + labels use central visual roles")
         return result
 
     m.run = run
