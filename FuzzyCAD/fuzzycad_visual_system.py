@@ -1,6 +1,6 @@
 """Central visual system for FuzzyCAD.
 
-This file is the single source of truth for proposal appearance.  Geometry tools
+This file is the single source of truth for proposal appearance. Geometry tools
 should ask for semantic roles (current, proposal internal, proposal outer,
 operation cue, scaffold, annotation, etc.) instead of choosing colors, line
 weights, stroke counts, or wobble locally.
@@ -107,7 +107,7 @@ VISUAL_TOKENS = {
     "label_proposed": {"rgb": (55, 62, 68)},
 }
 
-# Deterministic hand-drawn character.  These values control the RANDOMNESS for
+# Deterministic hand-drawn character. These values control the RANDOMNESS for
 # every role that has non-zero wobble.
 SKETCH_RANDOM = {
     "frequency_min": 0.90,
@@ -115,6 +115,21 @@ SKETCH_RANDOM = {
     "phase_span": math.pi * 2.0,
     "seed_axis_step": 131,
     "seed_stroke_step": 977,
+}
+
+# Migration bridge: older renderer patches used these literal colors. Mapping
+# them here means their weight/stroke/wobble arguments no longer create a second
+# competing visual system while we progressively remove the old literals.
+LEGACY_ROLE_BY_RGB = {
+    (145, 145, 142): "current_outline",
+    (70, 72, 74): "proposal_internal",
+    (72, 76, 80): "proposal_outer",
+    (118, 122, 126): "surface_scaffold",
+    (142, 146, 150): "surface_scaffold",
+    (125, 130, 135): "axis_reference",
+    (92, 92, 92): "dimension",
+    (77, 77, 77): "annotation",
+    (200, 44, 32): "warning",
 }
 
 
@@ -134,8 +149,6 @@ def install(m):
         except Exception:
             pass
 
-    # Copy references onto the runtime module so every renderer reads the same
-    # live dictionary. Future tuning only needs this file.
     m.VISUAL_TOKENS = VISUAL_TOKENS
     m.SKETCH_RANDOM = SKETCH_RANDOM
     m.GHOST_OPACITY = float(VISUAL_TOKENS["current_geometry"]["opacity"])
@@ -164,8 +177,8 @@ def install(m):
             return
         amp = max(0.0, float(amp or 0.0))
         strokes = max(1, int(strokes or 1))
-        # Never draw coincident duplicate strokes; that only makes a line look
-        # artificially thick without adding hand-drawn character.
+        # Coincident duplicate strokes only make a line look thicker. A role with
+        # no wobble is always a single crisp stroke.
         if amp <= 1e-12:
             strokes = 1
 
@@ -206,10 +219,36 @@ def install(m):
         return raw_stroke(group, pts, actual_rgb, actual_amp, seed,
                           weight=actual_weight, strokes=actual_strokes)
 
-    # Compatibility path for older renderers that have not yet been migrated to
-    # semantic roles. It uses the same deterministic random engine, so randomness
-    # is still centralized even while those callers retain explicit styling.
+    def legacy_role(rgb, weight):
+        key = tuple(int(x) for x in rgb)
+        if key == (225, 126, 38):
+            return "affected_candidate" if int(weight or 1) <= 1 else "operation_cue"
+        if key in LEGACY_ROLE_BY_RGB:
+            return LEGACY_ROLE_BY_RGB[key]
+        # Several older proposal renderers receive the collaboration-category
+        # gray dynamically. A dark neutral multi-stroke line is still a proposal
+        # internal edge, regardless of the historical literal.
+        if max(key) - min(key) <= 18 and sum(key) / 3.0 < 125:
+            return "proposal_internal"
+        return None
+
+    # Compatibility path for renderers not yet rewritten to semantic roles. If a
+    # legacy call is recognizable, its local weight/stroke/amp values are ignored
+    # and the centralized token wins. Unknown special graphics keep their explicit
+    # arguments but still share the same deterministic random engine.
     def sketchy_compat(group, pts, rgb, amp, seed, weight=2, strokes=2):
+        role = legacy_role(rgb, weight)
+        if role:
+            # Use a geometric span estimate when the old caller did not provide a
+            # semantic object size. This keeps wobble scale-aware without restoring
+            # the old per-file size*0.010 rules.
+            size = 3.0
+            try:
+                xs = [p[0] for p in pts]; ys = [p[1] for p in pts]; zs = [p[2] for p in pts]
+                size = max(max(xs)-min(xs), max(ys)-min(ys), max(zs)-min(zs), 0.25)
+            except Exception:
+                pass
+            return visual_stroke(group, pts, role, seed, size=size)
         return raw_stroke(group, pts, rgb, amp, seed, weight=weight, strokes=strokes)
 
     m._visual_style = style
@@ -220,7 +259,7 @@ def install(m):
 
     def run(context):
         result = old_run(context)
-        log("CENTRAL VISUAL SYSTEM READY: edit fuzzycad_visual_system.py for line hierarchy, colors, and randomness")
+        log("CENTRAL VISUAL SYSTEM READY: all known legacy strokes normalized through semantic tokens")
         return result
 
     m.run = run
