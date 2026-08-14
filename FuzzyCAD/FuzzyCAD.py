@@ -15,8 +15,9 @@ preserve the direct body->manipulator interaction flow for scale and axis
 rotation, restore the missing Uniform Scale body-selection pending state, make
 directional scale one-sided by default, prototype relationship-aware Move scope,
 render interaction choices in FuzzyCAD's own HTML UI instead of Fusion's native
-option controls, and keep related-part Move previews synchronized directly from
-the native handle while labeling the relationship candidates in the viewport.
+option controls, keep related-part Move previews synchronized directly from the
+native handle, strengthen original/proposed visual contrast, and persist open
+collaboration state inside the Fusion design for reopen/handoff workflows.
 """
 import importlib.util
 import os
@@ -70,6 +71,10 @@ _hci = _load("fuzzycad_hci_prompts", "fuzzycad_hci_prompts.py")
 _hci.install(_legacy)
 _move_polish = _load("fuzzycad_move_scope_polish", "fuzzycad_move_scope_polish.py")
 _move_polish.install(_legacy)
+_contrast = _load("fuzzycad_visual_contrast", "fuzzycad_visual_contrast.py")
+_contrast.install(_legacy)
+_store = _load("fuzzycad_persistence", "fuzzycad_persistence.py")
+_store.install(_legacy)
 
 run = _legacy.run
 stop = _legacy.stop
