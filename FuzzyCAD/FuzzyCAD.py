@@ -9,8 +9,9 @@ the native manipulator inputChanged/executePreview events directly, keep the
 Fillet candidate/card synchronized even when Fusion emits inputChanged without
 executePreview, unify Move/Rotate/Scale/Extrude candidate visualization with
 the Fillet visual language, replay Move proposals as a one-way animation while
-their sidebar card is hovered, and keep notes screen-facing while showing a
-lightweight active-candidate size frame.
+their sidebar card is hovered, keep notes screen-facing while showing a
+lightweight active-candidate size frame, and separate Scale from Move/Rotate
+with directional scaling and circular-edge Axis Rotate.
 """
 import importlib.util
 import os
@@ -50,6 +51,8 @@ _move_hover = _load("fuzzycad_move_hover_animation", "fuzzycad_move_hover_animat
 _move_hover.install(_legacy)
 _annotations = _load("fuzzycad_note_dimensions", "fuzzycad_note_dimensions.py")
 _annotations.install(_legacy)
+_next_tools = _load("fuzzycad_scale_axis_rotate_taxonomy", "fuzzycad_scale_axis_rotate_taxonomy.py")
+_next_tools.install(_legacy)
 
 run = _legacy.run
 stop = _legacy.stop
