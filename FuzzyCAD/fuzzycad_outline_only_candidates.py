@@ -1,16 +1,12 @@
 """Render proposed geometry as outline-only for clear before/after comparison.
 
-Move, Rotate, Scale, directional Scale, Axis Rotate, and Extrude candidates use
-cached/sampled edge geometry for their visible preview.  Because their faces are
-intentionally invisible, this patch does not create a CustomGraphics BRep body
-at all.  That removes a surprisingly expensive invisible object from the live
-drag path.  Fillet is intentionally excluded because its local surface change
-benefits from the existing filled candidate treatment.
+This patch now owns only geometry policy: candidate BRep surfaces are suppressed
+for Move/Rotate/Scale/Axis Rotate/Extrude. It no longer changes line weight or
+sketch character; those belong exclusively to fuzzycad_visual_system.py.
 """
 
 
 def install(m):
-    old_sketchy = m._sketchy
     old_run = m.run
 
     def log(msg):
@@ -42,23 +38,8 @@ def install(m):
             return getattr(object.__getattribute__(self, "_group"), name)
 
         def addBRepBody(self, body):
-            # The visible candidate is the sketch outline.  Earlier builds still
-            # created the full BRep and merely set opacity=0, which means Fusion
-            # paid the BRep graphics cost even though the user could not see it.
             return NullGraphic()
 
-    # Proposed outlines should remain visibly sketch-like after the fill is gone.
-    # Only multi-stroke sketch geometry is thickened; dimensions/axis leaders stay
-    # at their existing weights.
-    def sketchy(group, pts, rgb, amp, seed, weight=2, strokes=2):
-        if strokes >= 2 and amp > 0:
-            weight = max(3, weight)
-        return old_sketchy(group, pts, rgb, amp, seed, weight=weight, strokes=strokes)
-
-    m._sketchy = sketchy
-
-    # Wrap the final renderer chain so candidate BRep requests from earlier
-    # patches become no-ops while all exact edge/callout logic remains intact.
     for tool in ("move", "rotate", "scale", "scale_axis", "axis_rotate", "extrude"):
         prev = m._DRAW.get(tool)
         if prev is None:
@@ -73,7 +54,7 @@ def install(m):
 
     def run(context):
         result = old_run(context)
-        log("OUTLINE-ONLY CANDIDATES READY: no invisible candidate BRep + stronger proposed sketch; Fillet unchanged")
+        log("OUTLINE-ONLY CANDIDATES READY: geometry-only; visual styling delegated centrally")
         return result
 
     m.run = run
