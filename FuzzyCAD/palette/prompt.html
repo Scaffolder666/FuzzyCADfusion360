@@ -5,33 +5,26 @@
 <meta name="viewport" content="width=device-width, initial-scale=1" />
 <title>FuzzyCAD Decision</title>
 <style>
-:root{--navy:#21313f;--line:#e2e5ea;--muted:#7b8794;--orange:#e17e26;--bg:#fff;--panel:#f7f8fa;--green:#2ea043}
+:root{--navy:#21313f;--line:#e2e5ea;--muted:#7b8794;--orange:#e17e26;--bg:#fff;--green:#2ea043}
 *{box-sizing:border-box}html,body{margin:0;padding:0;background:transparent;font-family:-apple-system,"Segoe UI",Roboto,sans-serif;color:var(--navy)}
 .card{margin:10px;padding:13px;border:1px solid var(--line);border-left:4px solid var(--orange);border-radius:10px;background:var(--bg);box-shadow:0 8px 24px rgba(20,31,43,.12)}
 .eyebrow{font-size:9px;text-transform:uppercase;letter-spacing:.8px;color:var(--muted);font-weight:700;margin-bottom:5px}
-.title{font-size:15px;font-weight:760;line-height:1.25;margin-bottom:5px}.message{font-size:11.5px;line-height:1.45;color:var(--muted);margin-bottom:8px}
-.legend{font-size:10.5px;line-height:1.35;color:#a8540c;background:#fff7ef;border-radius:6px;padding:6px 7px;margin-bottom:9px;display:none}
-.choose{font-size:10px;font-weight:800;text-transform:uppercase;letter-spacing:.5px;color:var(--muted);margin:2px 0 6px}
-.options{display:flex;gap:7px;flex-wrap:wrap}.choice{flex:1;min-width:115px;border:1px solid var(--line);border-radius:8px;padding:9px 8px;background:#fff;color:var(--navy);font-size:11px;font-weight:700;cursor:pointer;line-height:1.25}.choice:hover{border-color:var(--navy);background:#fafbfc}.choice.selected{border-color:var(--orange);background:#fff7ef;color:#a8540c;box-shadow:inset 0 0 0 1px var(--orange)}.glyph{display:block;font-size:17px;line-height:1.1;margin-bottom:3px}
-.status{font-size:10.5px;line-height:1.35;color:var(--navy);font-weight:650;background:var(--panel);border-radius:6px;padding:6px 7px;margin-top:9px}
-.confirm{width:100%;margin-top:8px;padding:8px 10px;border:1px solid var(--green);border-radius:8px;background:var(--green);color:#fff;font-size:11.5px;font-weight:750;cursor:pointer}.confirm:hover{filter:brightness(.96)}.confirm:disabled{background:#d8dde2;border-color:#d8dde2;color:#8b949e;cursor:default;filter:none}
+.title{font-size:15px;font-weight:760;line-height:1.25;margin-bottom:10px}
+.options{display:flex;gap:7px}.choice{flex:1;min-width:110px;border:1px solid var(--line);border-radius:8px;padding:10px 8px;background:#fff;color:var(--navy);font-size:12px;font-weight:700;cursor:pointer}.choice:hover{border-color:var(--navy)}.choice.selected{border-color:var(--orange);background:#fff7ef;color:#a8540c;box-shadow:inset 0 0 0 1px var(--orange)}
+.confirm{width:100%;margin-top:9px;padding:8px 10px;border:1px solid var(--green);border-radius:8px;background:var(--green);color:#fff;font-size:11.5px;font-weight:750;cursor:pointer}.confirm:hover{filter:brightness(.96)}.confirm:disabled{background:#d8dde2;border-color:#d8dde2;color:#8b949e;cursor:default;filter:none}
 </style>
 </head>
 <body>
 <div class="card">
   <div class="eyebrow">FuzzyCAD · Need Input</div>
-  <div id="title" class="title">Preparing decision…</div>
-  <div id="message" class="message">Waiting for the selected geometry.</div>
-  <div id="legend" class="legend"></div>
-  <div class="choose">Choose one</div>
+  <div id="title" class="title">Waiting…</div>
   <div id="options" class="options"></div>
-  <div id="status" class="status">Choose an option, then confirm.</div>
   <button id="confirm" class="confirm" disabled>Confirm</button>
 </div>
 <script>
 (function(){
   "use strict";
-  var current={kind:null,selected:null,options:[]};
+  var current={kind:null,options:[]};
   var draft=null;
   var receivedPrompt=false;
   var readyTries=0;
@@ -43,18 +36,16 @@
     return Promise.resolve("{}");
   }
 
-  function moveQuestion(data){
-    var count=(data&&data.related_count)||null;
-    if(count){
-      return "Move only the Selected part, or move the Selected part together with R1–R"+count+"?";
-    }
-    return "Move only the Selected part, or move it together with the highlighted nearby parts?";
+  function titleFor(data){
+    if(data.kind==="move_scope") return "Want to move together?";
+    if(data.kind==="scale_scope") return "Scale from which side?";
+    return "Choose";
   }
 
-  function optionLabel(data,opt){
+  function labelFor(data,opt){
     if(data.kind==="move_scope"){
-      if(opt.value==="only") return "Move that object";
-      if(opt.value==="together") return "Move together";
+      if(opt.value==="together") return "Together";
+      if(opt.value==="only") return "Separate";
     }
     if(data.kind==="scale_scope"){
       if(opt.value==="positive") return "+ side";
@@ -64,35 +55,11 @@
     return opt.label||opt.value;
   }
 
-  function draftStatus(data){
-    if(!data||!data.kind) return "Waiting for a FuzzyCAD decision.";
-    var value=draft;
-    if(data.kind==="move_scope"){
-      if(value==="together") return "Pending: Move together — R1/R2/… will follow the Selected part.";
-      if(value==="only") return "Pending: Move that object — highlighted parts will stay in place.";
-      return "Choose whether the highlighted parts should follow the Selected part.";
-    }
-    if(data.kind==="scale_scope"){
-      if(value==="negative") return "Pending: - side moves; the opposite side stays fixed.";
-      if(value==="both") return "Pending: both sides move symmetrically.";
-      if(value==="positive") return "Pending: + side moves; the opposite side stays fixed.";
-      return "Choose the moving side or symmetric scaling.";
-    }
-    return "Choose an option, then confirm.";
-  }
-
-  function legendText(data){
-    if(data.kind==="move_scope") return "Viewport: Selected = the part you grabbed. R1, R2, … = nearby parts outlined in orange.";
-    if(data.kind==="scale_scope") return "The fixed-end marker shows the anchored side. One-sided scale is the default.";
-    return "";
-  }
-
-  function paintSelection(){
+  function paint(){
     var buttons=document.querySelectorAll(".choice");
     Array.prototype.forEach.call(buttons,function(b){
       b.classList.toggle("selected",b.getAttribute("data-value")===draft);
     });
-    document.getElementById("status").textContent=draftStatus(current);
     document.getElementById("confirm").disabled=!draft;
   }
 
@@ -100,59 +67,37 @@
     current=data||{};
     receivedPrompt=!!current.kind;
     draft=null;
-
-    var title=current.title||"FuzzyCAD decision";
-    var message=current.message||"";
-    if(current.kind==="move_scope"){
-      title="How should this Move affect the highlighted parts?";
-      message=moveQuestion(current);
-    } else if(current.kind==="scale_scope"){
-      title="How should this Scale change the body?";
-      message="Choose which side moves, or scale symmetrically from the center.";
-    }
-    document.getElementById("title").textContent=title;
-    document.getElementById("message").textContent=message;
-
-    var legend=document.getElementById("legend");
-    var lt=legendText(current);legend.textContent=lt;legend.style.display=lt?"block":"none";
-
+    document.getElementById("title").textContent=titleFor(current);
     var wrap=document.getElementById("options");wrap.innerHTML="";
     (current.options||[]).forEach(function(opt){
       var b=document.createElement("button");
       b.className="choice";
       b.setAttribute("data-value",opt.value);
-      var g=document.createElement("span");g.className="glyph";g.textContent=opt.glyph||"";
-      var t=document.createElement("span");t.textContent=optionLabel(current,opt);
-      b.appendChild(g);b.appendChild(t);
-      b.addEventListener("click",function(){
-        draft=opt.value;
-        paintSelection();
-      });
+      b.textContent=labelFor(current,opt);
+      b.addEventListener("click",function(){draft=opt.value;paint();});
       wrap.appendChild(b);
     });
-    paintSelection();
+    document.getElementById("confirm").textContent="Confirm";
+    paint();
   }
 
   document.getElementById("confirm").addEventListener("click",function(){
-    if(!draft||!current.kind) return;
-    var btn=this;btn.disabled=true;btn.textContent="Confirmed";
+    if(!draft||!current.kind)return;
+    this.disabled=true;
     send("confirm",{kind:current.kind,value:draft});
   });
 
   window.fusionJavaScriptHandler={handle:function(action,dataString){
     try{
       var data=dataString?JSON.parse(dataString):{};
-      if(action==="prompt"){
-        document.getElementById("confirm").textContent="Confirm";
-        render(data);
-      }
+      if(action==="prompt")render(data);
     }catch(e){return JSON.stringify({ok:false,error:String(e)});}
     return JSON.stringify({ok:true});
   }};
 
   document.addEventListener("DOMContentLoaded",function(){
     function askForState(){
-      if(receivedPrompt||readyTries>=12) return;
+      if(receivedPrompt||readyTries>=12)return;
       readyTries+=1;
       send("ready",{});
       setTimeout(askForState,180);
