@@ -283,11 +283,35 @@ def _translate(pts, d, amount):
 
 
 # --- per-tool drawing ------------------------------------------------------
+def _dominant_axis(rot):
+    idx = max(range(3), key=lambda i: abs(rot[i]))
+    return "XYZ"[idx] if abs(rot[idx]) > 1e-9 else "Z"
+
+
+def _draw_ring(group, anchor, axis, r, rgb, seed):
+    """A ring in the plane perpendicular to `axis` — the rotate manipulator cue."""
+    ax = _axis_unit(axis)
+    u = _plane_basis(axis)
+    w = (ax[1] * u[2] - ax[2] * u[1], ax[2] * u[0] - ax[0] * u[2], ax[0] * u[1] - ax[1] * u[0])
+    steps = 44
+    pts = []
+    for i in range(steps + 1):
+        t = 2 * math.pi * i / steps
+        c, s = math.cos(t), math.sin(t)
+        pts.append((anchor[0] + r * (c * u[0] + s * w[0]),
+                    anchor[1] + r * (c * u[1] + s * w[1]),
+                    anchor[2] + r * (c * u[2] + s * w[2])))
+    _sketchy(group, pts, rgb, r * 0.02, seed * 77, weight=3, strokes=1)
+
+
 def _draw_move(group, mark, rgb, amp):
+    # Keep the moving body light (a single faint outline stroke) so the whole
+    # part doesn't read as heavy scribble — the arrow carries the "move" meaning.
     v = mark["vec"]
     m = _op_matrix(mark)
     for i, loop in enumerate(_geom[mark["id"]]["edges"]):
-        _sketchy(group, _apply_matrix(loop, m), rgb, amp, mark["id"] * 100 + i)
+        _sketchy(group, _apply_matrix(loop, m), rgb, amp * 0.8,
+                 mark["id"] * 100 + i, weight=1, strokes=1)
     a = mark["anchor"]
     _sketchy(group, [tuple(a), (a[0] + v[0], a[1] + v[1], a[2] + v[2])],
              rgb, amp, mark["id"] * 7, weight=3)
@@ -296,7 +320,11 @@ def _draw_move(group, mark, rgb, amp):
 def _draw_rotate(group, mark, rgb, amp):
     m = _op_matrix(mark)
     for i, loop in enumerate(_geom[mark["id"]]["edges"]):
-        _sketchy(group, _apply_matrix(loop, m), rgb, amp, mark["id"] * 100 + i)
+        _sketchy(group, _apply_matrix(loop, m), rgb, amp * 0.8,
+                 mark["id"] * 100 + i, weight=1, strokes=1)
+    # a distinct red rotation ring (vs the move arrow) around the dominant axis
+    _draw_ring(group, mark["anchor"], _dominant_axis(mark["rot"]),
+               mark.get("size", 3.0) * 0.62, COLOR_WARN, mark["id"])
 
 
 def _draw_extrude(group, mark, rgb, amp):
