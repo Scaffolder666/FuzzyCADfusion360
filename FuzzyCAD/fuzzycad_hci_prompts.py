@@ -3,7 +3,8 @@
 Fusion SelectionCommandInput objects remain as low-level selection plumbing,
 because Fusion requires a visible focused selection input to receive picks.
 Move-scope and directional-scale decisions are rendered in a dedicated FuzzyCAD
-HTML popup palette.
+HTML popup palette.  A choice is staged in the popup and only becomes active
+when the user presses Confirm; the popup then disappears.
 """
 
 import json
@@ -38,7 +39,7 @@ def install(m):
         p = m._ui.palettes.itemById(PROMPT_ID)
         if p is None and create:
             p = m._ui.palettes.add(PROMPT_ID, "FuzzyCAD Decision", PROMPT_URL,
-                                   True, True, True, 330, 185)
+                                   True, True, True, 350, 220)
             try:
                 p.dockingState = adsk.core.PaletteDockingStates.PaletteDockStateFloating
             except Exception:
@@ -77,7 +78,7 @@ def install(m):
 
     def move_choice(value):
         if getattr(m, "_active_cmd", None) != "transform" or not m._pending:
-            return
+            return False
         value = "together" if value == "together" else "only"
         set_hidden_radio("moveScope", 1 if value == "together" else 0)
         m._pending["move_scope"] = value
@@ -93,7 +94,8 @@ def install(m):
             m._refresh_ghost(); m._send_state()
             try: m._app.activeViewport.refresh()
             except Exception: pass
-        log("MOVE choice={} related={}".format(value, len(m._pending.get("related_bodies", []))))
+        log("MOVE confirmed={} related={}".format(value, len(m._pending.get("related_bodies", []))))
+        return True
 
     def scale_base(axis, side):
         body = m._pending.get("body") if m._pending else None
@@ -135,7 +137,7 @@ def install(m):
 
     def scale_choice(value):
         if getattr(m, "_active_cmd", None) != "directional_scale" or not m._pending:
-            return
+            return False
         if value not in ("positive", "negative", "both"):
             value = "positive"
         set_hidden_radio("dsSide", {"positive": 0, "negative": 1, "both": 2}[value])
@@ -154,7 +156,8 @@ def install(m):
             m._refresh_ghost(); m._send_state()
             try: m._app.activeViewport.refresh()
             except Exception: pass
-        log("SCALE choice={}".format(value))
+        log("SCALE confirmed={}".format(value))
+        return True
 
     class PromptHTMLHandler(adsk.core.HTMLEventHandler):
         def notify(self, args):
@@ -165,12 +168,26 @@ def install(m):
                         p = prompt_palette(False)
                         if p: p.sendInfoToHTML("prompt", json.dumps(state["prompt"]))
                     return
-                if e.action != "choice":
-                    return
+
                 data = json.loads(e.data) if e.data else {}
                 kind, value = data.get("kind"), data.get("value")
-                if kind == "move_scope": move_choice(value)
-                elif kind == "scale_scope": scale_choice(value)
+
+                # Legacy builds sent the option immediately. Keep accepting that
+                # message, but the current popup sends only Confirm.
+                if e.action == "choice":
+                    if kind == "move_scope": move_choice(value)
+                    elif kind == "scale_scope": scale_choice(value)
+                    return
+
+                if e.action != "confirm":
+                    return
+
+                ok = False
+                if kind == "move_scope": ok = move_choice(value)
+                elif kind == "scale_scope": ok = scale_choice(value)
+                if ok:
+                    hide_prompt(kind)
+                    log("CONFIRM kind={} value={} -> popup hidden".format(kind, value))
             except Exception:
                 log("popup event failed\n{}".format(m.traceback.format_exc()))
 
@@ -187,10 +204,11 @@ def install(m):
                             "kind": "move_scope",
                             "title": "Move connected parts?",
                             "message": "{} nearby part{} highlighted. Choose the movement scope.".format(len(related), " is" if len(related) == 1 else "s are"),
+                            "related_count": len(related),
                             "selected": m._pending.get("move_scope", "only"),
                             "options": [
-                                {"value": "only", "label": "Only this", "glyph": "●"},
-                                {"value": "together", "label": "Together", "glyph": "◎"},
+                                {"value": "only", "label": "Move that object", "glyph": "●"},
+                                {"value": "together", "label": "Move together", "glyph": "◎"},
                             ]})
                     else:
                         hide_prompt("move_scope")
@@ -236,7 +254,7 @@ def install(m):
 
     def run(context):
         result = old_run(context)
-        log("CUSTOM POPUP READY: Move/Scale choices are FuzzyCAD UI, not Fusion controls")
+        log("CUSTOM POPUP READY: choose -> Confirm -> popup closes")
         return result
 
     def stop(context):
