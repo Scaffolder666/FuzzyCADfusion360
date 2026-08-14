@@ -10,29 +10,36 @@ much" — and let a collaborator resolve it later, asynchronously, by sharing th
 
 ## Two halves of the interaction
 
-**1. Direct manipulation in the viewport (SketchUp / Kyub style).**
-Pick a tool, then *drag right on the model*. A face pushes out, a body slides, an edge
-rounds over — and it draws as a **sketchy, hand-drawn ghost**. The sketchiness *is* the
-uncertainty: "proposed, not final." Each tool is a Fusion **Command** with a **drag
-manipulator** (`DistanceValueCommandInput` / `AngleValueCommandInput`); the
-`executePreview` event redraws the sketchy ghost live as you drag.
+**1. Direct manipulation in the viewport (SketchUp / Kyub / Tinkercad style).**
+The tools live on a **separate bottom toolbar**, not in the sidebar. Pick one, select
+geometry, and *drag right on the model*. The original body **fades translucent** and a
+**soft, hand-drawn "sketchy" ghost** shows the proposed operation — the sketchiness *is*
+the uncertainty ("proposed, not final"). The mark commits **the moment you drag** (no OK
+needed to make it exist). Move / Rotate give you **draggable axis arrows** in the viewport
+— no axis dropdown in a dialog.
 
 | Tool | Select | Drag to |
 | --- | --- | --- |
-| **Move** | a body | slide it along an axis |
-| **Rotate** | a body | turn it about an axis |
+| **Move** | a body | slide it (X / Y / Z arrows) |
+| **Rotate** | a body | turn it (X / Y / Z arrows) |
 | **Extrude** | a planar face | push it out along its normal |
 | **Fillet** | an edge | round the corner over |
 
+Each tool is a Fusion **Command** with **drag manipulators**
+(`DistanceValueCommandInput` / `AngleValueCommandInput`); `executePreview` redraws the
+sketchy ghost live as you drag.
+
 **2. The right panel = the async-collaboration sidebar (think Overleaf).**
 Overleaf's right panel isn't a control surface — it's where collaborators see and resolve
-*comments*. FuzzyCAD's panel is the same idea: a list of **open questions**, each a fuzzy
-operation someone proposed. A collaborator reads it, nudges the amount if needed, and hits
-**Decide** — the ghost snaps solid + green. Reopen puts it back in question.
+*comments*. FuzzyCAD's panel is the same: a list of **open questions**, each a fuzzy
+operation someone proposed. **Click a card** to focus its geometry in the model. Hit
+**Accept** and the **real geometry actually changes** — a real move / rotate / extrude /
+fillet feature is applied, the original un-fades, and the proposal is consumed. **×**
+discards it.
 
-Nothing is committed to real geometry — every ghost is **CustomGraphics overlay** only, so
-the `.f3d` file carries the *proposed, uncertain* operation. Sharing the file = sharing the
-open questions. That non-destructiveness is the whole point.
+While a proposal is open it's **CustomGraphics overlay** only — the `.f3d` carries the
+*proposed, uncertain* operation, and sharing the file = sharing the open questions. Accept
+is the deliberate, separate act that turns a question into committed geometry.
 
 ## Run it
 
@@ -40,11 +47,12 @@ open questions. That non-destructiveness is the whole point.
 2. **Add-Ins** tab → green **+** → **Add existing** → pick the `FuzzyCAD` folder → **Run**.
 3. The **FuzzyCAD** panel opens (dock it wherever). The four tools also appear on the
    toolbar's **Add-Ins** panel.
-4. In the panel, click a tool (**Move / Rotate / Extrude / Fillet**). Then in the
-   viewport, **select** the matching geometry and **drag** the manipulator arrow — a sketchy
-   ghost previews live. Click **OK** to add it as an open question.
-5. In the panel's list, drag a mark's slider to adjust the amount, or hit **Decide** to
-   finalize (solid green). **◎** focuses the camera; **×** deletes.
+4. On the **bottom toolbar**, click a tool (**Move / Rotate / Extrude / Fillet**). Then in
+   the viewport, **select** the matching geometry and **drag** a manipulator arrow — the
+   original fades and a sketchy ghost previews live; it's already an open question. Close
+   the dialog (OK/Enter) to move on.
+5. In the right panel, **click a card** to focus its geometry; hit **Accept** to apply it
+   to the real model; **×** to discard.
 
 If anything errors, Fusion pops a message box with the traceback — paste it back.
 

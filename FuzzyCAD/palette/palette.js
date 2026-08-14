@@ -1,16 +1,14 @@
-/* FuzzyCAD palette — the async-collaboration sidebar (think Overleaf's review
- * panel). The modeling happens directly in the viewport (pick a tool, drag on
- * the model); this panel is the list of *open questions* a collaborator resolves.
+/* FuzzyCAD sidebar — the async-collaboration panel (Overleaf-style).
+ * A list of open questions (proposed fuzzy ops). Click a card to focus its
+ * geometry; Accept turns it into real geometry; × discards it.
  *
- * Bridge with Fusion:
- *   panel -> Fusion : adsk.fusionSendData(action, jsonString)  (Promise)
- *   Fusion -> panel : window.fusionJavaScriptHandler.handle(action, jsonString)
+ * Bridge:  panel -> Fusion : adsk.fusionSendData(action, jsonString)
+ *          Fusion -> panel : window.fusionJavaScriptHandler.handle(action, jsonString)
  */
 (function () {
   "use strict";
 
   var state = { marks: [] };
-  var HASAXIS = { move: true, rotate: true, extrude: false, fillet: false };
 
   function send(action, data) {
     if (window.adsk && typeof window.adsk.fusionSendData === "function") {
@@ -34,105 +32,65 @@
   function cache() {
     els.marks = document.getElementById("marks");
     els.empty = document.getElementById("empty");
-    els.openCount = document.getElementById("openCount");
-    els.doneCount = document.getElementById("doneCount");
+    els.count = document.getElementById("count");
   }
 
-  function fmt(n) { return (Math.round(n * 10) / 10).toString(); }
-
-  var adjustTimer = null;
-  function adjustLive(id, value) {
-    if (adjustTimer) clearTimeout(adjustTimer);
-    adjustTimer = setTimeout(function () { send("adjust", { id: id, value: value }); }, 40);
-  }
+  var GLYPH = { move: "⇄", rotate: "↻", extrude: "⤒", fillet: "◜" };
 
   function render() {
-    var open = state.marks.filter(function (m) { return !m.resolved; }).length;
-    els.openCount.textContent = open + " open";
-    els.doneCount.textContent = (state.marks.length - open) + " decided";
+    els.count.textContent = state.marks.length + (state.marks.length === 1 ? " open" : " open");
     els.empty.style.display = state.marks.length ? "none" : "block";
     els.marks.innerHTML = "";
 
     state.marks.forEach(function (m) {
       var li = document.createElement("li");
-      li.className = "mark" + (m.resolved ? " mark--resolved" : "");
+      li.className = "mark";
+      li.title = "Click to focus this in the model";
+      li.addEventListener("click", function () { send("focus", { id: m.id }); });
 
       var head = document.createElement("div");
       head.className = "mark__head";
 
-      var dot = document.createElement("span");
-      dot.className = "mark__dot";
+      var glyph = document.createElement("span");
+      glyph.className = "mark__glyph";
+      glyph.textContent = GLYPH[m.tool] || "◆";
 
       var name = document.createElement("span");
       name.className = "mark__label";
       name.textContent = m.label || (m.tool.charAt(0).toUpperCase() + m.tool.slice(1));
 
-      var focus = iconBtn("◎", "Focus camera", function () { send("focus", { id: m.id }); });
-      var del = iconBtn("×", "Delete", function () { send("delete", { id: m.id }); });
-      del.classList.add("mark__icon--del");
+      var del = document.createElement("button");
+      del.className = "mark__icon mark__icon--del";
+      del.textContent = "×"; del.title = "Discard";
+      del.addEventListener("click", function (ev) {
+        ev.stopPropagation(); send("delete", { id: m.id });
+      });
 
-      head.appendChild(dot); head.appendChild(name);
-      head.appendChild(focus); head.appendChild(del);
+      head.appendChild(glyph); head.appendChild(name); head.appendChild(del);
       li.appendChild(head);
 
       var meta = document.createElement("div");
       meta.className = "mark__meta";
-      meta.textContent = "fuzzy " + m.tool +
-        (HASAXIS[m.tool] ? " · axis " + m.axis : "") +
-        " · " + fmt(m.value) + m.unit;
+      meta.textContent = m.summary;
       li.appendChild(meta);
-
-      // adjust the proposed amount (Overleaf-style: tweak, then resolve)
-      var srow = document.createElement("div");
-      srow.className = "mark__slider";
-      var slider = document.createElement("input");
-      slider.type = "range";
-      slider.min = m.min; slider.max = m.max; slider.step = m.step; slider.value = m.value;
-      slider.disabled = !!m.resolved;
-      var out = document.createElement("span");
-      out.className = "mark__out";
-      out.textContent = fmt(m.value) + m.unit;
-      slider.addEventListener("input", function () {
-        out.textContent = fmt(parseFloat(slider.value)) + m.unit;
-        meta.textContent = "fuzzy " + m.tool +
-          (HASAXIS[m.tool] ? " · axis " + m.axis : "") +
-          " · " + fmt(parseFloat(slider.value)) + m.unit;
-        adjustLive(m.id, parseFloat(slider.value));
-      });
-      srow.appendChild(slider); srow.appendChild(out);
-      li.appendChild(srow);
 
       var foot = document.createElement("div");
       foot.className = "mark__foot";
-      if (m.resolved) {
-        var badge = document.createElement("span");
-        badge.className = "badge badge--done";
-        badge.textContent = "✓ decided";
-        var reopen = document.createElement("button");
-        reopen.className = "linkbtn";
-        reopen.textContent = "Reopen";
-        reopen.addEventListener("click", function () { send("reopen", { id: m.id }); });
-        foot.appendChild(badge); foot.appendChild(reopen);
-      } else {
-        var status = document.createElement("span");
-        status.className = "badge badge--open";
-        status.textContent = "needs a decision";
-        var go = document.createElement("button");
-        go.className = "resolve-btn";
-        go.textContent = "Decide";
-        go.addEventListener("click", function () { send("resolve", { id: m.id }); });
-        foot.appendChild(status); foot.appendChild(go);
-      }
+      var status = document.createElement("span");
+      status.className = "badge";
+      status.textContent = "proposed — not final";
+      var accept = document.createElement("button");
+      accept.className = "accept-btn";
+      accept.textContent = "Accept";
+      accept.title = "Apply this to the real geometry";
+      accept.addEventListener("click", function (ev) {
+        ev.stopPropagation(); send("accept", { id: m.id });
+      });
+      foot.appendChild(status); foot.appendChild(accept);
       li.appendChild(foot);
+
       els.marks.appendChild(li);
     });
-  }
-
-  function iconBtn(glyph, title, fn) {
-    var b = document.createElement("button");
-    b.className = "mark__icon"; b.textContent = glyph; b.title = title;
-    b.addEventListener("click", fn);
-    return b;
   }
 
   document.addEventListener("DOMContentLoaded", function () {

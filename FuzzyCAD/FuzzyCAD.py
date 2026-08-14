@@ -1,23 +1,24 @@
 """
 FuzzyCAD — Fusion 360 add-in trial.
 
-Direct-manipulation fuzzy modeling, SketchUp / Kyub style. Pick a tool, then
-drag right on the model — a face pushes out, a body slides, an edge rounds —
-and it's drawn as a **sketchy, hand-drawn ghost**. The sketchiness *is* the
-uncertainty: "proposed, not final." Decide it later and it snaps solid + green.
+Direct-manipulation fuzzy modeling (SketchUp / Kyub / Tinkercad style):
 
-Interaction: each tool is a Fusion **Command** with a **drag manipulator**
-(`DistanceValueCommandInput` / `AngleValueCommandInput`). As you drag, the
-`executePreview` event redraws the sketchy ghost live. On OK we store a fuzzy
-mark as CustomGraphics overlay — no real geometry is ever created, so the file
-carries the *proposed* operation, to be shared and resolved asynchronously.
+  * A separate bottom toolbar holds the tools (Move / Rotate / Extrude / Fillet).
+  * Pick a tool, select geometry, and DRAG right on the model. The original body
+    fades translucent and a soft, hand-drawn "sketchy" ghost shows the proposed
+    operation. The sketchiness IS the uncertainty ("proposed, not final").
+  * Move / Rotate expose draggable axis arrows in the viewport (no axis dropdown).
+  * The right panel is the async-collaboration sidebar (Overleaf-style): a list of
+    open questions. Click a card to focus its geometry. Click Accept and the real
+    geometry actually changes (a real move / rotate / extrude / fillet feature);
+    the sketchy proposal is consumed. Delete discards it.
 
-A side Palette lists the marks (Decide / Reopen / Focus / Delete) and doubles as
-a tool launcher. The tools also live on the native toolbar's Add-Ins panel.
+Marks are CustomGraphics overlay while open; Accept turns them into real modeling
+features. _marks + _geom + _entity are the fuzziness data structure (roadmap:
+serialize to the document's Attributes so it saves with the .f3d).
 """
 
 import math
-import random
 import traceback
 
 import adsk.core
@@ -44,36 +45,43 @@ TOOL_LABEL = {"move": "Fuzzy Move", "rotate": "Fuzzy Rotate",
               "extrude": "Fuzzy Extrude", "fillet": "Fuzzy Fillet"}
 TOOL_FILTER = {"move": "SolidBodies", "rotate": "SolidBodies",
                "extrude": "PlanarFaces", "fillet": "Edges"}
-TOOL_HINT = {"move": "Select a body, then drag along the axis.",
-             "rotate": "Select a body, then drag the angle.",
+TOOL_HINT = {"move": "Select a body, then drag an axis arrow.",
+             "rotate": "Select a body, then drag an axis arrow.",
              "extrude": "Select a planar face, then drag it out.",
              "fillet": "Select an edge, then drag the radius."}
 
-COLOR_FUZZY = (96, 120, 168)     # soft pencil blue — proposed / uncertain
-COLOR_RESOLVED = (70, 154, 104)  # calm green — decided
+COLOR_FUZZY = (96, 120, 168)
+GHOST_OPACITY = 0.30
 SKETCH_AMP_FRAC = 0.010
 EDGE_SAMPLES = 10
 
-# Persistent store — this IS the fuzziness data structure. (_marks holds the
-# JSON-safe fields; _geom holds the sampled base geometry per mark id. Roadmap:
-# serialize _marks into the document's Attributes so it saves with the .f3d.)
+# Persistent store — the fuzziness data structure.
 _marks = []
-_geom = {}
+_geom = {}     # id -> sampled base geometry
+_entity = {}   # id -> live entity to operate on when accepted
+_body = {}     # id -> body to ghost while open
 _next_id = 1
 
-# Transient command state (only one fuzzy command runs at a time).
+# Transient command state.
 _active_tool = None
+_inputs = None
 _sel_input = None
-_val_input = None
-_axis_input = None
-_pending = None   # dict: geom + anchor + size + normal for the live preview
-_live_id = None   # id of the mark being formed by the current drag session
+_pending = None
+_live_id = None
+
+# Bodies currently faded, so we can restore them: token -> body
+_ghosted = {}
 
 
 # --- CustomGraphics groups -------------------------------------------------
+def _design():
+    d = _app.activeProduct
+    return d if isinstance(d, adsk.fusion.Design) else None
+
+
 def _group(gid):
-    design = _app.activeProduct
-    if not isinstance(design, adsk.fusion.Design):
+    design = _design()
+    if design is None:
         return None
     root = design.rootComponent
     for i in range(root.customGraphicsGroups.count):
@@ -86,8 +94,8 @@ def _group(gid):
 
 
 def _clear(gid):
-    design = _app.activeProduct
-    if not isinstance(design, adsk.fusion.Design):
+    design = _design()
+    if design is None:
         return
     root = design.rootComponent
     for i in range(root.customGraphicsGroups.count):
@@ -105,19 +113,15 @@ def _solid(rgb):
 
 # --- sketchy line drawing --------------------------------------------------
 def _sketchy(group, pts, rgb, amp, seed, weight=2, strokes=2):
-    """Draw a polyline as soft, hand-drawn strokes. The deviation is a smooth,
-    low-frequency wave (not spiky per-point noise) that tapers to zero at the
-    ends, so lines look gently sketched rather than stiff/jagged.
-    amp=0 draws a single clean stroke (resolved marks)."""
     n = len(pts)
     if n < 2:
         return
     if amp <= 0:
         strokes = 1
     color = _solid(rgb)
+    import random
     for s in range(strokes):
         rng = random.Random(seed * 131 + s * 977)
-        # a couple of random sine components per axis => smooth flowing wobble
         waves = []
         for _ax in range(3):
             waves.append((1.0 + rng.random() * 1.4, 2.2 + rng.random() * 2.0,
@@ -125,7 +129,7 @@ def _sketchy(group, pts, rgb, amp, seed, weight=2, strokes=2):
         flat = []
         for i, (x, y, z) in enumerate(pts):
             u = i / (n - 1)
-            taper = math.sin(math.pi * u)  # 0 at both ends, 1 in the middle
+            taper = math.sin(math.pi * u)
             base = [x, y, z]
             for ax in range(3):
                 f1, f2, p1, p2 = waves[ax]
@@ -229,30 +233,40 @@ def _bbox_center_size(ent):
     return center, size
 
 
-# --- transforms ------------------------------------------------------------
+# --- vectors / transforms --------------------------------------------------
 def _axis_unit(axis):
     return {"X": (1.0, 0.0, 0.0), "Y": (0.0, 1.0, 0.0),
-            "Z": (0.0, 0.0, 1.0)}.get(axis, (0.0, 0.0, 1.0))
+            "Z": (0.0, 0.0, 1.0)}[axis]
 
 
 def _plane_basis(axis):
     if axis == "X":
-        return (0.0, 1.0, 0.0), (0.0, 0.0, 1.0)
+        return (0.0, 1.0, 0.0)
     if axis == "Y":
-        return (0.0, 0.0, 1.0), (1.0, 0.0, 0.0)
-    return (1.0, 0.0, 0.0), (0.0, 1.0, 0.0)
+        return (0.0, 0.0, 1.0)
+    return (1.0, 0.0, 0.0)
 
 
-def _translate(pts, d, amount):
-    return [(x + d[0] * amount, y + d[1] * amount, z + d[2] * amount) for (x, y, z) in pts]
-
-
-def _rotate_pts(pts, anchor, axis, angle_deg):
+def _op_matrix(mark):
+    """The rigid transform for a move/rotate mark (also used to commit it)."""
     m = adsk.core.Matrix3D.create()
-    ax, ay, az = _axis_unit(axis)
-    m.setToRotation(math.radians(angle_deg),
-                    adsk.core.Vector3D.create(ax, ay, az),
-                    adsk.core.Point3D.create(*anchor))
+    if mark["tool"] == "move":
+        v = mark["vec"]
+        m.translation = adsk.core.Vector3D.create(v[0], v[1], v[2])
+    elif mark["tool"] == "rotate":
+        anchor = adsk.core.Point3D.create(*mark["anchor"])
+        for axis, ang in zip(("X", "Y", "Z"), mark["rot"]):
+            if abs(ang) < 1e-9:
+                continue
+            r = adsk.core.Matrix3D.create()
+            ax, ay, az = _axis_unit(axis)
+            r.setToRotation(math.radians(ang),
+                            adsk.core.Vector3D.create(ax, ay, az), anchor)
+            m.transformBy(r)
+    return m
+
+
+def _apply_matrix(pts, m):
     out = []
     for (x, y, z) in pts:
         p = adsk.core.Point3D.create(x, y, z)
@@ -261,30 +275,25 @@ def _rotate_pts(pts, anchor, axis, angle_deg):
     return out
 
 
-# --- per-tool drawing (reads _geom[id]) ------------------------------------
+def _translate(pts, d, amount):
+    return [(x + d[0] * amount, y + d[1] * amount, z + d[2] * amount) for (x, y, z) in pts]
+
+
+# --- per-tool drawing ------------------------------------------------------
 def _draw_move(group, mark, rgb, amp):
-    d = _axis_unit(mark["axis"]); amt = mark["amount"]
+    v = mark["vec"]
+    m = _op_matrix(mark)
     for i, loop in enumerate(_geom[mark["id"]]["edges"]):
-        _sketchy(group, _translate(loop, d, amt), rgb, amp, mark["id"] * 100 + i)
+        _sketchy(group, _apply_matrix(loop, m), rgb, amp, mark["id"] * 100 + i)
     a = mark["anchor"]
-    tip = (a[0] + d[0] * amt, a[1] + d[1] * amt, a[2] + d[2] * amt)
-    _sketchy(group, [tuple(a), tip], rgb, amp, mark["id"] * 7, weight=3)
+    _sketchy(group, [tuple(a), (a[0] + v[0], a[1] + v[1], a[2] + v[2])],
+             rgb, amp, mark["id"] * 7, weight=3)
 
 
 def _draw_rotate(group, mark, rgb, amp):
+    m = _op_matrix(mark)
     for i, loop in enumerate(_geom[mark["id"]]["edges"]):
-        _sketchy(group, _rotate_pts(loop, mark["anchor"], mark["axis"], mark["amount"]),
-                 rgb, amp, mark["id"] * 100 + i)
-    a = mark["anchor"]; r = mark.get("size", 3.0) * 0.6
-    (ux, uy, uz), (wx, wy, wz) = _plane_basis(mark["axis"])
-    steps = 28; pts = []
-    for i in range(steps + 1):
-        t = math.radians(mark["amount"] * i / steps)
-        c, s = math.cos(t), math.sin(t)
-        pts.append((a[0] + r * (c * ux + s * wx),
-                    a[1] + r * (c * uy + s * wy),
-                    a[2] + r * (c * uz + s * wz)))
-    _sketchy(group, pts, rgb, amp * 0.5, mark["id"] * 13, weight=2)
+        _sketchy(group, _apply_matrix(loop, m), rgb, amp, mark["id"] * 100 + i)
 
 
 def _draw_extrude(group, mark, rgb, amp):
@@ -319,44 +328,77 @@ def _draw_one(group, mark, rgb, amp):
     _draw_label(group, mark, rgb)
 
 
-def _redraw_marks():
-    _clear(GROUP_MARKS)
-    group = _group(GROUP_MARKS)
-    if group is None:
-        return
-    for mark in _marks:
-        if mark["id"] not in _geom:
-            continue
-        resolved = mark.get("resolved")
-        rgb = COLOR_RESOLVED if resolved else COLOR_FUZZY
-        amp = 0.0 if resolved else mark.get("size", 3.0) * SKETCH_AMP_FRAC
-        try:
-            _draw_one(group, mark, rgb, amp)
-        except Exception:
-            if _ui:
-                _ui.messageBox("FuzzyCAD draw failed ({}):\n{}".format(
-                    mark["tool"], traceback.format_exc()))
-    _app.activeViewport.refresh()
-
-
-def _unit(mark):
-    return "°" if mark["tool"] == "rotate" else "mm"
-
-
-def _amount_display(mark):
-    return mark["amount"] if mark["tool"] == "rotate" else mark["amount"] * 10.0
+def _summary(mark):
+    t = mark["tool"]
+    if t == "move":
+        v = [round(x * 10, 1) for x in mark["vec"]]
+        return "move ({}, {}, {}) mm".format(*v)
+    if t == "rotate":
+        parts = ["{}{:g}°".format(a, r) for a, r in zip("XYZ", mark["rot"]) if abs(r) > 1e-6]
+        return "rotate " + (" ".join(parts) if parts else "0°")
+    if t == "extrude":
+        return "extrude {:g} mm".format(mark["amount"] * 10)
+    return "fillet r {:g} mm".format(mark["amount"] * 10)
 
 
 def _draw_label(group, mark, rgb):
     a = mark["anchor"]; off = mark.get("size", 3.0) * 0.9
     tip = adsk.core.Point3D.create(a[0], a[1] + off, a[2])
-    val = "{:g}{}".format(_amount_display(mark), _unit(mark))
     tag = mark["label"] or mark["tool"].capitalize()
-    suffix = " ✓" if mark.get("resolved") else " ~"
-    text = group.addText(u"{}  {}{}".format(tag, val, suffix), "Arial", 1.0,
-                         _label_transform(tip))
+    text = group.addText(u"{} ~".format(tag), "Arial", 1.0, _label_transform(tip))
     text.color = _solid(rgb)
     _apply_billboard(text, tip)
+
+
+def _redraw_marks():
+    _clear(GROUP_MARKS)
+    group = _group(GROUP_MARKS)
+    if group is not None:
+        for mark in _marks:
+            if mark["id"] not in _geom:
+                continue
+            try:
+                _draw_one(group, mark, COLOR_FUZZY, mark.get("size", 3.0) * SKETCH_AMP_FRAC)
+            except Exception:
+                if _ui:
+                    _ui.messageBox("FuzzyCAD draw failed ({}):\n{}".format(
+                        mark["tool"], traceback.format_exc()))
+    _refresh_ghost()
+    _app.activeViewport.refresh()
+
+
+# --- ghost the original bodies that have open marks ------------------------
+def _refresh_ghost():
+    global _ghosted
+    want = {}
+    for m in _marks:
+        b = _body.get(m["id"])
+        if b:
+            try:
+                want[b.entityToken] = b
+            except Exception:
+                pass
+    for tok, b in want.items():
+        try:
+            b.opacity = GHOST_OPACITY
+        except Exception:
+            pass
+    for tok, b in list(_ghosted.items()):
+        if tok not in want:
+            try:
+                b.opacity = 1.0
+            except Exception:
+                pass
+    _ghosted = want
+
+
+def _restore_all_bodies():
+    for tok, b in list(_ghosted.items()):
+        try:
+            b.opacity = 1.0
+        except Exception:
+            pass
+    _ghosted.clear()
 
 
 # --- camera-facing labels --------------------------------------------------
@@ -405,23 +447,33 @@ def _focus_camera(point_cm):
     viewport.camera = camera
 
 
-# --- build pending geometry from a selected entity -------------------------
+# --- pending selection -----------------------------------------------------
+def _entity_body(ent):
+    if isinstance(ent, adsk.fusion.BRepBody):
+        return ent
+    if isinstance(ent, adsk.fusion.BRepFace):
+        return ent.body
+    if isinstance(ent, adsk.fusion.BRepEdge):
+        return ent.body
+    return None
+
+
 def _build_pending(tool, ent):
-    """Sample the selected entity into cached geometry for live preview."""
+    body = _entity_body(ent)
     if tool in ("move", "rotate"):
-        body = ent if isinstance(ent, adsk.fusion.BRepBody) else \
-            (ent.body if isinstance(ent, adsk.fusion.BRepFace) else None)
-        if body is None:
+        if not isinstance(ent, adsk.fusion.BRepBody):
             return None
-        center, size = _bbox_center_size(body)
-        return {"geom": {"edges": _sample_edges(body.edges)},
-                "anchor": center, "size": size}
+        center, size = _bbox_center_size(ent)
+        return {"geom": {"edges": _sample_edges(ent.edges)},
+                "anchor": center, "size": size, "entity": ent, "body": body}
     if tool == "extrude":
         if not isinstance(ent, adsk.fusion.BRepFace):
             return None
         center, size = _bbox_center_size(ent)
-        return {"geom": {"loops": _sample_edges(ent.edges), "normal": _face_normal(ent)},
-                "anchor": center, "size": size, "normal": _face_normal(ent)}
+        nrm = _face_normal(ent)
+        return {"geom": {"loops": _sample_edges(ent.edges), "normal": nrm},
+                "anchor": center, "size": size, "normal": nrm,
+                "entity": ent, "body": body}
     if tool == "fillet":
         if not isinstance(ent, adsk.fusion.BRepEdge):
             return None
@@ -430,77 +482,103 @@ def _build_pending(tool, ent):
         if not stations:
             return None
         return {"geom": {"stations": stations}, "anchor": center, "size": size,
-                "stations": stations}
+                "stations": stations, "entity": ent, "body": body}
     return None
 
 
-def _pending_axis():
-    if _axis_input is not None and _axis_input.selectedItem is not None:
-        return _axis_input.selectedItem.name
-    return "Z"
-
-
-def _pending_amount():
-    """Read the current manipulator value into internal units (cm / deg)."""
-    if _val_input is None:
+# --- reading the manipulators ----------------------------------------------
+def _val(cid):
+    try:
+        it = _inputs.itemById(cid)
+        return it.value if it else 0.0
+    except Exception:
         return 0.0
-    if _active_tool == "rotate":
-        return math.degrees(_val_input.value)  # radians -> deg
-    return _val_input.value                     # already cm
 
 
-def _make_mark(amount):
-    """Build a fresh mark dict (no id) from the pending selection + amount."""
-    if not _pending:
+def _current_op():
+    if not _pending or _inputs is None:
         return None
-    mark = {"tool": _active_tool, "label": "", "axis": _pending_axis(),
-            "resolved": False, "anchor": _pending["anchor"],
-            "size": _pending["size"], "amount": amount}
-    if _active_tool == "extrude":
-        mark["normal"] = _pending["normal"]
+    t = _active_tool
+    if t == "move":
+        vec = [_val("mX"), _val("mY"), _val("mZ")]
+        return {"vec": vec} if any(abs(v) > 1e-9 for v in vec) else None
+    if t == "rotate":
+        rot = [math.degrees(_val("rX")), math.degrees(_val("rY")), math.degrees(_val("rZ"))]
+        return {"rot": rot} if any(abs(v) > 1e-9 for v in rot) else None
+    a = _val("d")
+    return {"amount": a} if abs(a) > 1e-9 else None
+
+
+def _make_mark(op):
+    mark = {"tool": _active_tool, "label": "", "anchor": _pending["anchor"],
+            "size": _pending["size"]}
+    mark.update(op)
     return mark
 
 
+def _sync_live_mark(op):
+    global _live_id, _next_id
+    if op is None:
+        return None
+    if _live_id is None:
+        mid = _next_id
+        _next_id += 1
+        mark = _make_mark(op)
+        mark["id"] = mid
+        _geom[mid] = _pending["geom"]
+        _entity[mid] = _pending["entity"]
+        _body[mid] = _pending["body"]
+        _marks.append(mark)
+        _live_id = mid
+        _refresh_ghost()
+        _send_state()
+    else:
+        _find(_live_id).update(op)
+    return _find(_live_id)
+
+
+# --- manipulators ----------------------------------------------------------
 def _place_manipulator():
-    """Point the drag manipulator at the selection along the right direction."""
-    if not _pending or _val_input is None:
+    if not _pending or _inputs is None:
         return
-    a = _pending["anchor"]
-    origin = adsk.core.Point3D.create(*a)
+    origin = adsk.core.Point3D.create(*_pending["anchor"])
     try:
-        if _active_tool == "extrude":
-            n = _pending["normal"]
-            _val_input.setManipulator(origin, adsk.core.Vector3D.create(*n))
-        elif _active_tool == "move":
-            d = _axis_unit(_pending_axis())
-            _val_input.setManipulator(origin, adsk.core.Vector3D.create(*d))
+        if _active_tool == "move":
+            for axis in ("X", "Y", "Z"):
+                it = _inputs.itemById("m" + axis)
+                it.setManipulator(origin, adsk.core.Vector3D.create(*_axis_unit(axis)))
+                it.isVisible = True; it.isEnabled = True
+        elif _active_tool == "rotate":
+            for axis in ("X", "Y", "Z"):
+                it = _inputs.itemById("r" + axis)
+                ax = adsk.core.Vector3D.create(*_axis_unit(axis))
+                ref = adsk.core.Vector3D.create(*_plane_basis(axis))
+                try:
+                    it.setManipulator(origin, ax, ref)
+                except Exception:
+                    pass
+                it.isVisible = True; it.isEnabled = True
+        elif _active_tool == "extrude":
+            it = _inputs.itemById("d")
+            it.setManipulator(origin, adsk.core.Vector3D.create(*_pending["normal"]))
+            it.isVisible = True; it.isEnabled = True
         elif _active_tool == "fillet":
             st = _pending["stations"][len(_pending["stations"]) // 2]
             P, t1, t2 = st
-            origin = adsk.core.Point3D.create(*P)
-            bx, by, bz = (t1[0] + t2[0]) / 2, (t1[1] + t2[1]) / 2, (t1[2] + t2[2]) / 2
-            v = adsk.core.Vector3D.create(bx, by, bz)
+            v = adsk.core.Vector3D.create((t1[0] + t2[0]) / 2, (t1[1] + t2[1]) / 2,
+                                          (t1[2] + t2[2]) / 2)
             if v.length < 1e-6:
                 v = adsk.core.Vector3D.create(*t1)
             v.normalize()
-            _val_input.setManipulator(origin, v)
-        elif _active_tool == "rotate":
-            axis = _pending_axis()
-            (ux, uy, uz), _ = _plane_basis(axis)
-            ax, ay, az = _axis_unit(axis)
-            _val_input.setManipulator(origin,
-                                      adsk.core.Vector3D.create(ax, ay, az),
-                                      adsk.core.Vector3D.create(ux, uy, uz))
-        _val_input.isVisible = True
-        _val_input.isEnabled = True
+            it = _inputs.itemById("d")
+            it.setManipulator(adsk.core.Point3D.create(*P), v)
+            it.isVisible = True; it.isEnabled = True
     except Exception:
-        # If setManipulator's signature differs on this build, the value field
-        # still works (type a number); just no drag arrow.
-        try:
-            _val_input.isVisible = True
-            _val_input.isEnabled = True
-        except Exception:
-            pass
+        # setManipulator signature differences: fields still typeable.
+        for cid in ("mX", "mY", "mZ", "rX", "rY", "rZ", "d"):
+            it = _inputs.itemById(cid)
+            if it:
+                it.isVisible = True; it.isEnabled = True
 
 
 # --- command handlers ------------------------------------------------------
@@ -508,105 +586,60 @@ class FuzzyInputChanged(adsk.core.InputChangedEventHandler):
     def notify(self, args):
         global _pending
         try:
-            # Compare by id — Fusion hands back fresh wrapper objects, so object
-            # identity ("changed == _sel_input") is unreliable.
-            cid = args.input.id
-            if cid == "sel":
+            if args.input.id == "sel":
                 _pending = None
                 if _sel_input.selectionCount > 0:
-                    ent = _sel_input.selection(0).entity
-                    _pending = _build_pending(_active_tool, ent)
+                    _pending = _build_pending(_active_tool, _sel_input.selection(0).entity)
                     if _pending:
                         _place_manipulator()
-            elif cid == "axis" and _pending:
-                _place_manipulator()
         except Exception:
             if _ui:
                 _ui.messageBox("FuzzyCAD inputChanged failed:\n{}".format(
                     traceback.format_exc()))
 
 
-def _sync_live_mark(amount):
-    """Create-or-update the mark being formed by the current drag. Returns it,
-    or None if there's nothing to draw yet. The mark lives in _marks the moment
-    you drag — no OK needed for it to exist (Tinkercad-style)."""
-    global _live_id, _next_id
-    if not _pending or abs(amount) < 1e-9:
-        return None
-    if _live_id is None:
-        mid = _next_id
-        _next_id += 1
-        mark = _make_mark(amount)
-        mark["id"] = mid
-        _geom[mid] = _pending["geom"]
-        _marks.append(mark)
-        _live_id = mid
-        palette = _ui.palettes.itemById(PALETTE_ID)
-        if palette:
-            _send_state(palette)
-    mark = _find(_live_id)
-    mark["amount"] = amount
-    mark["axis"] = _pending_axis()
-    if _active_tool == "extrude":
-        mark["normal"] = _pending["normal"]
-        _geom[_live_id]["normal"] = _pending["normal"]
-    return mark
-
-
 class FuzzyPreview(adsk.core.CommandEventHandler):
     def notify(self, args):
         try:
-            mark = _sync_live_mark(_pending_amount())
+            mark = _sync_live_mark(_current_op())
             _clear(GROUP_PREVIEW)
             if mark is not None:
-                group = _group(GROUP_PREVIEW)
-                _draw_one(group, mark, COLOR_FUZZY, mark["size"] * SKETCH_AMP_FRAC)
+                _draw_one(_group(GROUP_PREVIEW), mark, COLOR_FUZZY,
+                          mark["size"] * SKETCH_AMP_FRAC)
             _app.activeViewport.refresh()
             args.isValidResult = True
         except Exception:
             if _ui:
-                _ui.messageBox("FuzzyCAD preview failed:\n{}".format(
-                    traceback.format_exc()))
+                _ui.messageBox("FuzzyCAD preview failed:\n{}".format(traceback.format_exc()))
 
 
 class FuzzyExecute(adsk.core.CommandEventHandler):
     def notify(self, args):
         try:
-            _sync_live_mark(_pending_amount())
+            _sync_live_mark(_current_op())
             _clear(GROUP_PREVIEW)
             _redraw_marks()
             if _live_id is not None:
-                mark = _find(_live_id)
-                if mark:
-                    _focus_camera(mark["anchor"])
-            palette = _ui.palettes.itemById(PALETTE_ID)
-            if palette:
-                _send_state(palette)
+                _focus_camera(_find(_live_id)["anchor"])
+            _send_state()
         except Exception:
             if _ui:
-                _ui.messageBox("FuzzyCAD execute failed:\n{}".format(
-                    traceback.format_exc()))
+                _ui.messageBox("FuzzyCAD execute failed:\n{}".format(traceback.format_exc()))
 
 
 class FuzzyDestroy(adsk.core.CommandEventHandler):
     def notify(self, args):
-        global _pending, _sel_input, _val_input, _axis_input, _active_tool, _live_id
+        global _pending, _inputs, _sel_input, _active_tool, _live_id
         try:
             _clear(GROUP_PREVIEW)
-            # drop a live mark that never got a real amount (e.g. cancelled early)
-            if _live_id is not None:
-                m = _find(_live_id)
-                if m is None or abs(m["amount"]) < 1e-9:
-                    _marks[:] = [mm for mm in _marks if mm["id"] != _live_id]
-                    _geom.pop(_live_id, None)
+            if _live_id is not None and _find(_live_id) is None:
+                pass
             _redraw_marks()
-            palette = _ui.palettes.itemById(PALETTE_ID)
-            if palette:
-                _send_state(palette)
+            _send_state()
         except Exception:
             pass
         _pending = None
-        _sel_input = _val_input = _axis_input = None
+        _inputs = _sel_input = None
         _active_tool = None
         _live_id = None
 
@@ -617,74 +650,113 @@ class FuzzyCommandCreated(adsk.core.CommandCreatedEventHandler):
         self.tool = tool
 
     def notify(self, args):
-        global _active_tool, _sel_input, _val_input, _axis_input, _pending, _live_id
+        global _active_tool, _inputs, _sel_input, _pending, _live_id
         try:
             _active_tool = self.tool
             _pending = None
             _live_id = None
             cmd = args.command
             cmd.isRepeatable = False
-            cmd.okButtonText = "Add fuzzy " + self.tool
-            inputs = cmd.commandInputs
+            cmd.okButtonText = "Add to panel"
+            _inputs = cmd.commandInputs
 
-            _sel_input = inputs.addSelectionInput("sel", "Geometry", TOOL_HINT[self.tool])
+            _sel_input = _inputs.addSelectionInput("sel", "Geometry", TOOL_HINT[self.tool])
             _sel_input.addSelectionFilter(TOOL_FILTER[self.tool])
             _sel_input.setSelectionLimits(1, 1)
 
-            _axis_input = None
-            if self.tool in ("move", "rotate"):
-                _axis_input = inputs.addDropDownCommandInput(
-                    "axis", "Axis", adsk.core.DropDownStyles.TextListDropDownStyle)
-                for a in ("X", "Y", "Z"):
-                    _axis_input.listItems.add(a, a == "Z")
-
-            if self.tool == "rotate":
-                _val_input = inputs.addAngleValueCommandInput(
-                    "val", "Angle", adsk.core.ValueInput.createByReal(0.0))
+            if self.tool == "move":
+                for axis in ("X", "Y", "Z"):
+                    it = _inputs.addDistanceValueCommandInput(
+                        "m" + axis, "Move " + axis, adsk.core.ValueInput.createByReal(0.0))
+                    it.isVisible = False; it.isEnabled = False
+            elif self.tool == "rotate":
+                for axis in ("X", "Y", "Z"):
+                    it = _inputs.addAngleValueCommandInput(
+                        "r" + axis, "Rotate " + axis, adsk.core.ValueInput.createByReal(0.0))
+                    it.isVisible = False; it.isEnabled = False
             else:
-                _val_input = inputs.addDistanceValueCommandInput(
-                    "val", "Amount", adsk.core.ValueInput.createByReal(0.0))
-            _val_input.isVisible = False
-            _val_input.isEnabled = False
+                nm = "Depth" if self.tool == "extrude" else "Radius"
+                it = _inputs.addDistanceValueCommandInput(
+                    "d", nm, adsk.core.ValueInput.createByReal(0.0))
+                it.isVisible = False; it.isEnabled = False
 
-            on_changed = FuzzyInputChanged()
-            cmd.inputChanged.add(on_changed); _handlers.append(on_changed)
-            on_preview = FuzzyPreview()
-            cmd.executePreview.add(on_preview); _handlers.append(on_preview)
-            on_execute = FuzzyExecute()
-            cmd.execute.add(on_execute); _handlers.append(on_execute)
-            on_destroy = FuzzyDestroy()
-            cmd.destroy.add(on_destroy); _handlers.append(on_destroy)
+            for handler, event in ((FuzzyInputChanged(), cmd.inputChanged),
+                                   (FuzzyPreview(), cmd.executePreview),
+                                   (FuzzyExecute(), cmd.execute),
+                                   (FuzzyDestroy(), cmd.destroy)):
+                event.add(handler)
+                _handlers.append(handler)
         except Exception:
             if _ui:
                 _ui.messageBox("FuzzyCAD command setup failed:\n{}".format(
                     traceback.format_exc()))
 
 
+# --- accept: turn a fuzzy mark into real geometry --------------------------
+def _accept(mark):
+    design = _design()
+    if design is None:
+        return False
+    ent = _entity.get(mark["id"])
+    if ent is None:
+        _ui.messageBox("Lost the reference to that geometry; can't apply it.")
+        return False
+    tool = mark["tool"]
+    body = _body.get(mark["id"])
+    if body:
+        try:
+            body.opacity = 1.0
+        except Exception:
+            pass
+    try:
+        if tool in ("move", "rotate"):
+            comp = body.parentComponent
+            coll = adsk.core.ObjectCollection.create()
+            coll.add(body)
+            comp.features.moveFeatures.add(
+                comp.features.moveFeatures.createInput(coll, _op_matrix(mark)))
+        elif tool == "extrude":
+            comp = ent.body.parentComponent
+            ext = comp.features.extrudeFeatures
+            ei = ext.createInput(ent, adsk.fusion.FeatureOperations.JoinFeatureOperation)
+            ei.setDistanceExtent(False, adsk.core.ValueInput.createByReal(mark["amount"]))
+            ext.add(ei)
+        elif tool == "fillet":
+            comp = ent.body.parentComponent
+            fil = comp.features.filletFeatures
+            coll = adsk.core.ObjectCollection.create()
+            coll.add(ent)
+            fi = fil.createInput()
+            fi.addConstantRadiusEdgeSet(coll, adsk.core.ValueInput.createByReal(mark["amount"]), True)
+            fil.add(fi)
+        return True
+    except Exception:
+        _ui.messageBox("FuzzyCAD couldn't apply the {} to real geometry:\n{}".format(
+            tool, traceback.format_exc()))
+        return False
+
+
+def _remove_mark(mid):
+    _marks[:] = [m for m in _marks if m["id"] != mid]
+    _geom.pop(mid, None)
+    _entity.pop(mid, None)
+    _body.pop(mid, None)
+
+
 # --- palette messaging -----------------------------------------------------
 def _public(mark):
-    tool = mark["tool"]; size = mark.get("size", 3.0)
-    if tool == "rotate":
-        amin, amax, step, unit, val = -90.0, 90.0, 1.0, "°", mark["amount"]
-    else:
-        val = mark["amount"] * 10.0
-        amax = size * 10.0 * (0.6 if tool != "fillet" else 0.25)
-        amin, step, unit = 0.0, max(round((size * 10.0) / 40.0, 1), 0.1), "mm"
-    return {"id": mark["id"], "tool": tool, "label": mark["label"], "axis": mark["axis"],
-            "value": round(val, 2), "min": round(amin, 2), "max": round(amax, 2),
-            "step": step, "unit": unit, "resolved": bool(mark["resolved"])}
-
-
-def _apply_value(mark, display_value):
-    mark["amount"] = float(display_value) if mark["tool"] == "rotate" \
-        else float(display_value) / 10.0
+    return {"id": mark["id"], "tool": mark["tool"],
+            "label": mark["label"], "summary": _summary(mark)}
 
 
 def _find(mid):
     return next((m for m in _marks if m["id"] == mid), None)
 
 
-def _send_state(palette):
+def _send_state():
+    palette = _ui.palettes.itemById(PALETTE_ID)
+    if not palette:
+        return
     import json
     palette.sendInfoToHTML("state", json.dumps({"marks": [_public(m) for m in _marks]}))
 
@@ -696,70 +768,53 @@ class PaletteHTMLHandler(adsk.core.HTMLEventHandler):
             e = adsk.core.HTMLEventArgs.cast(args)
             action = e.action
             data = json.loads(e.data) if e.data else {}
-            palette = _ui.palettes.itemById(PALETTE_ID)
 
             if action == "ready":
-                _send_state(palette)
+                _send_state()
             elif action == "tool":
-                cmd_def = _ui.commandDefinitions.itemById(TOOL_CMD.get(data.get("tool")))
-                if cmd_def:
-                    cmd_def.execute()
-            elif action == "adjust":
-                mark = _find(data.get("id"))
-                if mark:
-                    _apply_value(mark, data["value"])
-                    _redraw_marks()
-            elif action == "resolve":
-                mark = _find(data.get("id"))
-                if mark:
-                    mark["resolved"] = True; _redraw_marks(); _send_state(palette)
-            elif action == "reopen":
-                mark = _find(data.get("id"))
-                if mark:
-                    mark["resolved"] = False; _redraw_marks(); _send_state(palette)
+                cd = _ui.commandDefinitions.itemById(TOOL_CMD.get(data.get("tool")))
+                if cd:
+                    cd.execute()
             elif action == "focus":
-                mark = _find(data.get("id"))
-                if mark:
-                    _focus_camera(mark["anchor"])
+                m = _find(data.get("id"))
+                if m:
+                    _focus_camera(m["anchor"])
+            elif action == "accept":
+                m = _find(data.get("id"))
+                if m and _accept(m):
+                    _remove_mark(m["id"])
+                    _redraw_marks()
+                    _send_state()
             elif action == "delete":
-                mid = data.get("id")
-                _marks[:] = [m for m in _marks if m["id"] != mid]
-                _geom.pop(mid, None); _redraw_marks(); _send_state(palette)
+                _remove_mark(data.get("id"))
+                _redraw_marks()
+                _send_state()
         except Exception:
             if _ui:
                 _ui.messageBox("FuzzyCAD panel message failed:\n{}".format(
                     traceback.format_exc()))
 
 
+# --- palettes + lifecycle --------------------------------------------------
 def _dock_state(name):
     docks = adsk.core.PaletteDockingStates
     return getattr(docks, name, None) or docks.PaletteDockStateFloating
 
 
 def _ensure_palettes():
-    """Create (or re-show) both palettes: the right-side collaboration panel and
-    the separate bottom tool strip."""
     palettes = _ui.palettes
-
     side = palettes.itemById(PALETTE_ID)
     if side is None:
-        side = palettes.add(PALETTE_ID, PALETTE_NAME, PALETTE_URL,
-                            True, True, True, 300, 480)
+        side = palettes.add(PALETTE_ID, PALETTE_NAME, PALETTE_URL, True, True, True, 300, 480)
         side.dockingState = _dock_state("PaletteDockStateRight")
-        h = PaletteHTMLHandler()
-        side.incomingFromHTML.add(h)
-        _handlers.append(h)
+        h = PaletteHTMLHandler(); side.incomingFromHTML.add(h); _handlers.append(h)
     else:
         side.isVisible = True
-
     bar = palettes.itemById(TOOLBAR_ID)
     if bar is None:
-        bar = palettes.add(TOOLBAR_ID, "FuzzyCAD Tools", TOOLBAR_URL,
-                           True, True, True, 760, 96)
+        bar = palettes.add(TOOLBAR_ID, "FuzzyCAD Tools", TOOLBAR_URL, True, True, True, 760, 96)
         bar.dockingState = _dock_state("PaletteDockStateBottom")
-        h2 = PaletteHTMLHandler()
-        bar.incomingFromHTML.add(h2)
-        _handlers.append(h2)
+        h2 = PaletteHTMLHandler(); bar.incomingFromHTML.add(h2); _handlers.append(h2)
     else:
         bar.isVisible = True
 
@@ -774,16 +829,15 @@ class ShowPaletteCreated(adsk.core.CommandCreatedEventHandler):
                     traceback.format_exc()))
 
 
-# --- lifecycle -------------------------------------------------------------
-def _add_button(panel, cmd_id, name, tooltip, created_handler):
-    cmd_def = _ui.commandDefinitions.itemById(cmd_id)
-    if cmd_def is None:
-        cmd_def = _ui.commandDefinitions.addButtonDefinition(cmd_id, name, tooltip, "")
-    cmd_def.commandCreated.add(created_handler)
-    _handlers.append(created_handler)
+def _add_button(panel, cmd_id, name, tooltip, handler):
+    cd = _ui.commandDefinitions.itemById(cmd_id)
+    if cd is None:
+        cd = _ui.commandDefinitions.addButtonDefinition(cmd_id, name, tooltip, "")
+    cd.commandCreated.add(handler)
+    _handlers.append(handler)
     if panel and panel.controls.itemById(cmd_id) is None:
-        panel.controls.addCommand(cmd_def)
-    return cmd_def
+        panel.controls.addCommand(cd)
+    return cd
 
 
 def run(context):
@@ -792,15 +846,11 @@ def run(context):
         _app = adsk.core.Application.get()
         _ui = _app.userInterface
         panel = _ui.allToolbarPanels.itemById(PANEL_ID)
-
-        # the panel launcher
         _add_button(panel, PANEL_CMD_ID, "FuzzyCAD", "Open the FuzzyCAD panel",
                     ShowPaletteCreated())
-        # the fuzzy tools
         for tool in TOOLS:
             _add_button(panel, TOOL_CMD[tool], TOOL_LABEL[tool], TOOL_HINT[tool],
                         FuzzyCommandCreated(tool))
-
         _ensure_palettes()
     except Exception:
         if _ui:
@@ -809,25 +859,26 @@ def run(context):
 
 def stop(context):
     try:
+        _restore_all_bodies()
         _clear(GROUP_MARKS)
         _clear(GROUP_PREVIEW)
         if _app and _app.activeViewport:
             _app.activeViewport.refresh()
         for pid in (PALETTE_ID, TOOLBAR_ID):
-            palette = _ui.palettes.itemById(pid)
-            if palette:
-                palette.deleteMe()
+            p = _ui.palettes.itemById(pid)
+            if p:
+                p.deleteMe()
         panel = _ui.allToolbarPanels.itemById(PANEL_ID)
         for cmd_id in [PANEL_CMD_ID] + list(TOOL_CMD.values()):
             if panel:
                 ctrl = panel.controls.itemById(cmd_id)
                 if ctrl:
                     ctrl.deleteMe()
-            cmd_def = _ui.commandDefinitions.itemById(cmd_id)
-            if cmd_def:
-                cmd_def.deleteMe()
+            cd = _ui.commandDefinitions.itemById(cmd_id)
+            if cd:
+                cd.deleteMe()
         _handlers.clear()
-        _geom.clear()
+        _geom.clear(); _entity.clear(); _body.clear()
     except Exception:
         if _ui:
             _ui.messageBox("FuzzyCAD failed to stop:\n{}".format(traceback.format_exc()))
