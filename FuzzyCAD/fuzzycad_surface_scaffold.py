@@ -2,15 +2,9 @@
 
 BRep topology edges are enough to describe boxes and other edge-rich solids, but
 smooth bodies such as cylinders can collapse visually to only two circular edge
-loops once the proposed body fill is removed.  This patch adds a small number of
-lightweight surface iso-curves only when a body's topology is too sparse to
-communicate its volume.
-
-The scaffold is deliberately quiet:
-- proposal outline remains the main dark sketch;
-- scaffold strokes are thin gray construction lines;
-- orange remains reserved for the locus/direction/relationship of the change;
-- sampling is cached per source body and only transformed during drag.
+loops once the proposed body fill is removed. This patch adds a small number of
+lightweight surface iso-curves only when topology is too sparse to communicate
+volume. Appearance is owned by fuzzycad_visual_system.py.
 """
 
 import math
@@ -21,7 +15,6 @@ def install(m):
     old_run = m.run
     old_stop = m.stop
 
-    SCAFFOLD_RGB = (118, 122, 126)
     MAX_BODY_CURVES = 7
     MAX_CURVED_FACES = 2
     ISO_SAMPLES = 18
@@ -71,8 +64,6 @@ def install(m):
         typ = surface_type(face).lower()
         if "plane" in typ:
             return False
-        # Unknown surface types are treated as curved. The face evaluator is the
-        # final authority and will simply return no curves if sampling fails.
         return True
 
     def curved_faces(body):
@@ -93,10 +84,6 @@ def install(m):
         except Exception: edges = 999
         try: faces = max(1, int(body.faces.count))
         except Exception: faces = max(1, len(curved))
-
-        # Cylinders/spheres/cones are usually extremely edge-sparse.  A somewhat
-        # more complex body still gets a scaffold when most of its surface is
-        # curved and topology alone is unlikely to communicate volume.
         if edges <= 14:
             return True
         curved_ratio = float(len(curved)) / float(faces)
@@ -105,7 +92,6 @@ def install(m):
     def range_box(ev):
         try:
             pr = ev.parametricRange()
-            # Compatibility with older Python wrappers that returned (ok, box).
             if isinstance(pr, tuple):
                 pr = pr[-1]
             return pr
@@ -179,21 +165,15 @@ def install(m):
         return chord / path
 
     def curves_for_face(face):
-        # Probe both parametric directions.  On a cylinder, for example, the
-        # longitudinal family has high endpoint openness while the circular
-        # family closes back on itself. Prefer the open family for depth cues.
         probe_u = iso_curve(face, "u", 0.5)
         probe_v = iso_curve(face, "v", 0.5)
         ou, ov = openness(probe_u), openness(probe_v)
-
         if max(ou, ov) < 0.18:
-            # Sphere/torus-like surfaces benefit from sparse curves in both dirs.
             plan = [("u", 0.28), ("u", 0.62), ("v", 0.32), ("v", 0.68)]
         elif ou >= ov:
             plan = [("u", 0.22), ("u", 0.50), ("u", 0.78), ("v", 0.50)]
         else:
             plan = [("v", 0.22), ("v", 0.50), ("v", 0.78), ("u", 0.50)]
-
         out = []
         for axis, frac in plan:
             poly = iso_curve(face, axis, frac)
@@ -207,12 +187,10 @@ def install(m):
         key = body_fingerprint(body)
         if key in state["cache"]:
             return state["cache"][key]
-
         curved = curved_faces(body)
         if not should_scaffold(body, curved):
             state["cache"][key] = []
             return []
-
         curves = []
         for face in curved[:MAX_CURVED_FACES]:
             for poly in curves_for_face(face):
@@ -221,7 +199,6 @@ def install(m):
                     break
             if len(curves) >= MAX_BODY_CURVES:
                 break
-
         state["cache"][key] = curves
         log("CACHE body={} edges={} curved_faces={} scaffold_curves={}".format(
             getattr(body, "name", "body"),
@@ -250,16 +227,14 @@ def install(m):
                 f = max(0.05, float(mark.get("factor", 1.0)))
                 axis = mark.get("axis", "X")
                 factors = (f, 1.0, 1.0) if axis == "X" else ((1.0, f, 1.0) if axis == "Y" else (1.0, 1.0, f))
-                base = mark.get("base_anchor") or mark.get("anchor")
-                return scale_matrix(base, factors)
+                return scale_matrix(mark.get("base_anchor") or mark.get("anchor"), factors)
             if tool == "axis_rotate":
                 origin = mark.get("axis_origin") or mark.get("anchor") or [0.0, 0.0, 0.0]
                 direction = mark.get("axis_dir") or [0.0, 0.0, 1.0]
                 mat = adsk.core.Matrix3D.create()
-                mat.setToRotation(
-                    math.radians(float(mark.get("angle", 0.0))),
-                    adsk.core.Vector3D.create(*direction),
-                    adsk.core.Point3D.create(*origin))
+                mat.setToRotation(math.radians(float(mark.get("angle", 0.0))),
+                                  adsk.core.Vector3D.create(*direction),
+                                  adsk.core.Point3D.create(*origin))
                 return mat
         except Exception:
             pass
@@ -283,42 +258,39 @@ def install(m):
         if not curves:
             return 0
         size = float(mark.get("size", 3.0))
-        amp = max(0.004, min(size * 0.0025, 0.028))
         for i, poly in enumerate(curves):
-            m._sketchy(group, transformed(poly, matrix), SCAFFOLD_RGB, amp,
-                       mark.get("id", 1) * 31001 + seed_offset + i,
-                       weight=1, strokes=1)
+            try:
+                m._visual_stroke(group, transformed(poly, matrix), "surface_scaffold",
+                                 mark.get("id", 1) * 31001 + seed_offset + i,
+                                 size=size)
+            except Exception:
+                m._sketchy(group, transformed(poly, matrix), (142, 146, 150), 0.0,
+                           mark.get("id", 1) * 31001 + seed_offset + i,
+                           weight=1, strokes=1)
         return len(curves)
 
-    # Wrap only transformations where the source body remains valid and the
-    # proposal can be represented by a matrix. Extrude and Fillet keep their
-    # operation-local boundary/surface treatments.
     for tool in ("move", "rotate", "scale", "scale_axis", "axis_rotate"):
         previous = m._DRAW.get(tool)
         if previous is None:
             continue
-
         def make_draw(prev, tool_name):
             def draw(group, mark, rgb, amp):
                 prev(group, mark, rgb, amp)
                 matrix = proposal_matrix(mark)
                 body = m._body.get(mark.get("id"))
                 count = draw_scaffold(group, body, matrix, mark, 0)
-
                 if tool_name == "move" and mark.get("move_scope") == "together":
                     for idx, related in enumerate(mark.get("related_bodies") or []):
                         count += draw_scaffold(group, related, matrix, mark, (idx + 1) * 97)
-
                 state["draws"] += 1
                 if count and state["draws"] % 40 == 0:
                     log("DRAW tool={} curves={}".format(tool_name, count))
             return draw
-
         m._DRAW[tool] = make_draw(previous, tool)
 
     def run(context):
         result = old_run(context)
-        log("SURFACE SCAFFOLD READY: sparse smooth-body iso-curves; orange remains operation-local")
+        log("SURFACE SCAFFOLD READY: style comes from visual_system surface_scaffold token")
         return result
 
     def stop(context):
