@@ -57,8 +57,7 @@
   function stop(ev) { ev.stopPropagation(); }
 
   function render() {
-    var open = state.marks.filter(function (m) { return m.status === "open"; }).length;
-    els.count.textContent = open + " open · " + state.marks.length + " total";
+    els.count.textContent = state.marks.length + (state.marks.length === 1 ? " open question" : " open questions");
     els.empty.style.display = state.marks.length ? "none" : "block";
     els.marks.innerHTML = "";
 
@@ -80,10 +79,7 @@
       var typeTag = document.createElement("span");
       typeTag.className = "typetag typetag--" + mtype;
       typeTag.textContent = mt.glyph + " " + mt.label;
-      var pill = document.createElement("span");
-      pill.className = "pill pill--" + m.status; pill.textContent = STATUS_LABEL[m.status] || m.status;
-      head.appendChild(glyph); head.appendChild(name);
-      head.appendChild(typeTag); head.appendChild(pill);
+      head.appendChild(glyph); head.appendChild(name); head.appendChild(typeTag);
       li.appendChild(head);
 
       // editable value fields
@@ -114,26 +110,16 @@
       });
       li.appendChild(fields);
 
-      // status actions
+      // accept == apply to the real model (+ resolve); reject == discard
       var acts = document.createElement("div");
       acts.className = "mark__acts";
-      if (m.status === "open") {
-        acts.appendChild(btn("Mark Answered", "act act--ok", function (ev) {
-          stop(ev); send("status", { id: m.id, status: "answered" });
-        }));
-        acts.appendChild(btn("Reject", "act act--no", function (ev) {
-          stop(ev); send("reject", { id: m.id });
-        }));
-      } else {
-        acts.appendChild(btn("Reopen", "act", function (ev) {
-          stop(ev); send("status", { id: m.id, status: "open" });
-        }));
-        if (m.tool !== "note") {
-          acts.appendChild(btn("Apply to model", "act act--apply", function (ev) {
-            stop(ev); send("apply", { id: m.id });
-          }));
-        }
-      }
+      var acceptLabel = m.tool === "note" ? "Accept" : "Accept (apply)";
+      acts.appendChild(btn(acceptLabel, "act act--apply", function (ev) {
+        stop(ev); send("accept", { id: m.id });
+      }));
+      acts.appendChild(btn("Reject", "act act--no", function (ev) {
+        stop(ev); send("reject", { id: m.id });
+      }));
       li.appendChild(acts);
 
       // comments

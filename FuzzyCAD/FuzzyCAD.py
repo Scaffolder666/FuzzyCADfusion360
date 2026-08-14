@@ -904,9 +904,16 @@ class FuzzyDestroy(adsk.core.CommandEventHandler):
 
 class LaunchHandler(adsk.core.CustomEventHandler):
     """Launch a command on the main thread. Executing a command directly inside
-    a palette HTML event is unreliable, so we defer through this custom event."""
+    a palette HTML event is unreliable, so we defer through this custom event.
+    Any still-active command is terminated first — Fusion won't start a new
+    command while one is running, which was why the *next* tool wouldn't open
+    unless you closed the previous one via its OK button."""
     def notify(self, args):
         try:
+            try:
+                _ui.terminateActiveCommand()
+            except Exception:
+                pass
             cmd_id = args.additionalInfo
             cd = _ui.commandDefinitions.itemById(cmd_id) if cmd_id else None
             if cd:
@@ -1227,16 +1234,6 @@ class PaletteHTMLHandler(adsk.core.HTMLEventHandler):
                     # Redraw the 3D only — do NOT push state back, or the panel
                     # re-renders and the field you're typing in loses focus.
                     _redraw_marks()
-            elif action == "status":
-                m = _find(data.get("id"))
-                if m:
-                    m["status"] = data.get("status", "open")
-                    _redraw_marks(); _send_state()
-            elif action == "mtype":
-                m = _find(data.get("id"))
-                if m and data.get("mtype") in MTYPES:
-                    m["mtype"] = data.get("mtype")
-                    _redraw_marks(); _send_state()
             elif action == "comment":
                 m = _find(data.get("id"))
                 if m:
@@ -1244,10 +1241,14 @@ class PaletteHTMLHandler(adsk.core.HTMLEventHandler):
                     if txt:
                         m.setdefault("comments", []).append({"text": txt})
                         _send_state()
-            elif action == "apply":
+            elif action == "accept":
+                # Accept == apply to the real model (geometry ops) + resolve.
+                # For a note there's nothing to bake, so accept just resolves it.
                 m = _find(data.get("id"))
-                if m and _accept(m):
-                    _remove_mark(m["id"]); _redraw_marks(); _send_state()
+                if m:
+                    ok = True if m["tool"] == "note" else _accept(m)
+                    if ok:
+                        _remove_mark(m["id"]); _redraw_marks(); _send_state()
             elif action == "reject":
                 _remove_mark(data.get("id")); _redraw_marks(); _send_state()
         except Exception:
