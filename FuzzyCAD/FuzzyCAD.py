@@ -14,8 +14,9 @@ lightweight active-candidate size frame, separate the collaboration taxonomy,
 preserve the direct body->manipulator interaction flow for scale and axis
 rotation, restore the missing Uniform Scale body-selection pending state, make
 directional scale one-sided by default, prototype relationship-aware Move scope,
-and render interaction choices in FuzzyCAD's own HTML UI instead of Fusion's
-native option controls.
+render interaction choices in FuzzyCAD's own HTML UI instead of Fusion's native
+option controls, and keep related-part Move previews synchronized directly from
+the native handle while labeling the relationship candidates in the viewport.
 """
 import importlib.util
 import os
@@ -67,6 +68,8 @@ _move_scope = _load("fuzzycad_move_scope", "fuzzycad_move_scope.py")
 _move_scope.install(_legacy)
 _hci = _load("fuzzycad_hci_prompts", "fuzzycad_hci_prompts.py")
 _hci.install(_legacy)
+_move_polish = _load("fuzzycad_move_scope_polish", "fuzzycad_move_scope_polish.py")
+_move_polish.install(_legacy)
 
 run = _legacy.run
 stop = _legacy.stop
