@@ -54,9 +54,69 @@
     editTimers[k] = setTimeout(function () { send("edit", { id: id, key: key, value: value }); }, 120);
   }
 
+  /* Move hover animation.
+   * Keep the browser responsible only for timing. Fusion receives a throttled
+   * normalized progress value and updates the CustomGraphics BRep on its main thread.
+   * 0.72 s travel + 0.22 s hold + 0.10 s reset gap, repeated while hovered.
+   */
+  var hoverMoveTimer = null;
+  var hoverMoveId = null;
+  var hoverMoveStarted = 0;
+
+  function easeMove(t) {
+    // Smoothstep: directional, smooth at both ends, no reverse motion.
+    return t * t * (3 - 2 * t);
+  }
+
+  function stopMoveHover(notifyFusion) {
+    if (hoverMoveTimer) {
+      clearInterval(hoverMoveTimer);
+      hoverMoveTimer = null;
+    }
+    var oldId = hoverMoveId;
+    hoverMoveId = null;
+    hoverMoveStarted = 0;
+    if (notifyFusion !== false && oldId !== null) {
+      send("hoverMoveEnd", { id: oldId });
+    }
+  }
+
+  function startMoveHover(mark) {
+    if (!mark || mark.tool !== "move") return;
+    if (hoverMoveId === mark.id && hoverMoveTimer) return;
+
+    stopMoveHover(true);
+    hoverMoveId = mark.id;
+    hoverMoveStarted = performance.now();
+    send("hoverMoveStart", { id: mark.id });
+
+    function tick() {
+      if (hoverMoveId !== mark.id) return;
+      var elapsed = performance.now() - hoverMoveStarted;
+      var cycle = elapsed % 1040;
+      var t;
+      if (cycle < 720) {
+        t = easeMove(cycle / 720);
+      } else if (cycle < 940) {
+        t = 1.0;
+      } else {
+        // Brief reset at the source makes every loop read in the same direction.
+        t = 0.0;
+      }
+      send("hoverMoveFrame", { id: mark.id, t: t });
+    }
+
+    tick();
+    hoverMoveTimer = setInterval(tick, 60);
+  }
+
   function stop(ev) { ev.stopPropagation(); }
 
   function render() {
+    // A state refresh can replace the hovered DOM node. Do not leave its old
+    // timer running against a proposal/card that may have changed or disappeared.
+    stopMoveHover(true);
+
     els.count.textContent = state.marks.length + (state.marks.length === 1 ? " open question" : " open questions");
     els.empty.style.display = state.marks.length ? "none" : "block";
     els.marks.innerHTML = "";
@@ -65,8 +125,16 @@
       var mtype = m.mtype || "need_input";
       var li = document.createElement("li");
       li.className = "mark mark--" + m.status + " type--" + mtype;
-      li.title = "Click to focus this in the model";
+      li.title = m.tool === "move"
+        ? "Hover to replay the proposed move; click to focus this in the model"
+        : "Click to focus this in the model";
       li.addEventListener("click", function () { send("focus", { id: m.id }); });
+      if (m.tool === "move") {
+        li.addEventListener("mouseenter", function () { startMoveHover(m); });
+        li.addEventListener("mouseleave", function () {
+          if (hoverMoveId === m.id) stopMoveHover(true);
+        });
+      }
 
       // header
       var head = document.createElement("div");
@@ -115,10 +183,10 @@
       acts.className = "mark__acts";
       var acceptLabel = m.tool === "note" ? "Accept" : "Accept (apply)";
       acts.appendChild(btn(acceptLabel, "act act--apply", function (ev) {
-        stop(ev); send("accept", { id: m.id });
+        stop(ev); stopMoveHover(true); send("accept", { id: m.id });
       }));
       acts.appendChild(btn("Reject", "act act--no", function (ev) {
-        stop(ev); send("reject", { id: m.id });
+        stop(ev); stopMoveHover(true); send("reject", { id: m.id });
       }));
       li.appendChild(acts);
 
