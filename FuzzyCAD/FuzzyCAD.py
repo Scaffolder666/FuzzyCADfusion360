@@ -21,6 +21,7 @@ then, so the .f3d carries the *proposed* change.
 """
 
 import math
+import os
 import traceback
 
 import adsk.core
@@ -54,11 +55,22 @@ CMD_HINT = {"transform": "Select a body, then grab a move / rotate / scale handl
 CMD_CATS = {"transform": ("move", "rotate", "scale"),
             "extrude": ("extrude",), "fillet": ("fillet",)}
 
-COLOR_FUZZY = (96, 120, 168)
+COLOR_FUZZY = (77, 77, 77)       # ~70% black pencil gray — the sketchy ghost
 COLOR_ANSWERED = (70, 154, 104)
 COLOR_WARN = (200, 44, 32)
 AXIS_COLOR = {"X": (210, 60, 50), "Y": (70, 160, 90), "Z": (70, 110, 190)}
 AXIS_SEED = {"X": 11, "Y": 22, "Z": 33}
+try:
+    _ICON_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "icons")
+except Exception:
+    _ICON_DIR = None
+
+
+def _icon_path(mtype):
+    if not _ICON_DIR:
+        return None
+    p = os.path.join(_ICON_DIR, mtype + ".png")
+    return p if os.path.exists(p) else None
 
 # The three uncertainty mark types (paper's categories).
 MTYPES = ("need_input", "constraint", "alternative")
@@ -355,7 +367,7 @@ def _draw_move(group, mark, rgb, amp):
     m = _op_matrix(mark)
     for i, loop in enumerate(_geom[mark["id"]]["edges"]):
         _sketchy(group, _apply_matrix(loop, m), rgb, amp * 0.8,
-                 mark["id"] * 100 + i, weight=1, strokes=2)
+                 mark["id"] * 100 + i, weight=2, strokes=1)
     a = mark["anchor"]
     _sketchy(group, [tuple(a), (a[0] + v[0], a[1] + v[1], a[2] + v[2])],
              rgb, amp, mark["id"] * 7, weight=3)
@@ -365,7 +377,7 @@ def _draw_rotate(group, mark, rgb, amp):
     m = _op_matrix(mark)
     for i, loop in enumerate(_geom[mark["id"]]["edges"]):
         _sketchy(group, _apply_matrix(loop, m), rgb, amp * 0.8,
-                 mark["id"] * 100 + i, weight=1, strokes=2)
+                 mark["id"] * 100 + i, weight=2, strokes=1)
     _draw_ring(group, mark["anchor"], _dominant_axis(mark["rot"]),
                mark.get("size", 3.0) * 0.62, COLOR_WARN, mark["id"])
 
@@ -374,7 +386,7 @@ def _draw_scale(group, mark, rgb, amp):
     f = mark["factor"]; a = mark["anchor"]
     for i, loop in enumerate(_geom[mark["id"]]["edges"]):
         _sketchy(group, _scale_pts(loop, a, f), rgb, amp * 0.8,
-                 mark["id"] * 100 + i, weight=1, strokes=2)
+                 mark["id"] * 100 + i, weight=2, strokes=1)
 
 
 def _draw_extrude(group, mark, rgb, amp):
@@ -451,32 +463,40 @@ def _camera_xy():
 
 
 def _draw_badge(group, mark):
-    """A crisp, standard-sized warning-triangle badge sitting just above the
-    ghost, with a clear glyph inside. Notes show themselves via their callout,
-    so they get no badge."""
+    """The uncertainty badge floating over the ghost. Preferably a real PNG icon
+    (screen-constant, crisp); falls back to a drawn triangle if the image can't
+    be used. Notes show themselves via their callout, so they get no badge."""
     if mark.get("tool") == "note":
         return
     mtype = mark.get("mtype", "need_input")
     rgb = MTYPE_COLOR.get(mtype, COLOR_WARN)
     a = mark["anchor"]; s = mark.get("size", 3.0)
     (xx, xy, xz), (yx, yy, yz) = _camera_xy()
-    # standard size — clamp so a big body doesn't get a giant badge
     bs = max(0.7, min(s * 0.14, 1.8))
     lift = max(1.0, min(s * 0.3, 3.0)) + bs
     center = (a[0] + yx * lift, a[1] + yy * lift, a[2] + yz * lift)
 
+    # 1) real image icon — always faces the camera, constant screen size
+    img = _icon_path(mtype)
+    if img:
+        try:
+            coords = adsk.fusion.CustomGraphicsCoordinates.create(list(center))
+            group.addPointSet(coords, [0],
+                              adsk.fusion.CustomGraphicsPointTypes.UserDefinedCustomGraphicsPointType,
+                              img)
+            return
+        except Exception:
+            pass
+
+    # 2) fallback: a crisp drawn triangle + glyph
     def P(ux, uy):
         return (center[0] + bs * (ux * xx + uy * yx),
                 center[1] + bs * (ux * xy + uy * yy),
                 center[2] + bs * (ux * xz + uy * yz))
-
-    # clean, closed warning triangle (amp=0 -> straight crisp strokes)
     top, bl, br = P(0.0, 1.0), P(-0.92, -0.72), P(0.92, -0.72)
     _sketchy(group, [top, br, bl, top], rgb, 0.0, mark["id"] * 555, weight=5, strokes=1)
-    # the glyph, upright and centred inside the triangle
     cp = adsk.core.Point3D.create(*P(0.0, -0.12))
-    text = group.addText(MTYPE_GLYPH.get(mtype, u"!"), "Arial", bs * 0.95,
-                         _label_transform(cp))
+    text = group.addText(MTYPE_GLYPH.get(mtype, u"!"), "Arial", bs * 0.95, _label_transform(cp))
     text.color = _solid(rgb)
     _apply_billboard(text, cp)
 
