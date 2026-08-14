@@ -12,7 +12,9 @@ the Fillet visual language, replay Move proposals as a one-way animation while
 their sidebar card is hovered, keep notes screen-facing while showing a
 lightweight active-candidate size frame, separate the collaboration taxonomy,
 preserve the direct body->manipulator interaction flow for scale and axis
-rotation, and restore the missing Uniform Scale body-selection pending state.
+rotation, restore the missing Uniform Scale body-selection pending state, make
+directional scale one-sided by default with an explicit symmetric option, and
+prototype a cached highlighted-body scope question for Move.
 """
 import importlib.util
 import os
@@ -58,6 +60,10 @@ _direct = _load("fuzzycad_direct_interactions", "fuzzycad_direct_interactions.py
 _direct.install(_legacy)
 _scale_fix = _load("fuzzycad_scale_pending_fix", "fuzzycad_scale_pending_fix.py")
 _scale_fix.install(_legacy)
+_scale_scope = _load("fuzzycad_directional_scale_scope", "fuzzycad_directional_scale_scope.py")
+_scale_scope.install(_legacy)
+_move_scope = _load("fuzzycad_move_scope", "fuzzycad_move_scope.py")
+_move_scope.install(_legacy)
 
 run = _legacy.run
 stop = _legacy.stop
