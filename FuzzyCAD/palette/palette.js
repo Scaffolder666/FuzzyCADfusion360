@@ -45,7 +45,7 @@
     }
   }
 
-  var GLYPH = { move: "⇄", rotate: "↻", scale: "⤢", extrude: "⤒", fillet: "◜" };
+  var GLYPH = { move: "⇄", rotate: "↻", scale: "⤢", extrude: "⤒", fillet: "◜", note: "◈" };
   var STATUS_LABEL = { open: "Open", answered: "Answered" };
   var MTYPES = [
     { key: "need_input", label: "Need Input", glyph: "!" },
@@ -105,6 +105,15 @@
       var fields = document.createElement("div");
       fields.className = "mark__fields";
       m.fields.forEach(function (f) {
+        if (f.kind === "text") {
+          var ta = document.createElement("textarea");
+          ta.className = "fld__text"; ta.value = f.value; ta.rows = 2;
+          ta.placeholder = "Type the constraint / note…";
+          ta.addEventListener("click", stop);
+          ta.addEventListener("input", function () { editLive(m.id, f.key, ta.value); });
+          fields.appendChild(ta);
+          return;
+        }
         var row = document.createElement("label");
         row.className = "fld";
         var lab = document.createElement("span");
@@ -134,9 +143,11 @@
         acts.appendChild(btn("Reopen", "act", function (ev) {
           stop(ev); send("status", { id: m.id, status: "open" });
         }));
-        acts.appendChild(btn("Apply to model", "act act--apply", function (ev) {
-          stop(ev); send("apply", { id: m.id });
-        }));
+        if (m.tool !== "note") {
+          acts.appendChild(btn("Apply to model", "act act--apply", function (ev) {
+            stop(ev); send("apply", { id: m.id });
+          }));
+        }
       }
       li.appendChild(acts);
 

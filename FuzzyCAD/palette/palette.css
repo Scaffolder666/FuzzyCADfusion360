@@ -90,6 +90,11 @@ html, body {
 }
 .fld__input:focus { outline: none; border-color: var(--blue); }
 .fld__unit { font-size: 11px; color: var(--muted); width: 20px; flex: none; }
+.fld__text {
+  width: 100%; border: 1px solid var(--line); border-radius: 6px; padding: 6px 8px;
+  font-size: 12px; font-family: inherit; resize: vertical; background: #fff;
+}
+.fld__text:focus { outline: none; border-color: var(--blue); }
 
 .mark__acts { display: flex; gap: 6px; margin: 10px 0 4px; }
 .act {

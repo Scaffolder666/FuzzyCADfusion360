@@ -44,7 +44,9 @@ GROUP_PREVIEW = "FuzzyCAD_Preview"
 # Commands and the categories each one produces.
 COMMANDS = ("transform", "extrude", "fillet")
 CMD_ID = {c: "FuzzyCAD_" + c.capitalize() for c in COMMANDS}
-CMD_LABEL = {"transform": "Transform", "extrude": "Fuzzy Extrude", "fillet": "Fuzzy Fillet"}
+CMD_ID["note"] = "FuzzyCAD_Note"
+CMD_LABEL = {"transform": "Transform", "extrude": "Fuzzy Extrude",
+             "fillet": "Fuzzy Fillet", "note": "Note"}
 CMD_FILTER = {"transform": "SolidBodies", "extrude": "PlanarFaces", "fillet": "Edges"}
 CMD_HINT = {"transform": "Select a body, then grab a move / rotate / scale handle.",
             "extrude": "Select a planar face, then drag it out.",
@@ -84,6 +86,7 @@ _pending = None
 _live = {}          # category -> live mark id for the current drag session
 _ghosted = {}       # token -> body (faded originals to restore)
 _easy_mode = False  # continuous "direct edit" mode (auto re-arm the tool)
+_note_inputs = None
 REARM_EVENT_ID = "FuzzyCADRearmTransform"
 
 
@@ -100,6 +103,8 @@ def _body_locked(body):
         b = _body.get(m["id"])
         if b is None:
             continue
+        if m.get("tool") == "note":
+            continue  # notes are annotations; they don't lock the object
         try:
             if b.entityToken == tok and m.get("status", "open") == "open":
                 return True
@@ -396,8 +401,26 @@ def _draw_fillet(group, mark, rgb, amp):
         _sketchy(group, pts, rgb, amp * 0.6, mark["id"] * 100 + i, weight=3)
 
 
+def _draw_note(group, mark, rgb, amp):
+    """A hand-drawn callout: a leader line from the picked point out to a
+    floating text label (the note content)."""
+    a = mark["anchor"]; s = mark.get("size", 3.0)
+    (xx, xy, xz), (yx, yy, yz) = _camera_xy()
+    off = s * 1.1
+    dx, dy, dz = (xx + yx) * 0.7, (xy + yy) * 0.7, (xz + yz) * 0.7
+    tp = (a[0] + dx * off, a[1] + dy * off, a[2] + dz * off)
+    _sketchy(group, [tuple(a), tp], rgb, s * SKETCH_AMP_FRAC, mark["id"] * 3, weight=2)
+    cp = adsk.core.Point3D.create(*tp)
+    txt = mark.get("text") or "(note)"
+    if len(txt) > 40:
+        txt = txt[:38] + "…"
+    t = group.addText(txt, "Arial", s * 0.4, _label_transform(cp))
+    t.color = _solid(rgb)
+    _apply_billboard(t, cp)
+
+
 _DRAW = {"move": _draw_move, "rotate": _draw_rotate, "scale": _draw_scale,
-         "extrude": _draw_extrude, "fillet": _draw_fillet}
+         "extrude": _draw_extrude, "fillet": _draw_fillet, "note": _draw_note}
 
 
 def _style(mark):
@@ -832,6 +855,84 @@ class RearmHandler(adsk.core.CustomEventHandler):
             pass
 
 
+# --- Note tool (Tinkercad-style callout -> a Constraint mark) ---------------
+def _note_point_size(ent):
+    """A representative anchor point + a size for the callout."""
+    try:
+        if isinstance(ent, adsk.fusion.BRepVertex):
+            p = ent.geometry
+            return [p.x, p.y, p.z], 3.0
+        if isinstance(ent, adsk.fusion.BRepFace):
+            p = ent.pointOnFace
+            _, size = _bbox_center_size(ent)
+            return [p.x, p.y, p.z], size
+        if isinstance(ent, adsk.fusion.BRepEdge):
+            pts = _sample_edge(ent, 2)
+            _, size = _bbox_center_size(ent)
+            return list(pts[len(pts) // 2]), size
+    except Exception:
+        pass
+    center, size = _bbox_center_size(ent)
+    return center, size
+
+
+class FuzzyNoteExecute(adsk.core.CommandEventHandler):
+    def notify(self, args):
+        global _next_id
+        try:
+            if _note_inputs is None:
+                return
+            sel = _note_inputs.itemById("nsel")
+            txt = _note_inputs.itemById("ntext")
+            if sel is None or sel.selectionCount == 0:
+                return
+            ent = sel.selection(0).entity
+            point, size = _note_point_size(ent)
+            num = _tool_count.get("note", 0) + 1
+            _tool_count["note"] = num
+            mid = _next_id
+            _next_id += 1
+            mark = {"id": mid, "tool": "note", "mtype": "constraint", "label": "",
+                    "anchor": point, "size": size, "num": num, "status": "open",
+                    "comments": [], "text": txt.value if txt else ""}
+            _geom[mid] = {}
+            _entity[mid] = ent
+            _body[mid] = _entity_body(ent)
+            _marks.append(mark)
+            _redraw_marks()
+            _focus_camera(point)
+            _send_state()
+        except Exception:
+            if _ui:
+                _ui.messageBox("FuzzyCAD note failed:\n{}".format(traceback.format_exc()))
+
+
+class FuzzyNoteCreated(adsk.core.CommandCreatedEventHandler):
+    def notify(self, args):
+        global _note_inputs
+        try:
+            cmd = args.command
+            cmd.isRepeatable = False
+            cmd.okButtonText = "Add note"
+            inputs = cmd.commandInputs
+            sel = inputs.addSelectionInput("nsel", "Location",
+                                           "Click a point / face / edge on the object")
+            for f in ("Vertices", "Edges", "Faces", "SolidBodies"):
+                try:
+                    sel.addSelectionFilter(f)
+                except Exception:
+                    pass
+            sel.setSelectionLimits(1, 1)
+            inputs.addStringValueInput("ntext", "Note", "")
+            _note_inputs = inputs
+            h = FuzzyNoteExecute()
+            cmd.execute.add(h)
+            _handlers.append(h)
+        except Exception:
+            if _ui:
+                _ui.messageBox("FuzzyCAD note setup failed:\n{}".format(traceback.format_exc()))
+
+
 class FuzzyCommandCreated(adsk.core.CommandCreatedEventHandler):
     def __init__(self, cmd):
         super().__init__()
@@ -945,6 +1046,9 @@ def _remove_mark(mid):
 # --- palette messaging ------------------------------------------------------
 def _fields(mark):
     t = mark["tool"]
+    if t == "note":
+        return [{"key": "text", "label": "Note", "value": mark.get("text", ""),
+                 "unit": "", "kind": "text"}]
     if t == "move":
         return [{"key": "x", "label": "Move X", "value": round(mark["vec"][0] * 10, 2), "unit": "mm"},
                 {"key": "y", "label": "Move Y", "value": round(mark["vec"][1] * 10, 2), "unit": "mm"},
@@ -961,6 +1065,9 @@ def _fields(mark):
 
 
 def _apply_edit(mark, key, value):
+    if mark["tool"] == "note":
+        mark["text"] = str(value)
+        return
     try:
         v = float(value)
     except Exception:
@@ -978,6 +1085,9 @@ def _apply_edit(mark, key, value):
 
 def _summary(mark):
     t = mark["tool"]
+    if t == "note":
+        txt = mark.get("text", "")
+        return "note: " + (txt if len(txt) <= 40 else txt[:38] + "…") if txt else "note"
     if t == "move":
         v = [round(x * 10, 1) for x in mark["vec"]]
         return "move ({}, {}, {}) mm".format(*v)
@@ -1131,6 +1241,9 @@ def run(context):
         for cmd in COMMANDS:
             _add_button(panel, CMD_ID[cmd], CMD_LABEL[cmd], CMD_HINT[cmd],
                         FuzzyCommandCreated(cmd))
+        _add_button(panel, CMD_ID["note"], "Note",
+                    "Drop a note callout on the model (a Constraint mark)",
+                    FuzzyNoteCreated())
         try:
             _app.unregisterCustomEvent(REARM_EVENT_ID)
         except Exception:
