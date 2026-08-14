@@ -2,8 +2,8 @@
 
 The original implementation is kept in FuzzyCAD_legacy.py. Runtime patches
 replace the fillet preview/range path, guard transient live-mark teardown,
-commit accepted proposals in their own Fusion command transaction, and add a
-live TEXT COMMANDS debug monitor for Fusion command transactions.
+commit accepted proposals in their own Fusion command transaction, add a live
+TEXT COMMANDS debug monitor, and trace manipulator values through final apply.
 """
 import importlib.util
 import os
@@ -29,6 +29,8 @@ _commit = _load("fuzzycad_commit_bridge", "fuzzycad_commit_bridge.py")
 _commit.install(_legacy)
 _debug = _load("fuzzycad_debug_monitor", "fuzzycad_debug_monitor.py")
 _debug.install(_legacy)
+_values = _load("fuzzycad_value_trace", "fuzzycad_value_trace.py")
+_values.install(_legacy)
 
 run = _legacy.run
 stop = _legacy.stop
