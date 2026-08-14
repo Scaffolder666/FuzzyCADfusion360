@@ -46,7 +46,12 @@
   }
 
   var GLYPH = { move: "⇄", rotate: "↻", scale: "⤢", extrude: "⤒", fillet: "◜" };
-  var STATUS_LABEL = { needs_input: "Needs Input", answered: "Answered", rejected: "Rejected" };
+  var STATUS_LABEL = { open: "Open", answered: "Answered" };
+  var MTYPES = [
+    { key: "need_input", label: "Need Input", glyph: "!" },
+    { key: "constraint", label: "Constraint", glyph: "‖" },
+    { key: "alternative", label: "Alternative", glyph: "⑂" }
+  ];
 
   var editTimers = {};
   function editLive(id, key, value) {
@@ -58,14 +63,15 @@
   function stop(ev) { ev.stopPropagation(); }
 
   function render() {
-    var open = state.marks.filter(function (m) { return m.status === "needs_input"; }).length;
+    var open = state.marks.filter(function (m) { return m.status === "open"; }).length;
     els.count.textContent = open + " open · " + state.marks.length + " total";
     els.empty.style.display = state.marks.length ? "none" : "block";
     els.marks.innerHTML = "";
 
     state.marks.forEach(function (m) {
+      var mtype = m.mtype || "need_input";
       var li = document.createElement("li");
-      li.className = "mark mark--" + m.status;
+      li.className = "mark mark--" + m.status + " type--" + mtype;
       li.title = "Click to focus this in the model";
       li.addEventListener("click", function () { send("focus", { id: m.id }); });
 
@@ -77,9 +83,23 @@
       var name = document.createElement("span");
       name.className = "mark__label"; name.textContent = m.label || m.title;
       var pill = document.createElement("span");
-      pill.className = "pill pill--" + m.status; pill.textContent = STATUS_LABEL[m.status];
+      pill.className = "pill pill--" + m.status; pill.textContent = STATUS_LABEL[m.status] || m.status;
       head.appendChild(glyph); head.appendChild(name); head.appendChild(pill);
       li.appendChild(head);
+
+      // mark-type selector (the three uncertainty kinds)
+      var typeRow = document.createElement("div");
+      typeRow.className = "mark__types";
+      MTYPES.forEach(function (mt) {
+        var b = document.createElement("button");
+        b.className = "typebtn typebtn--" + mt.key + (mt.key === mtype ? " on" : "");
+        b.innerHTML = "<span>" + mt.glyph + "</span>" + mt.label;
+        b.addEventListener("click", function (ev) {
+          stop(ev); send("mtype", { id: m.id, mtype: mt.key });
+        });
+        typeRow.appendChild(b);
+      });
+      li.appendChild(typeRow);
 
       // editable value fields
       var fields = document.createElement("div");
@@ -103,7 +123,7 @@
       // status actions
       var acts = document.createElement("div");
       acts.className = "mark__acts";
-      if (m.status === "needs_input") {
+      if (m.status === "open") {
         acts.appendChild(btn("Mark Answered", "act act--ok", function (ev) {
           stop(ev); send("status", { id: m.id, status: "answered" });
         }));
@@ -112,7 +132,7 @@
         }));
       } else {
         acts.appendChild(btn("Reopen", "act", function (ev) {
-          stop(ev); send("status", { id: m.id, status: "needs_input" });
+          stop(ev); send("status", { id: m.id, status: "open" });
         }));
         acts.appendChild(btn("Apply to model", "act act--apply", function (ev) {
           stop(ev); send("apply", { id: m.id });

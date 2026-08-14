@@ -57,8 +57,16 @@ COLOR_ANSWERED = (70, 154, 104)
 COLOR_WARN = (200, 44, 32)
 AXIS_COLOR = {"X": (210, 60, 50), "Y": (70, 160, 90), "Z": (70, 110, 190)}
 AXIS_SEED = {"X": 11, "Y": 22, "Z": 33}
+
+# The three uncertainty mark types (paper's categories).
+MTYPES = ("need_input", "constraint", "alternative")
+MTYPE_LABEL = {"need_input": "Need Input", "constraint": "Constraint",
+               "alternative": "Alternative"}
+MTYPE_COLOR = {"need_input": (200, 44, 32), "constraint": (183, 121, 31),
+               "alternative": (128, 90, 180)}
+MTYPE_GLYPH = {"need_input": u"!", "constraint": u"‖", "alternative": u"⑂"}
 GHOST_OPACITY = 0.30
-SKETCH_AMP_FRAC = 0.010
+SKETCH_AMP_FRAC = 0.013
 EDGE_SAMPLES = 10
 
 # Persistent store — the fuzziness data structure.
@@ -93,7 +101,7 @@ def _body_locked(body):
         if b is None:
             continue
         try:
-            if b.entityToken == tok and m.get("status", "needs_input") == "needs_input":
+            if b.entityToken == tok and m.get("status", "open") == "open":
                 return True
         except Exception:
             continue
@@ -155,7 +163,9 @@ def _sketchy(group, pts, rgb, amp, seed, weight=2, strokes=2):
         flat = []
         for i, (x, y, z) in enumerate(pts):
             u = i / (n - 1)
-            taper = math.sin(math.pi * u)
+            # ends keep a little wobble (0.35) instead of pinning to zero, so
+            # strokes overshoot slightly at corners — a hand-drawn look.
+            taper = 0.35 + 0.65 * math.sin(math.pi * u)
             base = [x, y, z]
             for ax in range(3):
                 f1, f2, p1, p2 = waves[ax]
@@ -341,7 +351,7 @@ def _draw_move(group, mark, rgb, amp):
     m = _op_matrix(mark)
     for i, loop in enumerate(_geom[mark["id"]]["edges"]):
         _sketchy(group, _apply_matrix(loop, m), rgb, amp * 0.8,
-                 mark["id"] * 100 + i, weight=1, strokes=1)
+                 mark["id"] * 100 + i, weight=1, strokes=2)
     a = mark["anchor"]
     _sketchy(group, [tuple(a), (a[0] + v[0], a[1] + v[1], a[2] + v[2])],
              rgb, amp, mark["id"] * 7, weight=3)
@@ -351,7 +361,7 @@ def _draw_rotate(group, mark, rgb, amp):
     m = _op_matrix(mark)
     for i, loop in enumerate(_geom[mark["id"]]["edges"]):
         _sketchy(group, _apply_matrix(loop, m), rgb, amp * 0.8,
-                 mark["id"] * 100 + i, weight=1, strokes=1)
+                 mark["id"] * 100 + i, weight=1, strokes=2)
     _draw_ring(group, mark["anchor"], _dominant_axis(mark["rot"]),
                mark.get("size", 3.0) * 0.62, COLOR_WARN, mark["id"])
 
@@ -360,7 +370,7 @@ def _draw_scale(group, mark, rgb, amp):
     f = mark["factor"]; a = mark["anchor"]
     for i, loop in enumerate(_geom[mark["id"]]["edges"]):
         _sketchy(group, _scale_pts(loop, a, f), rgb, amp * 0.8,
-                 mark["id"] * 100 + i, weight=1, strokes=1)
+                 mark["id"] * 100 + i, weight=1, strokes=2)
 
 
 def _draw_extrude(group, mark, rgb, amp):
@@ -396,12 +406,48 @@ def _style(mark):
     return COLOR_FUZZY, mark.get("size", 3.0) * SKETCH_AMP_FRAC
 
 
-def _draw_warning(group, mark):
+def _camera_xy():
+    """Right/up unit vectors of the current camera plane (for camera-facing art)."""
+    try:
+        cam = _app.activeViewport.camera
+        eye, target = cam.eye, cam.target
+        z = adsk.core.Vector3D.create(eye.x - target.x, eye.y - target.y, eye.z - target.z)
+        z.normalize()
+        up = cam.upVector.copy(); up.normalize()
+        x = up.crossProduct(z); x.normalize()
+        y = z.crossProduct(x); y.normalize()
+        return (x.x, x.y, x.z), (y.x, y.y, y.z)
+    except Exception:
+        return (1.0, 0.0, 0.0), (0.0, 1.0, 0.0)
+
+
+def _draw_badge(group, mark):
+    """A refined, hand-drawn uncertainty badge floating over the object: a
+    sketchy ring in the camera plane with the mark-type glyph inside, coloured
+    by type (Need Input / Constraint / Alternative)."""
+    mtype = mark.get("mtype", "need_input")
+    rgb = MTYPE_COLOR.get(mtype, COLOR_WARN)
     a = mark["anchor"]; s = mark.get("size", 3.0)
-    tip = adsk.core.Point3D.create(a[0], a[1] + s * 1.25, a[2])
-    text = group.addText(u"▲ NEEDS INPUT", "Arial", s * 0.5, _label_transform(tip))
-    text.color = _solid(COLOR_WARN)
-    _apply_billboard(text, tip)
+    (xx, xy, xz), (yx, yy, yz) = _camera_xy()
+    lift = s * 1.35
+    center = (a[0] + yx * lift, a[1] + yy * lift, a[2] + yz * lift)
+    r = s * 0.34
+    # hand-drawn ring in the camera plane
+    steps = 30
+    ring = []
+    for i in range(steps + 1):
+        t = 2 * math.pi * i / steps
+        c, sn = math.cos(t), math.sin(t)
+        ring.append((center[0] + r * (c * xx + sn * yx),
+                     center[1] + r * (c * xy + sn * yy),
+                     center[2] + r * (c * xz + sn * yz)))
+    _sketchy(group, ring, rgb, r * 0.07, mark["id"] * 555, weight=3, strokes=2)
+    # the glyph, always facing the camera
+    cp = adsk.core.Point3D.create(*center)
+    text = group.addText(MTYPE_GLYPH.get(mtype, u"!"), "Arial", s * 0.5,
+                         _label_transform(cp))
+    text.color = _solid(rgb)
+    _apply_billboard(text, cp)
 
 
 def _draw_label(group, mark, rgb):
@@ -417,8 +463,8 @@ def _draw_one(group, mark):
     rgb, amp = _style(mark)
     _DRAW[mark["tool"]](group, mark, rgb, amp)
     _draw_label(group, mark, rgb)
-    if mark.get("status", "needs_input") == "needs_input":
-        _draw_warning(group, mark)
+    if mark.get("status", "open") == "open":
+        _draw_badge(group, mark)
 
 
 def _redraw_marks():
@@ -592,7 +638,7 @@ def _make_mark(tool, op):
     _tool_count[tool] = num
     mark = {"tool": tool, "label": "", "anchor": _pending["anchor"],
             "size": _pending["size"], "num": num,
-            "status": "needs_input", "comments": []}
+            "status": "open", "mtype": "need_input", "comments": []}
     mark.update(op)
     return mark
 
@@ -948,7 +994,8 @@ def _summary(mark):
 def _public(mark):
     return {"id": mark["id"], "tool": mark["tool"], "num": mark.get("num", 1),
             "title": "{} {}".format(mark["tool"].capitalize(), mark.get("num", 1)),
-            "label": mark["label"], "status": mark.get("status", "needs_input"),
+            "label": mark["label"], "status": mark.get("status", "open"),
+            "mtype": mark.get("mtype", "need_input"),
             "summary": _summary(mark), "fields": _fields(mark),
             "comments": mark.get("comments", [])}
 
@@ -990,7 +1037,12 @@ class PaletteHTMLHandler(adsk.core.HTMLEventHandler):
             elif action == "status":
                 m = _find(data.get("id"))
                 if m:
-                    m["status"] = data.get("status", "needs_input")
+                    m["status"] = data.get("status", "open")
+                    _redraw_marks(); _send_state()
+            elif action == "mtype":
+                m = _find(data.get("id"))
+                if m and data.get("mtype") in MTYPES:
+                    m["mtype"] = data.get("mtype")
                     _redraw_marks(); _send_state()
             elif action == "comment":
                 m = _find(data.get("id"))
