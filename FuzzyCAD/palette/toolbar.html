@@ -6,45 +6,52 @@
   <title>FuzzyCAD Tools</title>
   <style>
     :root {
-      --navy: #21313f; --line: #e2e5ea; --bg: #f5f6f8; --muted: #7b8794; --text: #21313f;
+      --navy:#21313f; --line:#e2e5ea; --bg:#f5f6f8; --muted:#7b8794;
+      --text:#21313f; --orange:#e17e26; --green:#2ea043;
     }
-    * { box-sizing: border-box; }
-    html, body { margin: 0; padding: 0; height: 100%;
-      font-family: -apple-system, "Segoe UI", Roboto, sans-serif; background: var(--bg); }
-    .bar { display: flex; align-items: stretch; height: 100%; padding: 8px 10px; gap: 12px; }
-    .group { display: flex; flex-direction: column; gap: 4px; }
-    .group__label {
-      font-size: 9px; font-weight: 700; letter-spacing: 0.6px; color: var(--muted);
-      text-transform: uppercase;
-    }
-    .group__row { display: flex; gap: 6px; }
-    .sep { width: 1px; background: var(--line); margin: 2px 0; }
-    .tool {
-      display: flex; flex-direction: column; align-items: center; justify-content: center;
-      gap: 2px; min-width: 58px; padding: 6px 7px; border: 1px solid var(--line);
-      border-radius: 7px; background: #fff; cursor: pointer; color: var(--text);
-    }
-    .tool span { font-size: 18px; line-height: 1; }
-    .tool small { font-size: 9.5px; font-weight: 600; white-space: nowrap; }
-    .tool:hover { border-color: var(--navy); }
-    .tool:active { background: var(--navy); color: #fff; border-color: var(--navy); }
-    .tool--wide { min-width: 74px; }
-    .tool--soon { opacity: 0.45; cursor: default; }
-    .tool--soon:hover { border-color: var(--line); }
+    *{box-sizing:border-box}
+    html,body{margin:0;padding:0;height:100%;font-family:-apple-system,"Segoe UI",Roboto,sans-serif;background:var(--bg);color:var(--text)}
+    .rail{display:flex;flex-direction:column;height:100%;padding:10px 9px;gap:11px;overflow:auto}
+    .brand{font-size:12px;font-weight:800;letter-spacing:.3px;padding:0 2px}
+    .stage{display:none;background:#fff;border:1px solid var(--line);border-left:4px solid var(--orange);border-radius:9px;padding:9px 9px 8px;box-shadow:0 4px 14px rgba(20,31,43,.08)}
+    .stage.visible{display:block}
+    .stage__title{font-size:11px;font-weight:800;margin-bottom:7px}
+    .stage__step{display:flex;align-items:flex-start;gap:7px;font-size:10.5px;line-height:1.25;color:var(--muted);padding:4px 0}
+    .stage__step.active{color:var(--navy);font-weight:750}
+    .stage__step.done{color:#63717d}
+    .dot{flex:0 0 15px;height:15px;border:1px solid #cbd2d8;border-radius:50%;display:flex;align-items:center;justify-content:center;font-size:9px;margin-top:-1px;background:#fff}
+    .stage__step.active .dot{border-color:var(--orange);box-shadow:inset 0 0 0 3px #fff;background:var(--orange)}
+    .stage__step.done .dot{border-color:var(--green);background:var(--green);color:#fff}
+    .hint{display:block;font-size:9px;font-weight:500;color:#9aa4ad;margin-top:1px}
+    .group{display:flex;flex-direction:column;gap:5px}
+    .group__label{font-size:9px;font-weight:800;letter-spacing:.65px;color:var(--muted);text-transform:uppercase;padding:0 2px}
+    .group__grid{display:grid;grid-template-columns:1fr 1fr;gap:6px}
+    .tool{display:flex;flex-direction:column;align-items:center;justify-content:center;gap:3px;min-height:58px;padding:7px 5px;border:1px solid var(--line);border-radius:8px;background:#fff;cursor:pointer;color:var(--text)}
+    .tool span{font-size:18px;line-height:1}.tool small{font-size:9.5px;font-weight:650;line-height:1.15;text-align:center}
+    .tool:hover{border-color:var(--navy)}.tool:active{background:var(--navy);color:#fff;border-color:var(--navy)}
+    .tool--wide{grid-column:span 2}.tool--soon{opacity:.42;cursor:default}.tool--soon:hover{border-color:var(--line)}
+    .sep{height:1px;background:var(--line);margin:0 1px}
   </style>
 </head>
 <body>
-  <div class="bar">
+  <div class="rail">
+    <div class="brand">FuzzyCAD</div>
+
+    <div id="stage" class="stage">
+      <div id="stageTitle" class="stage__title"></div>
+      <div id="stageSteps"></div>
+    </div>
+
     <div class="group">
       <span class="group__label">Need Input</span>
-      <div class="group__row">
+      <div class="group__grid">
         <button class="tool tool--wide" data-tool="transform" title="Select a body, then drag Move or Rotate handles">
           <span>✥</span><small>Move / Rotate</small></button>
-        <button class="tool" data-tool="scale" title="Select a body, then drag one corner handle to scale the whole body">
+        <button class="tool" data-tool="scale" title="Select a body, then drag the corner handle">
           <span>⤢</span><small>Scale All</small></button>
-        <button class="tool tool--wide" data-tool="directional_scale" title="Select a body, then drag X, Y, or Z to scale only that axis">
+        <button class="tool" data-tool="directional_scale" title="Select a body, choose a direction, then drag">
           <span>⇥</span><small>Scale X/Y/Z</small></button>
-        <button class="tool tool--wide" data-tool="axis_rotate" title="Select the body first; FuzzyCAD automatically advances to selecting a circular edge as the axis">
+        <button class="tool tool--wide" data-tool="axis_rotate" title="Select body, select a circular edge, then drag the ring">
           <span>↻</span><small>Axis Rotate</small></button>
         <button class="tool" data-tool="extrude"><span>⤒</span><small>Extrude</small></button>
         <button class="tool" data-tool="fillet"><span>◜</span><small>Fillet</small></button>
@@ -55,7 +62,7 @@
 
     <div class="group">
       <span class="group__label">Mark Constraint</span>
-      <div class="group__row">
+      <div class="group__grid">
         <button class="tool tool--wide" data-tool="note" title="Attach a constraint note to geometry">
           <span>◈</span><small>Note</small></button>
       </div>
@@ -65,7 +72,7 @@
 
     <div class="group">
       <span class="group__label">Conflict</span>
-      <div class="group__row">
+      <div class="group__grid">
         <button class="tool tool--wide tool--soon" title="Compare conflicting alternatives — coming next">
           <span>⑂</span><small>Compare</small></button>
       </div>
@@ -73,22 +80,51 @@
   </div>
 
   <script>
-    function send(action, data) {
-      if (window.adsk && typeof window.adsk.fusionSendData === "function") {
-        return window.adsk.fusionSendData(action, JSON.stringify(data || {}));
+  (function(){
+    "use strict";
+    function send(action,data){
+      if(window.adsk&&typeof window.adsk.fusionSendData==="function"){
+        return window.adsk.fusionSendData(action,JSON.stringify(data||{}));
       }
-      console.log("[FuzzyCAD toolbar]", action, data);
       return Promise.resolve("{}");
     }
-    window.fusionJavaScriptHandler = { handle: function () { return "{}"; } };
-    document.addEventListener("DOMContentLoaded", function () {
-      var tools = document.querySelectorAll(".tool[data-tool]");
-      Array.prototype.forEach.call(tools, function (btn) {
-        btn.addEventListener("click", function () {
-          send("tool", { tool: btn.getAttribute("data-tool") });
-        });
+
+    function renderStage(data){
+      var box=document.getElementById("stage");
+      var steps=(data&&data.steps)||[];
+      if(!data||!data.tool||!steps.length){
+        box.classList.remove("visible");
+        document.getElementById("stageSteps").innerHTML="";
+        return;
+      }
+      document.getElementById("stageTitle").textContent=data.title||"Next";
+      var wrap=document.getElementById("stageSteps");wrap.innerHTML="";
+      steps.forEach(function(step,i){
+        var row=document.createElement("div");
+        row.className="stage__step"+(step.done?" done":"")+(i===data.active?" active":"");
+        var dot=document.createElement("span");dot.className="dot";dot.textContent=step.done?"✓":String(i+1);
+        var text=document.createElement("span");text.textContent=step.label||"";
+        if(step.hint){var hint=document.createElement("span");hint.className="hint";hint.textContent=step.hint;text.appendChild(hint);}
+        row.appendChild(dot);row.appendChild(text);wrap.appendChild(row);
+      });
+      box.classList.add("visible");
+    }
+
+    window.fusionJavaScriptHandler={handle:function(action,dataString){
+      try{
+        var data=dataString?JSON.parse(dataString):{};
+        if(action==="stage")renderStage(data);
+      }catch(e){return JSON.stringify({ok:false,error:String(e)});}
+      return JSON.stringify({ok:true});
+    }};
+
+    document.addEventListener("DOMContentLoaded",function(){
+      var tools=document.querySelectorAll(".tool[data-tool]");
+      Array.prototype.forEach.call(tools,function(btn){
+        btn.addEventListener("click",function(){send("tool",{tool:btn.getAttribute("data-tool")});});
       });
     });
+  })();
   </script>
 </body>
 </html>
