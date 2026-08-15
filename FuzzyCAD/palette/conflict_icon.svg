@@ -1,0 +1,15 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 128 128" role="img" aria-label="Conflict">
+  <g fill="none" stroke="#111" stroke-width="9" stroke-linecap="round" stroke-linejoin="round">
+    <path d="M8 63h19l12-9c7-5 15-7 23-5l13 3c5 1 8 5 8 10 0 6-5 11-11 11H61"/>
+    <path d="M39 56v18c0 6 5 11 11 11h8"/>
+    <path d="M46 70v16c0 5 4 9 9 9s9-4 9-9V73"/>
+    <path d="M62 72v13c0 5 4 9 9 9s9-4 9-9V69"/>
+    <path d="M120 63h-19l-12-9c-7-5-15-7-23-5l-13 3c-5 1-8 5-8 10 0 6 5 11 11 11h11"/>
+    <path d="M89 56v18c0 6-5 11-11 11h-8"/>
+    <path d="M82 70v16c0 5-4 9-9 9s-9-4-9-9V73"/>
+    <path d="M66 72v13c0 5-4 9-9 9s-9-4-9-9V69"/>
+  </g>
+  <path fill="#111" d="M64 9l7 19 16-13-2 21 21-5-13 17 21 5-19 9 17 13-21 1 10 19-19-9-3 21-12-17-12 17-3-21-19 9 10-19-21-1 17-13-19-9 21-5-13-17 21 5-2-21 16 13z" opacity=".97"/>
+  <circle cx="64" cy="64" r="18" fill="#fff"/>
+  <path d="M48 64h32" stroke="#111" stroke-width="8" stroke-linecap="round"/>
+</svg>
