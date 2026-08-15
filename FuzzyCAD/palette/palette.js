@@ -177,10 +177,21 @@
       var mtype = canonicalType(m.mtype);
       var li = document.createElement("li");
       li.className = "mark mark--" + m.status + " type--" + mtype;
-      li.title = m.tool === "move"
-        ? "Hover to replay the proposed move; click to focus this in the model"
-        : "Click to focus this in the model";
-      li.addEventListener("click", function () { send("focus", { id: m.id }); });
+      if (mtype === "need_input") {
+        li.title = m.tool === "move"
+          ? "Hover to replay; click to reopen the viewport manipulator"
+          : "Click to reopen the viewport manipulator";
+      } else {
+        li.title = "Click to focus this in the model";
+      }
+      li.addEventListener("click", function () {
+        if (mtype === "need_input") {
+          stopMoveHover(true);
+          send("editManipulator", { id: m.id });
+        } else {
+          send("focus", { id: m.id });
+        }
+      });
       if (m.tool === "move") {
         li.addEventListener("mouseenter", function () { startMoveHover(m); });
         li.addEventListener("mouseleave", function () {
