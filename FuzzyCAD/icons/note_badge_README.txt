@@ -1,0 +1,1 @@
+This directory uses constraint.png as the runtime Note/Constraint viewport badge. It should be a 64x64 transparent PNG with dark strokes and no white background.
