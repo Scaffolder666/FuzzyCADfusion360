@@ -1,1 +1,0 @@
-Temporary source marker for generated note badge asset. The actual runtime asset is FuzzyCAD/icons/constraint.png.
