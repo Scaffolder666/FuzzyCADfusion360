@@ -1,7 +1,7 @@
 """Gentle card focus for FuzzyCAD.
 
-Card clicks should bring the relevant uncertainty into view without changing the
-user's viewing orientation. Need Input cards then continue into their existing
+Card clicks bring the relevant uncertainty into view without changing the user's
+viewing orientation. Need Input cards then continue into their existing native
 edit-manipulator flow; Note and Conflict cards simply inspect/focus the mark.
 """
 
@@ -9,17 +9,11 @@ edit-manipulator flow; Note and Conflict cards simply inspect/focus the mark.
 def install(m):
     adsk = m.adsk
     CurrentPaletteHTMLHandler = m.PaletteHTMLHandler
+    old_focus_camera = m._focus_camera
     ZOOM_FACTOR = 0.72
     MAX_BODY_FRAMES = 5.0
     MIN_BODY_FRAMES = 1.8
-
-    def log(msg):
-        try:
-            fn = getattr(m, "_debug", None)
-            if fn:
-                fn(msg); return
-        except Exception:
-            pass
+    state = {"pending_edit_id": None}
 
     def focus_mark(mark):
         if mark is None:
@@ -42,7 +36,7 @@ def install(m):
             size = max(float(mark.get("size", 1.0) or 1.0), 0.2)
             desired = min(current * ZOOM_FACTOR, size * MAX_BODY_FRAMES)
             desired = max(desired, size * MIN_BODY_FRAMES)
-            desired = min(desired, current)  # focus never zooms out
+            desired = min(desired, current)  # never zoom out on a card click
             ratio = desired / current
 
             camera.target = target
@@ -74,6 +68,24 @@ def install(m):
 
     m._focus_mark_card = focus_mark
 
+    # The existing edit launcher calls m._focus_camera just before it opens the
+    # native manipulator. Mark the next such call so it gets the same gentle zoom
+    # instead of the older pan-only camera move. Other uses of _focus_camera keep
+    # their original behavior.
+    def focus_camera(point):
+        mid = state.get("pending_edit_id")
+        if mid is not None:
+            state["pending_edit_id"] = None
+            try:
+                mark = m._find(mid)
+                if mark is not None and focus_mark(mark):
+                    return
+            except Exception:
+                pass
+        return old_focus_camera(point)
+
+    m._focus_camera = focus_camera
+
     class PaletteHTMLHandler(adsk.core.HTMLEventHandler):
         def __init__(self):
             super().__init__()
@@ -90,14 +102,18 @@ def install(m):
             except Exception:
                 pass
 
-            # Inspection cards stop here so the old pan-only handler does not
-            # immediately overwrite the zoom. Need Input continues to delegate;
-            # its edit launcher calls the same focus helper before opening the
-            # native manipulator.
             if action == "focus":
+                # Note / Conflict / lost-reference inspection: consume the old
+                # pan-only action so it cannot overwrite this zoom immediately.
                 mark = m._find(data.get("id"))
                 if mark is not None and focus_mark(mark):
                     return
+
+            if action == "editManipulator":
+                try:
+                    state["pending_edit_id"] = int(data.get("id"))
+                except Exception:
+                    state["pending_edit_id"] = None
 
             self._delegate.notify(args)
 
