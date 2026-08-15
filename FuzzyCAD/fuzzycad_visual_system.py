@@ -142,7 +142,11 @@ def install(m):
         if n < 2:
             return
         amp = max(0.0, float(amp or 0.0))
-        strokes = max(1, int(strokes or 1))
+        strokes = int(strokes if strokes is not None else 1)
+        if strokes <= 0:
+            return
+        # Crisp semantic strokes need only one pass; sketchy strokes may request
+        # more than one independent hand-drawn pass.
         if amp <= 1e-12:
             strokes = 1
         color_obj = m._solid(tuple(rgb))
@@ -169,13 +173,15 @@ def install(m):
             coords = adsk.fusion.CustomGraphicsCoordinates.create(flat)
             line = group.addLines(coords, list(range(n)), True)
             line.color = color_obj
-            line.weight = max(1, int(weight or 1))
+            # CustomGraphicsLines.weight is a floating-point value. Preserve the
+            # semantic token instead of truncating values such as 1.8 to 1.
+            line.weight = max(0.1, float(weight if weight is not None else 1.0))
 
     def visual_stroke(group, pts, role, seed, size=3.0, amp=None,
                       rgb=None, weight=None, strokes=None):
         st = style(role)
         actual_rgb = tuple(rgb if rgb is not None else st.get("rgb", (86, 90, 94)))
-        actual_weight = int(weight if weight is not None else st.get("weight", 1))
+        actual_weight = float(weight if weight is not None else st.get("weight", 1.0))
         actual_strokes = int(strokes if strokes is not None else st.get("strokes", 1))
         actual_amp = role_amp(role, size) if amp is None else max(0.0, float(amp))
         return raw_stroke(group, pts, actual_rgb, actual_amp, seed,
@@ -184,7 +190,7 @@ def install(m):
     def legacy_role(rgb, weight):
         key = tuple(int(x) for x in rgb)
         if key == (225, 126, 38):
-            return "affected_candidate" if int(weight or 1) <= 1 else "operation_cue"
+            return "affected_candidate" if float(weight or 1) <= 1.0 else "operation_cue"
         if key in LEGACY_ROLE_BY_RGB:
             return LEGACY_ROLE_BY_RGB[key]
         if max(key) - min(key) <= 18 and sum(key) / 3.0 < 125:
@@ -211,7 +217,7 @@ def install(m):
 
     def run(context):
         result = old_run(context)
-        log("CENTRAL VISUAL SYSTEM READY: all known legacy strokes normalized through semantic tokens")
+        log("CENTRAL VISUAL SYSTEM READY: zero strokes disable a layer; fractional line weights preserved")
         return result
 
     m.run = run
