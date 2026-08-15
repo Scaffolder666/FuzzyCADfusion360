@@ -1,7 +1,7 @@
 """Preserve native Fusion body opacity while FuzzyCAD shows open proposals.
 
 FuzzyCAD temporarily fades source geometry, but that visualization must never
-become a model-side display edit.  This patch records each body's exact original
+become a model-side display edit. This patch records each body's exact original
 opacity the first time it is ghosted, restores that exact value when the body is
 no longer affected, and keeps a tiny Design attribute so an interrupted Fusion
 session can recover the display state on the next run.
@@ -18,9 +18,6 @@ def install(m):
     old_run = m.run
     old_stop = m.stop
 
-    # key -> {body, opacity, design, token}.  The design is kept with the record
-    # so document switches can restore the old document even after another
-    # design becomes active.
     records = {}
     last_saved = {}
 
@@ -133,7 +130,6 @@ def install(m):
         return restored
 
     def target_bodies():
-        """Return geometry-changing subjects that should currently look faded."""
         out = {}
         design = active_design()
         if design is None:
@@ -201,21 +197,18 @@ def install(m):
             except Exception:
                 pass
 
-        # Restore records belonging to this design that are no longer affected.
         prefix = dk + ":"
         changed = False
         for key in list(records.keys()):
             if key.startswith(prefix) and key not in wanted_keys:
                 changed = restore_key(key) or changed
 
-        # Compatibility for code that only checks which tokens are ghosted.
         try:
             m._ghosted = dict(wanted)
         except Exception:
             pass
 
-        payload = registry_for_design(design)
-        write_registry(design, payload)
+        write_registry(design, registry_for_design(design))
         return changed
 
     def restore_all_bodies():
@@ -237,12 +230,13 @@ def install(m):
     m._ghost_opacity_records = records
 
     def run(context):
-        # Restore an interrupted previous session before startup hygiene or
-        # persistence has a chance to infer anything from the current opacity.
-        recover_crash_registry(active_design())
+        # m._app is initialized by the legacy run path. Recover the saved display
+        # state immediately after that inner startup returns. The loader places
+        # this patch inside startup hygiene/persistence, so recovery happens
+        # before persisted proposals are hydrated and faded again.
         result = old_run(context)
         try:
-            refresh_ghost()
+            recover_crash_registry(active_design())
         except Exception:
             pass
         log("READY: original body opacity is preserved exactly")
