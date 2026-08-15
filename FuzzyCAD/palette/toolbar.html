@@ -28,7 +28,9 @@
     .group__grid{display:grid;grid-template-columns:1fr 1fr;gap:6px}
     .tool{display:flex;flex-direction:column;align-items:center;justify-content:center;gap:3px;min-height:58px;padding:7px 5px;border:1px solid var(--line);border-radius:8px;background:#fff;cursor:pointer;color:var(--text)}
     .tool span{font-size:18px;line-height:1}.tool small{font-size:9.5px;font-weight:650;line-height:1.15;text-align:center}
+    .tool__icon-img{width:29px;height:29px;display:block;object-fit:contain}
     .tool:hover{border-color:var(--navy)}.tool:active{background:var(--navy);color:#fff;border-color:var(--navy)}
+    .tool:active .tool__icon-img{filter:invert(1)}
     .tool--wide{grid-column:span 2}.tool--soon{opacity:.42;cursor:default}.tool--soon:hover{border-color:var(--line)}
     .sep{height:1px;background:var(--line);margin:0 1px}
   </style>
@@ -74,7 +76,7 @@
       <span class="group__label">Conflict</span>
       <div class="group__grid">
         <button class="tool tool--wide" data-tool="compare" title="Compare two alternative bodies at one target location">
-          <span>⑂</span><small>Compare</small></button>
+          <img class="tool__icon-img" src="conflict_icon.svg" alt="Conflict" /><small>Compare</small></button>
       </div>
     </div>
   </div>
