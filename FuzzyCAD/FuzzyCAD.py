@@ -147,6 +147,10 @@ _card_focus = _load(
     "fuzzycad_card_focus_zoom",
     "fuzzycad_card_focus_zoom.py")
 _card_focus.install(_legacy)
+_visibility = _load(
+    "fuzzycad_progressive_visibility",
+    "fuzzycad_progressive_visibility.py")
+_visibility.install(_legacy)
 _layout = _load("fuzzycad_layout_lock", "fuzzycad_layout_lock.py")
 _layout.install(_legacy)
 
