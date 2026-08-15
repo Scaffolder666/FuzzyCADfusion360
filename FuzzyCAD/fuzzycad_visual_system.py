@@ -15,18 +15,18 @@ import random
 VISUAL_TOKENS = {
     "current_geometry": {"opacity": 0.5},
     "current_outline": {
-        "rgb": (0, 0, 0), "weight": 1, "strokes": 2,
+        "rgb": (51, 51, 51), "weight": 0.9, "strokes": 2,
         "wobble_ratio": 0.0, "wobble_min": 0.0, "wobble_max": 0.0,
     },
-    # Proposed topology remains visibly hand-drawn.  This is the persistent
-    # uncertainty language for Move/Rotate/Scale/Extrude and is intentionally
-    # separate from the stronger view silhouette and orange operation cues.
+    # Proposed topology stays clearly provisional, but no longer reads as a
+    # heavy black CAD edge.  51/255 is roughly 80% black, and the lighter weight
+    # lets the doubled hand-drawn passes read as sketch marks instead of borders.
     "proposal_internal": {
-        "rgb": (0, 0, 0), "weight": 1.35, "strokes": 2,
-        "wobble_ratio": 0.0028, "wobble_min": 0.0115, "wobble_max": 0.118,
+        "rgb": (51, 51, 51), "weight": 1.10, "strokes": 2,
+        "wobble_ratio": 0.0025, "wobble_min": 0.0090, "wobble_max": 0.090,
     },
     "proposal_outer": {
-        "rgb": (58, 62, 66), "weight": 3, "strokes": 1,
+        "rgb": (78, 78, 78), "weight": 2.15, "strokes": 1,
         "wobble_ratio": 0.0, "wobble_min": 0.0, "wobble_max": 0.0,
     },
     "surface_scaffold": {
@@ -86,6 +86,10 @@ SKETCH_RANDOM = {
     "phase_span": math.pi * 2.0,
     "seed_axis_step": 131,
     "seed_stroke_step": 977,
+    # Previously the jitter tapered to exactly zero at polyline endpoints, making
+    # corners look pinned to perfect CAD vertices.  Retain a small amount of
+    # endpoint freedom so adjacent sketch strokes meet a little imperfectly.
+    "endpoint_wobble": 0.16,
 }
 
 LEGACY_ROLE_BY_RGB = {
@@ -156,6 +160,7 @@ def install(m):
         phase_span = float(SKETCH_RANDOM["phase_span"])
         axis_step = int(SKETCH_RANDOM["seed_axis_step"])
         stroke_step = int(SKETCH_RANDOM["seed_stroke_step"])
+        endpoint_wobble = max(0.0, min(1.0, float(SKETCH_RANDOM.get("endpoint_wobble", 0.0))))
         for s in range(strokes):
             rng = random.Random(int(seed) * axis_step + s * stroke_step)
             waves = []
@@ -165,7 +170,10 @@ def install(m):
             flat = []
             for i, xyz in enumerate(pts):
                 u = i / float(max(1, n - 1))
-                taper = math.sin(math.pi * u)
+                # Keep most wobble in the middle, but do not force the endpoints
+                # onto mathematically perfect shared vertices. This makes corners
+                # feel slightly loose/sketched without breaking the overall form.
+                taper = endpoint_wobble + (1.0 - endpoint_wobble) * math.sin(math.pi * u)
                 base = [float(xyz[0]), float(xyz[1]), float(xyz[2])]
                 for axis in range(3):
                     freq, phase = waves[axis]
@@ -216,7 +224,7 @@ def install(m):
 
     def run(context):
         result = old_run(context)
-        log("CENTRAL VISUAL SYSTEM READY: hand-drawn proposal strokes restored")
+        log("CENTRAL VISUAL SYSTEM READY: softer 80%-black sketch edges with loose corners")
         return result
 
     m.run = run
