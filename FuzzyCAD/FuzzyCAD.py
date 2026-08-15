@@ -26,9 +26,6 @@ def _load(name, filename):
 
 _legacy = _load("fuzzycad_legacy", "FuzzyCAD_legacy.py")
 _legacy.DEV_MODE = DEV_MODE
-# Keep direct references to the original lightweight Fillet preview before the
-# exact-candidate patch replaces them. The stability patch restores these for
-# drag-time interaction while retaining exact computation at settle points.
 _legacy._fuzzycad_legacy_preview = _legacy.FuzzyPreview
 _legacy._fuzzycad_legacy_draw_fillet = _legacy._DRAW.get("fillet")
 
@@ -80,6 +77,8 @@ _hygiene = _load("fuzzycad_startup_hygiene", "fuzzycad_startup_hygiene.py")
 _hygiene.install(_legacy)
 _store = _load("fuzzycad_persistence", "fuzzycad_persistence.py")
 _store.install(_legacy)
+_light_hydration = _load("fuzzycad_lightweight_hydration", "fuzzycad_lightweight_hydration.py")
+_light_hydration.install(_legacy)
 
 _outline = _load("fuzzycad_outline_only_candidates", "fuzzycad_outline_only_candidates.py")
 _outline.install(_legacy)
