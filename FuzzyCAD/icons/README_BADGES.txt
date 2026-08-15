@@ -1,1 +1,0 @@
-Temporary staging marker; will be removed after binary badge assets are committed correctly.
