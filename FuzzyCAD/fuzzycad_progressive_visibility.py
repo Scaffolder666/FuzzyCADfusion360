@@ -6,6 +6,7 @@ The persistent overview should stay legible when many unresolved decisions exist
 - Note remains visible because the annotation itself is the information.
 - Clicking/editing a card reveals that mark; revealing another card collapses the
   previous non-local proposal.
+- Confirm or switching creation tools returns the viewport to the overview.
 
 Live command previews are unchanged because they render in GROUP_PREVIEW. The
 existing opacity layer remains authoritative, so unresolved source bodies stay
@@ -97,14 +98,22 @@ def install(m):
             except Exception:
                 pass
 
-            # Explicit inspection/edit means "show me this uncertainty."
+            # Explicit inspection/edit means "show me this uncertainty." A
+            # single revealed_id guarantees that opening one card collapses the
+            # previously inspected non-local proposal.
             if action in ("focus", "editManipulator", "edit", "compare_choice"):
                 reveal(data.get("id"), True)
 
             # Starting another creation tool returns to the overview. The new
-            # tool still renders fully in GROUP_PREVIEW.
+            # tool still renders fully in GROUP_PREVIEW while it is being made.
             elif action == "tool":
                 collapse(True)
+
+            # Confirm terminates the current edit/creation command. Clear the
+            # reveal state first; the command destroy path performs the redraw,
+            # so we avoid an extra viewport refresh while a manipulator is live.
+            elif action == "confirm":
+                collapse(False)
 
             # Downstream accept/reject removes the mark and redraws the model.
             elif action in ("accept", "reject"):
