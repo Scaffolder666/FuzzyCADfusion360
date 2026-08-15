@@ -26,6 +26,11 @@ def _load(name, filename):
 
 _legacy = _load("fuzzycad_legacy", "FuzzyCAD_legacy.py")
 _legacy.DEV_MODE = DEV_MODE
+# Keep direct references to the original lightweight Fillet preview before the
+# exact-candidate patch replaces them. The stability patch restores these for
+# drag-time interaction while retaining exact computation at settle points.
+_legacy._fuzzycad_legacy_preview = _legacy.FuzzyPreview
+_legacy._fuzzycad_legacy_draw_fillet = _legacy._DRAW.get("fillet")
 
 _patch = _load("fuzzycad_real_fillet", "fuzzycad_real_fillet.py")
 _patch.install(_legacy)
@@ -44,8 +49,6 @@ if DEV_MODE:
     _handle_events = _load("fuzzycad_handle_event_trace", "fuzzycad_handle_event_trace.py")
     _handle_events.install(_legacy)
 
-_fillet_live = _load("fuzzycad_fillet_input_sync", "fuzzycad_fillet_input_sync.py")
-_fillet_live.install(_legacy)
 _visuals = _load("fuzzycad_unified_visuals", "fuzzycad_unified_visuals.py")
 _visuals.install(_legacy)
 _move_hover = _load("fuzzycad_move_hover_animation", "fuzzycad_move_hover_animation.py")
@@ -58,6 +61,8 @@ _next_tools = _load("fuzzycad_scale_axis_rotate_taxonomy", "fuzzycad_scale_axis_
 _next_tools.install(_legacy)
 _direct = _load("fuzzycad_direct_interactions", "fuzzycad_direct_interactions.py")
 _direct.install(_legacy)
+_fillet_stable = _load("fuzzycad_fillet_stability", "fuzzycad_fillet_stability.py")
+_fillet_stable.install(_legacy)
 _scale_fix = _load("fuzzycad_scale_pending_fix", "fuzzycad_scale_pending_fix.py")
 _scale_fix.install(_legacy)
 _scale_scope = _load("fuzzycad_directional_scale_scope", "fuzzycad_directional_scale_scope.py")
@@ -71,9 +76,6 @@ _move_polish.install(_legacy)
 _contrast = _load("fuzzycad_visual_contrast", "fuzzycad_visual_contrast.py")
 _contrast.install(_legacy)
 
-# Startup/persistence stay on the older, proven lifecycle. Opacity preservation
-# is reasserted later as a runtime-only display concern so command previews do
-# not write Design attributes.
 _hygiene = _load("fuzzycad_startup_hygiene", "fuzzycad_startup_hygiene.py")
 _hygiene.install(_legacy)
 _store = _load("fuzzycad_persistence", "fuzzycad_persistence.py")
@@ -109,9 +111,6 @@ _visual_system.install(_legacy)
 _reopen = _load("fuzzycad_card_manipulator_reopen", "fuzzycad_card_manipulator_reopen.py")
 _reopen.install(_legacy)
 
-# Compare stays on the consolidated, already-tested command shell. The complete
-# BRep preview remains, but we deliberately keep the legacy shared graphics group
-# for this stability pass instead of overriding _clear/_group globally.
 _compare = _load("fuzzycad_compare_stable", "fuzzycad_compare_stable.py")
 _compare.install(_legacy)
 _compare_orientation = _load(
