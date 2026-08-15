@@ -2,31 +2,16 @@
 
 Need Input already uses a strong image badge in the 3D view. Keep that visual
 language consistent for the other collaboration states as well:
-- Note / Constraint uses a compact dark notebook icon with true transparency.
+- Note / Constraint uses icons/constraint.png.
 - Compare / Conflict uses icons/conflict.png.
 
-The Note asset is embedded here and materialized into the OS temp directory at
-runtime. This avoids the white-background/white-block behavior seen with the
-previous generated PNG while keeping the same screen-constant Fusion point-sprite
-renderer used by Need Input.
+All badge images live inside the add-in's icons directory. Fusion's
+UserDefinedCustomGraphicsPointType is most reliable when the image path belongs
+to the loaded add-in package, so Note intentionally follows the exact same path
+resolution mechanism as the working Need Input badge.
 """
 
-import base64
 import os
-import tempfile
-
-# 64x64 RGBA notebook + pencil. Dark strokes, fully transparent background.
-_NOTE_PNG_B64 = (
-    "iVBORw0KGgoAAAANSUhEUgAAAEAAAABACAYAAACqaXHeAAABnUlEQVR4nO2ZUQ6DMAiG"
-    "2bKb1PufSM/inkhM0wot0GLlezFZ1PL/AmUKEARBEATBW/lIb5BSOjUC6eE4DnH8X8nF"
-    "M8Vrrd9twGzxiDSOLgO8iEck8fw0AtCoxVa0HoKoB6xAGDA7gNmQPYBTaymlc0Yf0CA"
-    "ywHoBrW5tlWGmGaA5L1jNHmQGlJzPg3lq/QMYZ4CmMVYmm/cA79nx+l0gDJgdwGxeP"
-    "wm6HoRaTcUH0fJAXA9CLdfjufmRYukewDGhq25bJkGrEmi57919lhuEsAdcf7vrCUuV"
-    "AIrk/H9BHmlATcz199yEZTKAqv3aLrBEBnAbX+m8WgaQDYq7aG0BrW5ttZu4GoQ4tV1"
-    "j3/eiSGoXcl8CXPHbtrHT/oqrN0L5+dbiAQZMgr2MEA/gtARGiQdwaMBI8QDODBgtHsC"
-    "RASXx+dZWEy/BjQE5KP561BYPMGAS5EJlACX+0SVQMxlFWzx5xIUBd2g2vBLuDKDEaQ"
-    "9dLr8Ol15rWawDoDQKe2BoE/T2FUgST3cP8GKCNA5RE5xtwuz1gyAIgiAIHs0fYCEPfy"
-    "wxBNoAAAAASUVORK5CYII=")
 
 
 def install(m):
@@ -40,26 +25,19 @@ def install(m):
     except Exception:
         pass
 
-    note_icon = None
-    try:
-        raw = base64.b64decode(_NOTE_PNG_B64)
-        note_icon = os.path.join(tempfile.gettempdir(), "fuzzycad_note_badge_64.png")
-        write = True
-        try:
-            if os.path.exists(note_icon):
-                with open(note_icon, "rb") as fh:
-                    write = fh.read() != raw
-        except Exception:
-            write = True
-        if write:
-            with open(note_icon, "wb") as fh:
-                fh.write(raw)
-    except Exception:
-        note_icon = None
-
     def icon_path(mtype):
-        if mtype == "constraint" and note_icon and os.path.exists(note_icon):
-            return note_icon
+        # Resolve Note from the packaged icon directory, exactly like
+        # need_input.png. Avoid temp-file sprites because Fusion can render an
+        # unresolved/late-loaded image as a blank white point sprite.
+        if mtype == "constraint":
+            try:
+                icon_dir = getattr(m, "_ICON_DIR", None)
+                if icon_dir:
+                    p = os.path.join(icon_dir, "constraint.png")
+                    if os.path.exists(p):
+                        return p
+            except Exception:
+                pass
         return old_icon_path(mtype)
 
     # _draw_badge resolves this global through the legacy module at call time.
