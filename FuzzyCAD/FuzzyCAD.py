@@ -128,6 +128,8 @@ _compare_full = _load(
     "fuzzycad_compare_full_preview",
     "fuzzycad_compare_full_preview.py")
 _compare_full.install(_legacy)
+_badges = _load("fuzzycad_uncertainty_badges", "fuzzycad_uncertainty_badges.py")
+_badges.install(_legacy)
 
 _hydrate = _load("fuzzycad_persistence_hydration", "fuzzycad_persistence_hydration.py")
 _hydrate.install(_legacy)
