@@ -1,8 +1,8 @@
 """Persist FuzzyCAD collaboration state inside the Fusion design.
 
-The document stores one compact JSON attribute.  Geometry references are stored
+The document stores one compact JSON attribute. Geometry references are stored
 as Fusion entity tokens and are resolved again with Design.findEntityByToken
-when the add-in opens the file.  CustomGraphics are always rebuilt from that
+when the add-in opens the file. CustomGraphics are always rebuilt from that
 state; they are visualization, not the source of truth.
 """
 
@@ -126,6 +126,15 @@ def install(m):
         tool = mark.get("tool")
         if tool == "note":
             return {}
+        if tool == "compare":
+            alternatives = []
+            for alt in mark.get("alternatives") or []:
+                if not isinstance(alt, dict):
+                    continue
+                b = resolve(alt.get("token"), adsk.fusion.BRepBody)
+                if b is not None:
+                    alternatives.append(b)
+            return {"alternatives": alternatives} if len(alternatives) >= 2 else None
         if tool in ("move", "rotate", "scale", "scale_axis", "axis_rotate"):
             if body is None:
                 return None
@@ -186,13 +195,15 @@ def install(m):
                 tool = mark.get("tool")
                 body = resolve(row.get("body_token"), adsk.fusion.BRepBody)
                 ent = resolve(row.get("entity_token"))
+                if tool == "compare" and ent is None:
+                    ent = resolve(mark.get("target_token"))
                 if body is None and isinstance(ent, (adsk.fusion.BRepBody, adsk.fusion.BRepFace, adsk.fusion.BRepEdge)):
                     try: body = ent if isinstance(ent, adsk.fusion.BRepBody) else ent.body
                     except Exception: pass
 
                 # Geometry-changing marks need their referenced body/entity. A
-                # note can still be restored from its saved world-space anchor.
-                if tool != "note" and body is None:
+                # note is anchor-only; Compare owns two body tokens in the mark.
+                if tool not in ("note", "compare") and body is None:
                     skipped += 1; continue
 
                 geom = reconstruct_geom(mark, ent, body)
@@ -217,8 +228,6 @@ def install(m):
 
             m._next_id = max(max_id + 1, 1)
 
-            # Recompute exact transient candidate caches where useful. These are
-            # intentionally not serialized because they can always be rebuilt.
             for mark in list(m._marks):
                 if mark.get("tool") in ("extrude", "fillet"):
                     try: m._compute_real(mark)
@@ -232,9 +241,7 @@ def install(m):
         finally:
             state["loading"] = False
 
-    # ------------------------------------------------------------------
     # Save at discrete collaboration events, never on every drag frame.
-    # ------------------------------------------------------------------
     def remove_mark(mid):
         old_remove_mark(mid)
         if getattr(m, "_active_cmd", None) is None:
@@ -266,7 +273,6 @@ def install(m):
         def __init__(self):
             super().__init__(); self._delegate = CurrentLaunchHandler()
         def notify(self, args):
-            # Switching tools means the previous direct manipulation is finished.
             save_state("tool-switch")
             self._delegate.notify(args)
     m.LaunchHandler = LaunchHandler
@@ -279,7 +285,6 @@ def install(m):
             save_state("note-done")
     m.NoteDestroy = NoteDestroy
 
-    # Expose explicit hooks for later collaboration/sync work.
     m._persist_state = save_state
     m._reload_persisted_state = load_state
 

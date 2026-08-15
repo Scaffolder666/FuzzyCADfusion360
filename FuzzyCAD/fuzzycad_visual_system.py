@@ -48,6 +48,15 @@ VISUAL_TOKENS = {
         "rgb": (245, 118, 24), "weight": 2, "strokes": 1,
         "wobble_ratio": 0.0, "wobble_min": 0.0, "wobble_max": 0.0,
     },
+    # Conflict uses a separate purple/blue family. With no choice, both candidate
+    # BReps are visible at the same slot; a selection collapses to one neutral preview.
+    "conflict_alt_a": {"rgb": (126, 104, 180), "opacity": 0.18},
+    "conflict_alt_b": {"rgb": (92, 118, 170), "opacity": 0.18},
+    "conflict_selected": {"rgb": (92, 96, 104), "opacity": 0.42},
+    "conflict_marker": {
+        "rgb": (128, 90, 180), "weight": 2, "strokes": 1,
+        "wobble_ratio": 0.0, "wobble_min": 0.0, "wobble_max": 0.0,
+    },
     "axis_reference": {
         "rgb": (125, 130, 135), "weight": 1, "strokes": 1,
         "wobble_ratio": 0.0, "wobble_min": 0.0, "wobble_max": 0.0,
