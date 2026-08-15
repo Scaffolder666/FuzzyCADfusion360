@@ -26,6 +26,11 @@ def _load(name, filename):
 
 _legacy = _load("fuzzycad_legacy", "FuzzyCAD_legacy.py")
 _legacy.DEV_MODE = DEV_MODE
+if not DEV_MODE:
+    # Most runtime patches fall back to Application.log when no debug monitor is
+    # installed. Give them an explicit no-op sink so study mode is genuinely
+    # quiet even during high-frequency manipulator events.
+    _legacy._debug = lambda *_args, **_kwargs: None
 _legacy._fuzzycad_legacy_preview = _legacy.FuzzyPreview
 _legacy._fuzzycad_legacy_draw_fillet = _legacy._DRAW.get("fillet")
 
