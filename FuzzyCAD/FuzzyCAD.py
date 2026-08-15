@@ -28,9 +28,10 @@ operation-specific motion rulers and lightweight card-hover replays, centralize
 all known line hierarchy/colors/wobble into one semantic visual system, add
 Conflict Compare slots, reopen native manipulators when unresolved Need Input
 cards are clicked, harden Compare into a staged command, infer target/source
-connection frames from clicked circular edges or planar face centers, hydrate
-persisted uncertainty when the panel/document becomes ready, and restore the
-preferred FuzzyCAD panel layout on every add-in start.
+connection frames from clicked circular edges or planar face centers, expand a
+clicked alternative to its containing component/occurrence, hydrate persisted
+uncertainty when the panel/document becomes ready, and restore the preferred
+FuzzyCAD panel layout on every add-in start.
 """
 import importlib.util
 import os
@@ -124,6 +125,8 @@ _compare_connectors = _load("fuzzycad_compare_connectors", "fuzzycad_compare_con
 _compare_connectors.install(_legacy)
 _compare_faces = _load("fuzzycad_compare_face_connectors", "fuzzycad_compare_face_connectors.py")
 _compare_faces.install(_legacy)
+_compare_components = _load("fuzzycad_compare_component_groups", "fuzzycad_compare_component_groups.py")
+_compare_components.install(_legacy)
 _hydrate = _load("fuzzycad_persistence_hydration", "fuzzycad_persistence_hydration.py")
 _hydrate.install(_legacy)
 _layout = _load("fuzzycad_layout_lock", "fuzzycad_layout_lock.py")
