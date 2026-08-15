@@ -4,9 +4,6 @@
  *   Need Input      geometry-changing questions that require a value/decision
  *   Constraint      geometry-linked notes/requirements
  *   Conflict        competing alternatives handled by Compare
- *
- * Bridge:  panel -> Fusion : adsk.fusionSendData(action, jsonString)
- *          Fusion -> panel : window.fusionJavaScriptHandler.handle(action, jsonString)
  */
 (function () {
   "use strict";
@@ -62,34 +59,36 @@
     editTimers[k] = setTimeout(function () { send("edit", { id: id, key: key, value: value }); }, 120);
   }
 
+  /* Move replay remains real-time after intent is clear, but a short dwell keeps
+   * casual pointer travel from opening a JS -> Python -> viewport refresh loop. */
   var hoverMoveTimer = null;
+  var hoverMoveDwell = null;
   var hoverMoveId = null;
   var hoverMoveStarted = 0;
+  var hoverMoveActive = false;
 
   function easeMove(t) { return t * t * (3 - 2 * t); }
 
   function stopMoveHover(notifyFusion) {
-    if (hoverMoveTimer) {
-      clearInterval(hoverMoveTimer);
-      hoverMoveTimer = null;
-    }
+    if (hoverMoveDwell) { clearTimeout(hoverMoveDwell); hoverMoveDwell = null; }
+    if (hoverMoveTimer) { clearInterval(hoverMoveTimer); hoverMoveTimer = null; }
     var oldId = hoverMoveId;
+    var wasActive = hoverMoveActive;
     hoverMoveId = null;
     hoverMoveStarted = 0;
-    if (notifyFusion !== false && oldId !== null) {
+    hoverMoveActive = false;
+    if (notifyFusion !== false && wasActive && oldId !== null) {
       send("hoverMoveEnd", { id: oldId });
     }
   }
 
-  function startMoveHover(mark) {
-    if (!mark || mark.tool !== "move") return;
-    if (hoverMoveId === mark.id && hoverMoveTimer) return;
-    stopMoveHover(true);
-    hoverMoveId = mark.id;
+  function beginMoveHover(mark) {
+    if (!mark || hoverMoveId !== mark.id) return;
+    hoverMoveActive = true;
     hoverMoveStarted = performance.now();
     send("hoverMoveStart", { id: mark.id });
     function tick() {
-      if (hoverMoveId !== mark.id) return;
+      if (hoverMoveId !== mark.id || !hoverMoveActive) return;
       var elapsed = performance.now() - hoverMoveStarted;
       var cycle = elapsed % 1040;
       var t;
@@ -100,6 +99,17 @@
     }
     tick();
     hoverMoveTimer = setInterval(tick, 60);
+  }
+
+  function startMoveHover(mark) {
+    if (!mark || mark.tool !== "move" || mark.reference_lost) return;
+    if (hoverMoveId === mark.id && (hoverMoveDwell || hoverMoveTimer)) return;
+    stopMoveHover(true);
+    hoverMoveId = mark.id;
+    hoverMoveDwell = setTimeout(function () {
+      hoverMoveDwell = null;
+      beginMoveHover(mark);
+    }, 220);
   }
 
   function stop(ev) { ev.stopPropagation(); }
@@ -136,9 +146,10 @@
       var card = document.createElement("button");
       card.type = "button";
       card.className = "alt" + (m.selected === idx ? " alt--selected" : "");
+      card.disabled = !!m.reference_lost;
       card.addEventListener("click", function (ev) {
         stop(ev);
-        send("compare_choice", { id: m.id, choice: idx });
+        if (!m.reference_lost) send("compare_choice", { id: m.id, choice: idx });
       });
       var pic = document.createElement("div");
       pic.className = "alt__pic";
@@ -158,12 +169,37 @@
     unresolved.type = "button";
     unresolved.className = "compare__unresolved" + (m.selected === null || typeof m.selected === "undefined" ? " active" : "");
     unresolved.textContent = "Keep unresolved";
+    unresolved.disabled = !!m.reference_lost;
     unresolved.addEventListener("click", function (ev) {
       stop(ev);
-      send("compare_choice", { id: m.id, choice: null });
+      if (!m.reference_lost) send("compare_choice", { id: m.id, choice: null });
     });
     wrap.appendChild(unresolved);
     return wrap;
+  }
+
+  function referenceWarning(m) {
+    if (!m.reference_lost) return null;
+    var box = document.createElement("div");
+    box.className = "refwarn";
+    var title = document.createElement("div");
+    title.className = "refwarn__title";
+    title.textContent = "Geometry changed";
+    var text = document.createElement("div");
+    text.className = "refwarn__text";
+    text.textContent = m.can_relink
+      ? "This question is no longer linked to its original geometry."
+      : "This comparison lost an assembly reference. Recreate Compare to restore all connectors.";
+    box.appendChild(title);
+    box.appendChild(text);
+    if (m.can_relink) {
+      var relink = btn("Relink geometry", "refwarn__action", function (ev) {
+        stop(ev);
+        send("relink", { id: m.id });
+      });
+      box.appendChild(relink);
+    }
+    return box;
   }
 
   function render() {
@@ -176,8 +212,10 @@
     state.marks.forEach(function (m) {
       var mtype = canonicalType(m.mtype);
       var li = document.createElement("li");
-      li.className = "mark mark--" + m.status + " type--" + mtype;
-      if (mtype === "need_input") {
+      li.className = "mark mark--" + m.status + " type--" + mtype + (m.reference_lost ? " mark--reference-lost" : "");
+      if (m.reference_lost) {
+        li.title = "This question needs to be relinked to geometry";
+      } else if (mtype === "need_input") {
         li.title = m.tool === "move"
           ? "Hover to replay; click to reopen the viewport manipulator"
           : "Click to reopen the viewport manipulator";
@@ -185,14 +223,16 @@
         li.title = "Click to focus this in the model";
       }
       li.addEventListener("click", function () {
-        if (mtype === "need_input") {
+        if (m.reference_lost) {
+          send("focus", { id: m.id });
+        } else if (mtype === "need_input") {
           stopMoveHover(true);
           send("editManipulator", { id: m.id });
         } else {
           send("focus", { id: m.id });
         }
       });
-      if (m.tool === "move") {
+      if (m.tool === "move" && !m.reference_lost) {
         li.addEventListener("mouseenter", function () { startMoveHover(m); });
         li.addEventListener("mouseleave", function () {
           if (hoverMoveId === m.id) stopMoveHover(true);
@@ -214,6 +254,9 @@
       head.appendChild(glyph); head.appendChild(name); head.appendChild(typeTag);
       li.appendChild(head);
 
+      var warning = referenceWarning(m);
+      if (warning) li.appendChild(warning);
+
       if (m.tool === "compare") {
         li.appendChild(compareOptions(m));
       } else {
@@ -226,6 +269,7 @@
             ta.value = f.value;
             ta.rows = 2;
             ta.placeholder = "Type the constraint / note…";
+            ta.disabled = !!m.reference_lost;
             ta.addEventListener("click", stop);
             ta.addEventListener("input", function () { editLive(m.id, f.key, ta.value); });
             fields.appendChild(ta);
@@ -240,6 +284,7 @@
           inp.type = "number";
           inp.value = f.value;
           inp.className = "fld__input";
+          inp.disabled = !!m.reference_lost;
           inp.addEventListener("click", stop);
           inp.addEventListener("input", function () {
             editLive(m.id, f.key, parseFloat(inp.value || "0"));
@@ -259,9 +304,12 @@
       var apply = btn(acceptLabel, "act act--apply", function (ev) {
         stop(ev);
         stopMoveHover(true);
-        send("accept", { id: m.id });
+        if (!m.reference_lost) send("accept", { id: m.id });
       });
-      if (m.tool === "compare" && !(m.selected === 0 || m.selected === 1)) {
+      if (m.reference_lost) {
+        apply.disabled = true;
+        apply.title = "Relink this question before applying it";
+      } else if (m.tool === "compare" && !(m.selected === 0 || m.selected === 1)) {
         apply.disabled = true;
         apply.title = "Choose an alternative first";
       }
