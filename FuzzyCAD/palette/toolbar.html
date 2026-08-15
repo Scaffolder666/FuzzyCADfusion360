@@ -23,6 +23,15 @@
     .stage__step.active .dot{border-color:var(--orange);box-shadow:inset 0 0 0 3px #fff;background:var(--orange)}
     .stage__step.done .dot{border-color:var(--green);background:var(--green);color:#fff}
     .hint{display:block;font-size:9px;font-weight:500;color:#9aa4ad;margin-top:1px}
+    .decision{display:none;margin-top:8px;padding-top:8px;border-top:1px solid var(--line)}
+    .decision.visible{display:block}
+    .decision__title{font-size:10.5px;font-weight:800;margin-bottom:2px}
+    .decision__message{font-size:9.5px;line-height:1.25;color:var(--muted);margin-bottom:7px}
+    .decision__options{display:grid;grid-template-columns:repeat(auto-fit,minmax(72px,1fr));gap:5px}
+    .decision__option{min-height:38px;padding:5px 4px;border:1px solid #d9dee4;border-radius:7px;background:#fff;color:var(--text);font-size:9.5px;font-weight:700;cursor:pointer}
+    .decision__option:hover{border-color:var(--orange)}
+    .decision__option.selected{border-color:var(--orange);box-shadow:inset 0 0 0 1px var(--orange);color:#a75612;background:#fffaf5}
+    .decision__glyph{display:block;font-size:14px;line-height:1;margin-bottom:3px}
     .stage__confirm{width:100%;margin-top:8px;padding:6px 8px;border:1px solid var(--navy);border-radius:6px;background:#fff;color:var(--navy);font-size:10.5px;font-weight:750;cursor:pointer}
     .stage__confirm:hover{background:#f2f5f7}.stage__confirm:active{background:var(--navy);color:#fff}
     .group{display:flex;flex-direction:column;gap:5px}
@@ -44,6 +53,11 @@
     <div id="stage" class="stage">
       <div id="stageTitle" class="stage__title"></div>
       <div id="stageSteps"></div>
+      <div id="decision" class="decision">
+        <div id="decisionTitle" class="decision__title"></div>
+        <div id="decisionMessage" class="decision__message"></div>
+        <div id="decisionOptions" class="decision__options"></div>
+      </div>
       <button id="stageConfirm" class="stage__confirm" type="button">Confirm</button>
     </div>
 
@@ -87,6 +101,9 @@
   <script>
   (function(){
     "use strict";
+    var activeStage=null;
+    var activeDecision=null;
+
     function send(action,data){
       if(window.adsk&&typeof window.adsk.fusionSendData==="function"){
         return window.adsk.fusionSendData(action,JSON.stringify(data||{}));
@@ -94,31 +111,70 @@
       return Promise.resolve("{}");
     }
 
-    function renderStage(data){
+    function updateStageShell(){
       var box=document.getElementById("stage");
+      var hasStage=!!(activeStage&&activeStage.tool&&(activeStage.steps||[]).length);
+      var hasDecision=!!(activeDecision&&activeDecision.kind);
+      box.classList.toggle("visible",hasStage||hasDecision);
+      document.getElementById("stageTitle").textContent=hasStage?(activeStage.title||"Next"):(hasDecision?"Decision":"");
+      var confirm=document.getElementById("stageConfirm");
+      confirm.textContent=hasDecision?"Confirm choice":"Confirm";
+    }
+
+    function renderStage(data){
       var steps=(data&&data.steps)||[];
-      if(!data||!data.tool||!steps.length){
+      activeStage=(data&&data.tool&&steps.length)?data:null;
+      var wrap=document.getElementById("stageSteps");wrap.innerHTML="";
+      if(activeStage){
+        steps.forEach(function(step,i){
+          var row=document.createElement("div");
+          row.className="stage__step"+(step.done?" done":"")+(i===data.active?" active":"");
+          var dot=document.createElement("span");dot.className="dot";dot.textContent=step.done?"✓":String(i+1);
+          var text=document.createElement("span");text.textContent=step.label||"";
+          if(step.hint){var hint=document.createElement("span");hint.className="hint";hint.textContent=step.hint;text.appendChild(hint);}
+          row.appendChild(dot);row.appendChild(text);wrap.appendChild(row);
+        });
+      }
+      updateStageShell();
+    }
+
+    function renderDecision(data){
+      activeDecision=(data&&data.kind)?data:null;
+      var box=document.getElementById("decision");
+      var options=document.getElementById("decisionOptions");
+      options.innerHTML="";
+      if(!activeDecision){
         box.classList.remove("visible");
-        document.getElementById("stageSteps").innerHTML="";
+        document.getElementById("decisionTitle").textContent="";
+        document.getElementById("decisionMessage").textContent="";
+        updateStageShell();
         return;
       }
-      document.getElementById("stageTitle").textContent=data.title||"Next";
-      var wrap=document.getElementById("stageSteps");wrap.innerHTML="";
-      steps.forEach(function(step,i){
-        var row=document.createElement("div");
-        row.className="stage__step"+(step.done?" done":"")+(i===data.active?" active":"");
-        var dot=document.createElement("span");dot.className="dot";dot.textContent=step.done?"✓":String(i+1);
-        var text=document.createElement("span");text.textContent=step.label||"";
-        if(step.hint){var hint=document.createElement("span");hint.className="hint";hint.textContent=step.hint;text.appendChild(hint);}
-        row.appendChild(dot);row.appendChild(text);wrap.appendChild(row);
+      document.getElementById("decisionTitle").textContent=activeDecision.title||"Choose";
+      document.getElementById("decisionMessage").textContent=activeDecision.message||"";
+      (activeDecision.options||[]).forEach(function(opt){
+        var b=document.createElement("button");
+        b.type="button";
+        b.className="decision__option"+(activeDecision.selected===opt.value?" selected":"");
+        var glyph=document.createElement("span");glyph.className="decision__glyph";glyph.textContent=opt.glyph||"";
+        var label=document.createElement("span");label.textContent=opt.label||opt.value||"";
+        b.appendChild(glyph);b.appendChild(label);
+        b.addEventListener("click",function(){
+          activeDecision.selected=opt.value;
+          renderDecision(activeDecision);
+          send("decision_choice",{kind:activeDecision.kind,value:opt.value});
+        });
+        options.appendChild(b);
       });
       box.classList.add("visible");
+      updateStageShell();
     }
 
     window.fusionJavaScriptHandler={handle:function(action,dataString){
       try{
         var data=dataString?JSON.parse(dataString):{};
         if(action==="stage")renderStage(data);
+        else if(action==="decision_prompt")renderDecision(data);
       }catch(e){return JSON.stringify({ok:false,error:String(e)});}
       return JSON.stringify({ok:true});
     }};
@@ -129,7 +185,13 @@
         btn.addEventListener("click",function(){send("tool",{tool:btn.getAttribute("data-tool")});});
       });
       var confirm=document.getElementById("stageConfirm");
-      if(confirm){confirm.addEventListener("click",function(){send("confirm",{});});}
+      if(confirm){confirm.addEventListener("click",function(){
+        if(activeDecision&&activeDecision.kind){
+          send("decision_confirm",{kind:activeDecision.kind,value:activeDecision.selected});
+        }else{
+          send("confirm",{});
+        }
+      });}
     });
   })();
   </script>
