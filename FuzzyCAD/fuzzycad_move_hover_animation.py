@@ -1,35 +1,30 @@
-"""Lightweight hover animation for Move proposal cards.
+"""Lightweight line-art hover animation for Move proposal cards.
 
-Hover replay only needs to communicate movement tendency. It avoids adding the
-full Fusion BRep to CustomGraphics. The primary body is represented by a sparse
-subset of the already-sampled proposal edge polylines; Together bodies use very
-cheap bounding-box wireframes. Graphics are built once and one group transform
-is updated at a deliberately slow cadence.
+Hover replay communicates movement by pushing a temporary wireframe copy of the
+current geometry toward the proposal. The committed body stays where it is, so
+the relationship between current and proposed states remains legible. No filled
+arrow or solid preview is added during hover.
 
 Interaction rule:
-- enter a Move card -> move once from current position toward the proposal;
-- stay hovered -> remain at the proposed position, never reverse;
+- enter a Move card -> a thin line-art copy moves once toward the proposal;
+- stay hovered -> the line-art copy remains at the proposed position;
 - leave/click -> remove the replay immediately.
 
-A separate static, filled orange arrow sits along the motion path while replay is
-active. It is a tiny CustomGraphics triangle mesh, not a BRep, so it makes the
-movement direction obvious without bringing back expensive solid rendering.
+The primary body uses a sparse subset of already-sampled edge polylines. Together
+bodies use cheap bounding-box wireframes. Graphics are built once and animation
+frames only update one CustomGraphicsGroup transform.
 """
 
 import math
 import time
 
 HOVER_GROUP = "FuzzyCAD_HoverAnimation"
-HOVER_ARROW_GROUP = "FuzzyCAD_HoverDirectionArrow"
-ANIM_RGB = (64, 68, 72)
-ANIM_WEIGHT = 1.6
-ARROW_RGB = (225, 126, 38)
-ARROW_EDGE_RGB = (159, 82, 24)
-ARROW_OPACITY = 0.80
-MAX_PRIMARY_POLYS = 26
+ANIM_RGB = (68, 72, 76)
+ANIM_WEIGHT = 1.25
+MAX_PRIMARY_POLYS = 34
 MAX_POINTS_PER_POLY = 14
 FRAME_INTERVAL_SEC = 0.12       # ~8.3 viewport refreshes/sec
-FORWARD_SEC = 1.90              # slower, readable one-way motion
+FORWARD_SEC = 1.90              # slow, readable one-way motion
 
 
 def install(m):
@@ -41,25 +36,11 @@ def install(m):
     state = {
         "mid": None,
         "group": None,
-        "arrow_group": None,
         "line_count": 0,
         "frame": 0,
         "started": 0.0,
         "last_refresh": 0.0,
     }
-
-    def log(msg):
-        try:
-            fn = getattr(m, "_debug", None)
-            if fn:
-                fn(msg)
-                return
-        except Exception:
-            pass
-        try:
-            (m._app or adsk.core.Application.get()).log("[FuzzyCAD ANIM] " + msg)
-        except Exception:
-            pass
 
     def refresh():
         try:
@@ -68,24 +49,24 @@ def install(m):
         except Exception:
             pass
 
-    def clear_groups():
-        for gid in (HOVER_GROUP, HOVER_ARROW_GROUP):
-            try:
-                m._clear(gid)
-            except Exception:
-                pass
+    def clear_group():
+        try:
+            m._clear(HOVER_GROUP)
+        except Exception:
+            pass
+        # Clean up the old arrow group as well so stale graphics from a previous
+        # build cannot survive an add-in reload.
+        try:
+            m._clear("FuzzyCAD_HoverDirectionArrow")
+        except Exception:
+            pass
 
     def stop_animation(refresh_view=True):
-        had_animation = (
-            state["mid"] is not None or
-            state["group"] is not None or
-            state["arrow_group"] is not None
-        )
-        clear_groups()
+        had_animation = state["mid"] is not None or state["group"] is not None
+        clear_group()
         state.update({
             "mid": None,
             "group": None,
-            "arrow_group": None,
             "line_count": 0,
             "frame": 0,
             "started": 0.0,
@@ -134,9 +115,9 @@ def install(m):
                 (x0, y0, z0), (x1, y0, z0), (x1, y1, z0), (x0, y1, z0),
                 (x0, y0, z1), (x1, y0, z1), (x1, y1, z1), (x0, y1, z1),
             ]
-            edges = ((0,1),(1,2),(2,3),(3,0),
-                     (4,5),(5,6),(6,7),(7,4),
-                     (0,4),(1,5),(2,6),(3,7))
+            edges = ((0, 1), (1, 2), (2, 3), (3, 0),
+                     (4, 5), (5, 6), (6, 7), (7, 4),
+                     (0, 4), (1, 5), (2, 6), (3, 7))
             return [[p[a], p[b]] for a, b in edges]
         except Exception:
             return []
@@ -161,6 +142,10 @@ def install(m):
             line = group.addLines(coords, list(range(len(pts))), True)
             line.color = m._solid(ANIM_RGB)
             line.weight = ANIM_WEIGHT
+            try:
+                line.depthPriority = 7
+            except Exception:
+                pass
             return True
         except Exception:
             return False
@@ -168,145 +153,15 @@ def install(m):
     def animation_polys(mark, primary):
         rows = list(sparse_primary(mark, primary))
         if mark.get("move_scope") == "together":
-            # Related bodies only need to make the shared motion unmistakable.
-            # Bounding boxes are cheap and visually strong enough for replay.
             for body in mark.get("related_bodies") or []:
                 rows.extend(bbox_polys(body))
         return rows
-
-    def vlen(v):
-        return math.sqrt(sum(float(x) * float(x) for x in v))
-
-    def normalized(v):
-        n = vlen(v)
-        if n < 1e-9:
-            return (0.0, 0.0, 0.0)
-        return tuple(float(x) / n for x in v)
-
-    def cross(a, b):
-        return (
-            a[1] * b[2] - a[2] * b[1],
-            a[2] * b[0] - a[0] * b[2],
-            a[0] * b[1] - a[1] * b[0],
-        )
-
-    def addv(a, b, scale=1.0):
-        return (
-            float(a[0]) + float(b[0]) * scale,
-            float(a[1]) + float(b[1]) * scale,
-            float(a[2]) + float(b[2]) * scale,
-        )
-
-    def body_center(body):
-        try:
-            bb = body.boundingBox
-            return (
-                (bb.minPoint.x + bb.maxPoint.x) * 0.5,
-                (bb.minPoint.y + bb.maxPoint.y) * 0.5,
-                (bb.minPoint.z + bb.maxPoint.z) * 0.5,
-            )
-        except Exception:
-            return (0.0, 0.0, 0.0)
-
-    def camera_view():
-        try:
-            cam = m._app.activeViewport.camera
-            return normalized((
-                cam.eye.x - cam.target.x,
-                cam.eye.y - cam.target.y,
-                cam.eye.z - cam.target.z,
-            ))
-        except Exception:
-            return (0.0, 0.0, 1.0)
-
-    def arrow_side(direction):
-        # Keep the arrow face roughly screen-readable by using a width direction
-        # perpendicular to both movement and the current camera direction.
-        side = cross(direction, camera_view())
-        if vlen(side) < 1e-6:
-            helper = (0.0, 1.0, 0.0) if abs(direction[1]) < 0.85 else (1.0, 0.0, 0.0)
-            side = cross(direction, helper)
-        if vlen(side) < 1e-6:
-            side = cross(direction, (0.0, 0.0, 1.0))
-        return normalized(side)
-
-    def add_direction_arrow(mark, primary):
-        vec = tuple(float(x) for x in (mark.get("vec") or [0.0, 0.0, 0.0]))
-        distance = vlen(vec)
-        if distance < 1e-6:
-            return None
-
-        group = m._group(HOVER_ARROW_GROUP)
-        if group is None:
-            return None
-
-        direction = normalized(vec)
-        side = arrow_side(direction)
-        if vlen(side) < 1e-6:
-            return group
-
-        anchor = mark.get("anchor") or body_center(primary)
-        anchor = tuple(float(x) for x in anchor)
-        # Leave a little breathing room at each end so the arrow reads as a path
-        # cue rather than another exact geometric edge.
-        start = addv(anchor, direction, distance * 0.08)
-        tip = addv(anchor, direction, distance * 0.92)
-        visible_len = max(distance * 0.84, 1e-6)
-
-        size = max(0.25, float(mark.get("size", 3.0) or 3.0))
-        shaft_half = max(0.07, min(max(size * 0.030, visible_len * 0.035), 0.34))
-        head_half = min(max(shaft_half * 2.45, shaft_half + 0.08), max(shaft_half * 2.45, visible_len * 0.22))
-        head_len = min(visible_len * 0.44, max(shaft_half * 2.7, visible_len * 0.24))
-        shoulder = addv(tip, direction, -head_len)
-
-        # Seven points describe a classic filled 2D arrow. The shaft rectangle
-        # and triangular head are only six triangles total including back faces.
-        p0 = addv(start, side, -shaft_half)
-        p1 = addv(shoulder, side, -shaft_half)
-        p2 = addv(shoulder, side, -head_half)
-        p3 = tip
-        p4 = addv(shoulder, side, head_half)
-        p5 = addv(shoulder, side, shaft_half)
-        p6 = addv(start, side, shaft_half)
-        pts = (p0, p1, p2, p3, p4, p5, p6)
-        flat = []
-        for p in pts:
-            flat.extend((p[0], p[1], p[2]))
-
-        try:
-            coords = adsk.fusion.CustomGraphicsCoordinates.create(flat)
-            # Front and reverse winding make the flat arrow visible from either
-            # side without any geometry/kernel operation.
-            indices = [
-                0, 1, 5, 0, 5, 6, 2, 3, 4,
-                5, 1, 0, 6, 5, 0, 4, 3, 2,
-            ]
-            mesh = group.addMesh(coords, indices, [], [])
-            mesh.color = m._solid(ARROW_RGB)
-            mesh.setOpacity(ARROW_OPACITY, True)
-            try:
-                mesh.depthPriority = 8
-            except Exception:
-                pass
-
-            outline = group.addLines(coords, [0, 1, 2, 3, 4, 5, 6, 0], True)
-            outline.color = m._solid(ARROW_EDGE_RGB)
-            outline.weight = 1.15
-            try:
-                outline.depthPriority = 9
-            except Exception:
-                pass
-        except Exception:
-            pass
-        return group
 
     def eased(t):
         t = max(0.0, min(1.0, float(t)))
         return t * t * (3.0 - 2.0 * t)
 
     def motion_t(now):
-        # One-way only. Once the proposal is reached, stay there for as long as
-        # the pointer remains on the card. No return leg and no looping reset.
         elapsed = max(0.0, now - state["started"])
         if elapsed >= FORWARD_SEC:
             return 1.0
@@ -337,21 +192,19 @@ def install(m):
             if add_polyline(group, poly):
                 count += 1
         if count < 1:
-            clear_groups()
+            clear_group()
             return
 
-        arrow_group = add_direction_arrow(mark, primary)
         now = time.perf_counter()
         try:
             group.transform = move_matrix(mark, 0.0)
         except Exception:
-            clear_groups()
+            clear_group()
             return
 
         state.update({
             "mid": mid,
             "group": group,
-            "arrow_group": arrow_group,
             "line_count": count,
             "frame": 0,
             "started": now,
@@ -376,17 +229,12 @@ def install(m):
         if state["last_refresh"] and now - state["last_refresh"] < FRAME_INTERVAL_SEC:
             return
         t = motion_t(now)
-        # Once we have reached the target, no more viewport refresh work is
-        # needed. The wireframe and static direction arrow remain until leave/click.
         if t >= 1.0 and state["frame"] < 0:
             return
         state["last_refresh"] = now
         try:
             state["group"].transform = move_matrix(mark, t)
-            if t >= 1.0:
-                state["frame"] = -1
-            else:
-                state["frame"] += 1
+            state["frame"] = -1 if t >= 1.0 else state["frame"] + 1
             refresh()
         except Exception:
             stop_animation()
@@ -427,7 +275,7 @@ def install(m):
 
     def run(context):
         result = old_run(context)
-        clear_groups()
+        clear_group()
         return result
 
     def stop(context):
