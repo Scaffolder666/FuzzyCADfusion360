@@ -1,37 +1,11 @@
 """FuzzyCAD entry point.
 
 The original implementation is kept in FuzzyCAD_legacy.py. Runtime patches
-replace the fillet preview/range path, guard transient live-mark teardown,
-commit accepted proposals in their own Fusion command transaction, add a live
-TEXT COMMANDS debug monitor, trace manipulator values through final apply, flag
-when a sidebar Accept targets a different proposal from the active handle, trace
-the native manipulator inputChanged/executePreview events directly, keep the
-Fillet candidate/card synchronized even when Fusion emits inputChanged without
-executePreview, unify Move/Rotate/Scale/Extrude candidate visualization with
-the Fillet visual language, replay Move proposals as a one-way animation while
-their sidebar card is hovered, keep notes screen-facing while showing a
-lightweight active-candidate size frame, keep Note annotation-only without
-fading its referenced body, separate the collaboration taxonomy, preserve the
-direct body->manipulator interaction flow for scale and axis rotation, restore
-the missing Uniform Scale body-selection pending state, make directional scale
-one-sided by default, prototype relationship-aware Move scope, render interaction
-choices in FuzzyCAD's own HTML UI instead of Fusion's native option controls,
-keep related-part Move previews synchronized directly from the native handle,
-strengthen original/proposed visual contrast, persist open collaboration state
-inside the Fusion design for reopen/handoff workflows, render non-Fillet
-proposals as edge-only geometry, emphasize the actual rounded Fillet region,
-treat multi-body Move as one proposal group, expose procedural stage feedback in
-a left-side tool rail, profile the main preview paths, clear stale runtime
-graphics before persistence rehydration, add sparse surface scaffolds when smooth
-bodies have too few topology edges, add view-dependent apparent contours, add
-operation-specific motion rulers and lightweight card-hover replays, centralize
-all known line hierarchy/colors/wobble into one semantic visual system, add
-Conflict Compare slots, reopen native manipulators when unresolved Need Input
-cards are clicked, harden Compare into a staged command, infer target/source
-connection frames from clicked circular edges or planar face centers, expand a
-clicked alternative to its containing component/occurrence, hydrate persisted
-uncertainty when the panel/document becomes ready, and restore the preferred
-FuzzyCAD panel layout on every add-in start.
+layer the collaboration UI, persistence, native manipulators, proposal visuals,
+and operation-specific behavior onto the legacy implementation.  Conflict
+Compare is intentionally loaded through one consolidated command path so Fusion
+never registers/deletes several competing FuzzyCAD_Compare definitions during a
+single add-in startup.
 """
 import importlib.util
 import os
@@ -115,18 +89,15 @@ _op_hover = _load("fuzzycad_operation_hover_animation", "fuzzycad_operation_hove
 _op_hover.install(_legacy)
 _visual_system = _load("fuzzycad_visual_system", "fuzzycad_visual_system.py")
 _visual_system.install(_legacy)
-_compare = _load("fuzzycad_compare_conflict", "fuzzycad_compare_conflict.py")
-_compare.install(_legacy)
 _reopen = _load("fuzzycad_card_manipulator_reopen", "fuzzycad_card_manipulator_reopen.py")
 _reopen.install(_legacy)
-_compare_safe = _load("fuzzycad_compare_interaction_fix", "fuzzycad_compare_interaction_fix.py")
-_compare_safe.install(_legacy)
-_compare_connectors = _load("fuzzycad_compare_connectors", "fuzzycad_compare_connectors.py")
-_compare_connectors.install(_legacy)
-_compare_faces = _load("fuzzycad_compare_face_connectors", "fuzzycad_compare_face_connectors.py")
-_compare_faces.install(_legacy)
-_compare_components = _load("fuzzycad_compare_component_groups", "fuzzycad_compare_component_groups.py")
-_compare_components.install(_legacy)
+
+# Compare used to be implemented by several successive patches that all owned
+# the same Fusion command id.  Keep those files for history, but install only
+# the consolidated implementation below.
+_compare = _load("fuzzycad_compare_stable", "fuzzycad_compare_stable.py")
+_compare.install(_legacy)
+
 _hydrate = _load("fuzzycad_persistence_hydration", "fuzzycad_persistence_hydration.py")
 _hydrate.install(_legacy)
 _layout = _load("fuzzycad_layout_lock", "fuzzycad_layout_lock.py")
