@@ -86,6 +86,10 @@ _fillet_color = _load("fuzzycad_fillet_highlight", "fuzzycad_fillet_highlight.py
 _fillet_color.install(_legacy)
 _groups = _load("fuzzycad_proposal_groups", "fuzzycad_proposal_groups.py")
 _groups.install(_legacy)
+# proposal_groups contains an older opacity helper. The exact manager already
+# understands Move-Together subjects, so reassert it after that patch installs.
+_opacity_final = _load("fuzzycad_opacity_finalize", "fuzzycad_opacity_finalize.py")
+_opacity_final.install(_legacy)
 _stages = _load("fuzzycad_stage_ui", "fuzzycad_stage_ui.py")
 _stages.install(_legacy)
 
