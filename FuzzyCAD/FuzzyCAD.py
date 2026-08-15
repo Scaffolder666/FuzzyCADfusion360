@@ -151,6 +151,10 @@ _visibility = _load(
     "fuzzycad_progressive_visibility",
     "fuzzycad_progressive_visibility.py")
 _visibility.install(_legacy)
+_silhouette_visibility = _load(
+    "fuzzycad_silhouette_visibility",
+    "fuzzycad_silhouette_visibility.py")
+_silhouette_visibility.install(_legacy)
 _layout = _load("fuzzycad_layout_lock", "fuzzycad_layout_lock.py")
 _layout.install(_legacy)
 
