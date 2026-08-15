@@ -227,13 +227,13 @@ def install(m):
 
     m._refresh_ghost = refresh_ghost
     m._restore_all_bodies = restore_all_bodies
+    # Keep stable references so a later compatibility patch can restore these
+    # exact implementations after older group-ghost wrappers are installed.
+    m._opacity_refresh_ghost = refresh_ghost
+    m._opacity_restore_all_bodies = restore_all_bodies
     m._ghost_opacity_records = records
 
     def run(context):
-        # m._app is initialized by the legacy run path. Recover the saved display
-        # state immediately after that inner startup returns. The loader places
-        # this patch inside startup hygiene/persistence, so recovery happens
-        # before persisted proposals are hydrated and faded again.
         result = old_run(context)
         try:
             recover_crash_registry(active_design())
