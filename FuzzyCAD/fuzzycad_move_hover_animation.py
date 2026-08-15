@@ -1,27 +1,30 @@
 """Lightweight hover animation for Move proposal cards.
 
-Hover replay only needs to communicate movement tendency.  It therefore avoids
-adding the full Fusion BRep to CustomGraphics.  The primary body is represented
-by a sparse subset of the already-sampled proposal edge polylines; Together
-bodies use very cheap bounding-box wireframes.  The graphics are built once and
-then one group transform is updated at a deliberately slow cadence.
+Hover replay only needs to communicate movement tendency. It avoids adding the
+full Fusion BRep to CustomGraphics. The primary body is represented by a sparse
+subset of the already-sampled proposal edge polylines; Together bodies use very
+cheap bounding-box wireframes. Graphics are built once and one group transform
+is updated at a deliberately slow cadence.
 
-The browser may send hoverMoveFrame more frequently, but this layer throttles
-Fusion viewport refreshes and computes its own slower forward/return motion.
+Interaction rule:
+- enter a Move card -> move once from current position toward the proposal;
+- stay hovered -> remain at the proposed position, never reverse;
+- leave/click -> remove the replay immediately.
+
+The wireframe is intentionally stronger than the persistent sketch so the moving
+object remains easy to track even though the replay geometry is simplified.
 """
 
 import math
 import time
 
 HOVER_GROUP = "FuzzyCAD_HoverAnimation"
-ANIM_RGB = (108, 112, 116)
+ANIM_RGB = (64, 68, 72)
+ANIM_WEIGHT = 1.6
 MAX_PRIMARY_POLYS = 26
 MAX_POINTS_PER_POLY = 14
-FRAME_INTERVAL_SEC = 0.12       # ~8.3 viewport refreshes/sec, formerly ~16.7
-FORWARD_SEC = 1.75
-HOLD_SEC = 0.28
-RETURN_SEC = 1.10
-REST_SEC = 0.30
+FRAME_INTERVAL_SEC = 0.12       # ~8.3 viewport refreshes/sec
+FORWARD_SEC = 1.90              # slower, readable one-way motion
 
 
 def install(m):
@@ -108,14 +111,6 @@ def install(m):
             out.append(poly[-1])
         return out[:MAX_POINTS_PER_POLY]
 
-    def sparse_primary(mark, body):
-        polys = list((m._geom.get(mark.get("id"), {}) or {}).get("edges") or [])
-        if not polys:
-            return bbox_polys(body)
-        step = max(1, int(math.ceil(len(polys) / float(MAX_PRIMARY_POLYS))))
-        chosen = polys[::step][:MAX_PRIMARY_POLYS]
-        return [decimate_poly(poly) for poly in chosen if poly and len(poly) >= 2]
-
     def bbox_polys(body):
         if not valid_body(body):
             return []
@@ -134,7 +129,15 @@ def install(m):
         except Exception:
             return []
 
-    def add_polyline(group, poly, seed):
+    def sparse_primary(mark, body):
+        polys = list((m._geom.get(mark.get("id"), {}) or {}).get("edges") or [])
+        if not polys:
+            return bbox_polys(body)
+        step = max(1, int(math.ceil(len(polys) / float(MAX_PRIMARY_POLYS))))
+        chosen = polys[::step][:MAX_PRIMARY_POLYS]
+        return [decimate_poly(poly) for poly in chosen if poly and len(poly) >= 2]
+
+    def add_polyline(group, poly):
         pts = decimate_poly(poly)
         if len(pts) < 2:
             return False
@@ -145,20 +148,18 @@ def install(m):
             coords = adsk.fusion.CustomGraphicsCoordinates.create(flat)
             line = group.addLines(coords, list(range(len(pts))), True)
             line.color = m._solid(ANIM_RGB)
-            line.weight = 1.0
+            line.weight = ANIM_WEIGHT
             return True
         except Exception:
             return False
 
     def animation_polys(mark, primary):
-        rows = [(poly, 0) for poly in sparse_primary(mark, primary)]
+        rows = list(sparse_primary(mark, primary))
         if mark.get("move_scope") == "together":
-            # Related bodies only need to indicate that they travel with the
-            # selected body. Bounding boxes are much cheaper than full BReps or
-            # sampling every related edge and remain sufficient for tendency.
-            for ridx, body in enumerate(mark.get("related_bodies") or []):
-                for poly in bbox_polys(body):
-                    rows.append((poly, (ridx + 1) * 100))
+            # Related bodies only need to make the shared motion unmistakable.
+            # Bounding boxes are cheap and visually strong enough for replay.
+            for body in mark.get("related_bodies") or []:
+                rows.extend(bbox_polys(body))
         return rows
 
     def eased(t):
@@ -166,17 +167,12 @@ def install(m):
         return t * t * (3.0 - 2.0 * t)
 
     def motion_t(now):
-        total = FORWARD_SEC + HOLD_SEC + RETURN_SEC + REST_SEC
-        elapsed = max(0.0, now - state["started"]) % total
-        if elapsed < FORWARD_SEC:
-            return eased(elapsed / FORWARD_SEC)
-        elapsed -= FORWARD_SEC
-        if elapsed < HOLD_SEC:
+        # One-way only. Once the proposal is reached, stay there for as long as
+        # the pointer remains on the card. No return leg and no looping reset.
+        elapsed = max(0.0, now - state["started"])
+        if elapsed >= FORWARD_SEC:
             return 1.0
-        elapsed -= HOLD_SEC
-        if elapsed < RETURN_SEC:
-            return 1.0 - eased(elapsed / RETURN_SEC)
-        return 0.0
+        return eased(elapsed / FORWARD_SEC)
 
     def start_animation(mid):
         try:
@@ -199,8 +195,8 @@ def install(m):
             return
 
         count = 0
-        for idx, (poly, offset) in enumerate(animation_polys(mark, primary)):
-            if add_polyline(group, poly, mid * 51001 + offset + idx):
+        for poly in animation_polys(mark, primary):
+            if add_polyline(group, poly):
                 count += 1
         if count < 1:
             clear_group()
@@ -239,10 +235,18 @@ def install(m):
         now = time.perf_counter()
         if state["last_refresh"] and now - state["last_refresh"] < FRAME_INTERVAL_SEC:
             return
+        t = motion_t(now)
+        # Once we have reached the target, no more viewport refresh work is
+        # needed. The wireframe simply remains there until mouseleave/click.
+        if t >= 1.0 and state["frame"] < 0:
+            return
         state["last_refresh"] = now
         try:
-            state["group"].transform = move_matrix(mark, motion_t(now))
-            state["frame"] += 1
+            state["group"].transform = move_matrix(mark, t)
+            if t >= 1.0:
+                state["frame"] = -1
+            else:
+                state["frame"] += 1
             refresh()
         except Exception:
             stop_animation()
@@ -274,9 +278,6 @@ def install(m):
                     stop_animation()
                 return
 
-            # Clicking a card enters editManipulator through the delegated
-            # handler. The browser sends hoverMoveEnd first; these actions are a
-            # second guard so replay never competes with editing/apply/reject.
             if action in ("editManipulator", "accept", "reject", "tool"):
                 stop_animation()
 
