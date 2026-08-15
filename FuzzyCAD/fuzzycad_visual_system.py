@@ -15,15 +15,15 @@ import random
 VISUAL_TOKENS = {
     "current_geometry": {"opacity": 0.08},
     "current_outline": {
-        "rgb": (145, 145, 142), "weight": 1, "strokes": 1,
+        "rgb": (0, 0, 0), "weight": 1, "strokes": 2,
         "wobble_ratio": 0.0, "wobble_min": 0.0, "wobble_max": 0.0,
     },
     "proposal_internal": {
-        "rgb": (86, 90, 94), "weight": 1, "strokes": 2,
-        "wobble_ratio": 0.0028, "wobble_min": 0.0015, "wobble_max": 0.018,
+        "rgb": (0, 0, 0), "weight": 1.8, "strokes": 0,
+        "wobble_ratio": 0.0028, "wobble_min": 0.0115, "wobble_max": 0.118,
     },
     "proposal_outer": {
-        "rgb": (58, 62, 66), "weight": 2, "strokes": 1,
+        "rgb": (58, 62, 66), "weight": 3, "strokes": 1,
         "wobble_ratio": 0.0, "wobble_min": 0.0, "wobble_max": 0.0,
     },
     "surface_scaffold": {
