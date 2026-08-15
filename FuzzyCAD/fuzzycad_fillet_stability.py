@@ -6,8 +6,10 @@ The research interaction needs both layers:
   the true rounded volume while dragging.
 
 The expensive exact candidate is therefore recomputed at a coarse interval, not
-on every inputChanged event.  Between exact refreshes the hand-drawn scaffold
-continues to follow the native manipulator immediately.
+on every inputChanged event. Between exact refreshes the last exact candidate
+remains faintly visible while the hand-drawn scaffold follows the manipulator
+immediately. This preserves the original visual effect without running the
+modeling kernel at pointer frequency.
 """
 
 import time
@@ -126,16 +128,19 @@ def install(m):
         def draw_fillet(group, mark, rgb, amp):
             g = m._geom.get(mark.get("id"), {}) or {}
             candidate = g.get("candidate_body")
-            radius = g.get("candidate_radius")
+            candidate_radius = g.get("candidate_radius")
             amount = float(mark.get("amount", 0.0))
-            exact_cached = (candidate is not None and radius is not None and
-                            abs(float(radius) - amount) <= 1e-7)
+            exact_fresh = (candidate is not None and candidate_radius is not None and
+                           abs(float(candidate_radius) - amount) <= 1e-7)
 
-            if exact_cached:
+            if candidate is not None:
+                # Keep the last exact volume visible between kernel refreshes. A
+                # stale candidate is deliberately quieter; the hand-drawn overlay
+                # carries the live current radius until the next exact update.
                 try:
                     cg = group.addBRepBody(candidate)
                     cg.color = m._solid((190, 190, 186))
-                    cg.setOpacity(0.26, True)
+                    cg.setOpacity(0.26 if exact_fresh else 0.14, True)
                 except Exception:
                     pass
                 for i, poly in enumerate(g.get("candidate_edges", []) or []):
@@ -145,17 +150,18 @@ def install(m):
                                    weight=1, strokes=1)
                     except Exception:
                         pass
-                for i, poly in enumerate(g.get("fillet_edges", []) or []):
-                    try:
-                        m._visual_stroke(group, poly, "affected_boundary",
-                                         mark.get("id", 1) * 900 + i,
-                                         size=float(mark.get("size", 3.0)))
-                    except Exception:
-                        pass
+                if exact_fresh:
+                    for i, poly in enumerate(g.get("fillet_edges", []) or []):
+                        try:
+                            m._visual_stroke(group, poly, "affected_boundary",
+                                             mark.get("id", 1) * 900 + i,
+                                             size=float(mark.get("size", 3.0)))
+                        except Exception:
+                            pass
             else:
                 LegacyDrawFillet(group, mark, rgb, amp)
 
-            # Hand-drawn uncertainty is always present, even on top of exact BRep.
+            # Live provisional geometry never disappears.
             draw_uncertainty(group, mark)
 
         m._DRAW["fillet"] = draw_fillet
@@ -233,11 +239,9 @@ def install(m):
                     return
                 amount = max(float(m._val("d")), FILLET_MIN_CM)
                 mark["amount"] = amount
-                g = m._geom.get(mark.get("id"), {}) or {}
-                # Old exact body remains cached but is marked stale until the
-                # throttled kernel refresh catches up with the current radius.
-                g["candidate_radius"] = None
-                g.pop("real", None)
+                # Do not throw away the previous exact BRep. It remains as a faint
+                # lagging reference until this throttled pass computes the new one.
+                m._geom.get(mark.get("id"), {}).pop("real", None)
                 maybe_refresh_exact(mark, force=False)
                 draw_live(mark)
             except Exception:
