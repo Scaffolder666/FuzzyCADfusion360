@@ -26,9 +26,9 @@ graphics before persistence rehydration, add sparse surface scaffolds when smoot
 bodies have too few topology edges, add view-dependent apparent contours, add
 operation-specific motion rulers and lightweight card-hover replays, centralize
 all known line hierarchy/colors/wobble into one semantic visual system, add
-Conflict Compare slots backed by Fusion Joint Origins or point targets, reopen
-native manipulators when unresolved Need Input cards are clicked, harden Compare
-into a staged command with explicit focus/cleanup, and restore the preferred
+Conflict Compare slots, reopen native manipulators when unresolved Need Input
+cards are clicked, harden Compare into a staged command, infer target/source
+connection frames from clicked circular edges, and restore the preferred
 FuzzyCAD panel layout on every add-in start.
 """
 import importlib.util
@@ -119,6 +119,8 @@ _reopen = _load("fuzzycad_card_manipulator_reopen", "fuzzycad_card_manipulator_r
 _reopen.install(_legacy)
 _compare_safe = _load("fuzzycad_compare_interaction_fix", "fuzzycad_compare_interaction_fix.py")
 _compare_safe.install(_legacy)
+_compare_connectors = _load("fuzzycad_compare_connectors", "fuzzycad_compare_connectors.py")
+_compare_connectors.install(_legacy)
 _layout = _load("fuzzycad_layout_lock", "fuzzycad_layout_lock.py")
 _layout.install(_legacy)
 
