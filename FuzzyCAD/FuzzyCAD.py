@@ -1,17 +1,19 @@
 """FuzzyCAD entry point.
 
 The original implementation is kept in FuzzyCAD_legacy.py. Runtime patches
-layer the collaboration UI, persistence, native manipulators, proposal visuals,
-and operation-specific behavior onto the legacy implementation.  Conflict
-Compare is intentionally loaded through one consolidated command path so Fusion
-never registers/deletes several competing FuzzyCAD_Compare definitions during a
-single add-in startup.
+layer collaboration UI, persistence, manipulators, proposal visuals, and
+operation-specific behavior onto the legacy implementation.
+
+DEV_MODE is intentionally False for the study/runtime build. Heavy lifecycle,
+value, handle, identity, and performance tracing stay available in the repo but
+are not installed unless development diagnostics are explicitly enabled.
 """
 import importlib.util
 import os
 import sys
 
 _here = os.path.dirname(os.path.abspath(__file__))
+DEV_MODE = False
 
 
 def _load(name, filename):
@@ -23,20 +25,25 @@ def _load(name, filename):
 
 
 _legacy = _load("fuzzycad_legacy", "FuzzyCAD_legacy.py")
+_legacy.DEV_MODE = DEV_MODE
+
 _patch = _load("fuzzycad_real_fillet", "fuzzycad_real_fillet.py")
 _patch.install(_legacy)
 _guard = _load("fuzzycad_sync_guard", "fuzzycad_sync_guard.py")
 _guard.install(_legacy)
 _commit = _load("fuzzycad_commit_bridge", "fuzzycad_commit_bridge.py")
 _commit.install(_legacy)
-_debug = _load("fuzzycad_debug_monitor", "fuzzycad_debug_monitor.py")
-_debug.install(_legacy)
-_values = _load("fuzzycad_value_trace", "fuzzycad_value_trace.py")
-_values.install(_legacy)
-_identity = _load("fuzzycad_accept_identity_trace", "fuzzycad_accept_identity_trace.py")
-_identity.install(_legacy)
-_handle_events = _load("fuzzycad_handle_event_trace", "fuzzycad_handle_event_trace.py")
-_handle_events.install(_legacy)
+
+if DEV_MODE:
+    _debug = _load("fuzzycad_debug_monitor", "fuzzycad_debug_monitor.py")
+    _debug.install(_legacy)
+    _values = _load("fuzzycad_value_trace", "fuzzycad_value_trace.py")
+    _values.install(_legacy)
+    _identity = _load("fuzzycad_accept_identity_trace", "fuzzycad_accept_identity_trace.py")
+    _identity.install(_legacy)
+    _handle_events = _load("fuzzycad_handle_event_trace", "fuzzycad_handle_event_trace.py")
+    _handle_events.install(_legacy)
+
 _fillet_live = _load("fuzzycad_fillet_input_sync", "fuzzycad_fillet_input_sync.py")
 _fillet_live.install(_legacy)
 _visuals = _load("fuzzycad_unified_visuals", "fuzzycad_unified_visuals.py")
@@ -63,10 +70,16 @@ _move_polish = _load("fuzzycad_move_scope_polish", "fuzzycad_move_scope_polish.p
 _move_polish.install(_legacy)
 _contrast = _load("fuzzycad_visual_contrast", "fuzzycad_visual_contrast.py")
 _contrast.install(_legacy)
+
+# Install exact opacity preservation inside startup hygiene/persistence so an
+# interrupted previous session is restored before saved marks are rehydrated.
+_opacity = _load("fuzzycad_opacity_guard", "fuzzycad_opacity_guard.py")
+_opacity.install(_legacy)
 _hygiene = _load("fuzzycad_startup_hygiene", "fuzzycad_startup_hygiene.py")
 _hygiene.install(_legacy)
 _store = _load("fuzzycad_persistence", "fuzzycad_persistence.py")
 _store.install(_legacy)
+
 _outline = _load("fuzzycad_outline_only_candidates", "fuzzycad_outline_only_candidates.py")
 _outline.install(_legacy)
 _fillet_color = _load("fuzzycad_fillet_highlight", "fuzzycad_fillet_highlight.py")
@@ -75,8 +88,11 @@ _groups = _load("fuzzycad_proposal_groups", "fuzzycad_proposal_groups.py")
 _groups.install(_legacy)
 _stages = _load("fuzzycad_stage_ui", "fuzzycad_stage_ui.py")
 _stages.install(_legacy)
-_perf = _load("fuzzycad_perf_trace", "fuzzycad_perf_trace.py")
-_perf.install(_legacy)
+
+if DEV_MODE:
+    _perf = _load("fuzzycad_perf_trace", "fuzzycad_perf_trace.py")
+    _perf.install(_legacy)
+
 _tuning = _load("fuzzycad_sketch_tuning", "fuzzycad_sketch_tuning.py")
 _tuning.install(_legacy)
 _scaffold = _load("fuzzycad_surface_scaffold", "fuzzycad_surface_scaffold.py")
@@ -92,10 +108,8 @@ _visual_system.install(_legacy)
 _reopen = _load("fuzzycad_card_manipulator_reopen", "fuzzycad_card_manipulator_reopen.py")
 _reopen.install(_legacy)
 
-# Compare used to be implemented by several successive patches that all owned
-# the same Fusion command id. Keep those files for history, but install only the
-# consolidated implementation below. Placement preserves the source orientation,
-# while the viewport uses the complete BRep for each of the two alternatives.
+# Compare owns one consolidated command path. Placement preserves source
+# orientation and the viewport keeps the complete BRep for both alternatives.
 _compare = _load("fuzzycad_compare_stable", "fuzzycad_compare_stable.py")
 _compare.install(_legacy)
 _compare_orientation = _load(
@@ -107,10 +121,19 @@ _compare_full = _load(
     "fuzzycad_compare_full_preview.py")
 _compare_full.install(_legacy)
 
+# Persistent graphics are split per mark after all renderers (including Compare)
+# are finalized. This keeps unrelated questions from rebuilding each other.
+_incremental = _load("fuzzycad_incremental_render", "fuzzycad_incremental_render.py")
+_incremental.install(_legacy)
+
 _hydrate = _load("fuzzycad_persistence_hydration", "fuzzycad_persistence_hydration.py")
 _hydrate.install(_legacy)
 _panel_resync = _load("fuzzycad_panel_state_resync", "fuzzycad_panel_state_resync.py")
 _panel_resync.install(_legacy)
+_reference = _load("fuzzycad_reference_relink", "fuzzycad_reference_relink.py")
+_reference.install(_legacy)
+_hover_guard = _load("fuzzycad_hover_guard", "fuzzycad_hover_guard.py")
+_hover_guard.install(_legacy)
 _compare_focus = _load(
     "fuzzycad_compare_card_focus",
     "fuzzycad_compare_card_focus.py")
