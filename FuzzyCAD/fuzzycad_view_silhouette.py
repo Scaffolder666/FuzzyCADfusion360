@@ -1,20 +1,12 @@
 """View-dependent silhouette overlay for FuzzyCAD proposals.
 
-Topology edges are a poor shape cue for smooth solids.  A cylinder can collapse
+Topology edges are a poor shape cue for smooth solids. A cylinder can collapse
 into two circular loops even though the viewer clearly perceives two longitudinal
-contours.  This module adds a Drawing-like apparent-contour layer for transformed
+contours. This module adds a Drawing-like apparent-contour layer for transformed
 proposals without meshing the body or filling its surfaces.
 
-The implementation is intentionally lightweight and generic:
-- only curved BRep faces are considered;
-- a small UV grid samples outward normals with SurfaceEvaluator;
-- zero crossings of normal dot view-direction approximate the apparent contour;
-- the contour is cached by body + quantized effective view direction;
-- proposal transforms are applied to the cached source-space contour;
-- camera changes redraw only this dedicated silhouette group.
-
-Visual hierarchy:
-  dark thin silhouette > quiet topology/scaffold > orange operation cue.
+The silhouette is geometry/view driven only. Sidebar state transmission is kept
+independent so numeric card updates never trigger an unrelated 3D rebuild.
 """
 
 import math
@@ -25,7 +17,6 @@ GROUP_ID = "FuzzyCAD_Silhouette"
 
 def install(m):
     adsk = m.adsk
-    old_send_state = m._send_state
     old_redraw_marks = m._redraw_marks
     old_run = m.run
     old_stop = m.stop
@@ -122,13 +113,6 @@ def install(m):
             return adsk.core.Vector3D.create(0, 0, 1)
 
     def source_view(matrix):
-        """Return the view vector expressed in the proposal source coordinates.
-
-        For affine transform M, a proposed normal is proportional to M^-T n.
-        The silhouette condition (M^-T n) dot v = 0 is equivalent to
-        n dot (M^-1 v) = 0, so we can find the contour on the source BRep and
-        transform only the resulting polylines.
-        """
         v = camera_vector()
         if matrix is not None:
             try:
@@ -179,8 +163,6 @@ def install(m):
         if a is None or b is None:
             return None
         p0, s0 = a; p1, s1 = b
-        # Only true sign crossings are used.  This avoids the degenerate case
-        # where the whole face is nearly tangent to the view direction.
         if s0 == 0.0:
             s0 = 1.0e-12
         if s1 == 0.0:
@@ -314,8 +296,6 @@ def install(m):
         curves = contour_for_body(body, matrix)
         for i, poly in enumerate(curves):
             try:
-                # Apparent contour is intentionally crisp-ish and single-stroke;
-                # the hand-drawn proposal topology remains visible underneath.
                 m._sketchy(group, transform_poly(poly, matrix), SILHOUETTE_RGB, 0.0,
                            mark.get("id", 1) * 61001 + seed_offset + i,
                            weight=1, strokes=1)
@@ -354,24 +334,18 @@ def install(m):
 
     m._redraw_view_silhouettes = redraw_silhouettes
 
-    def send_state(*args, **kwargs):
-        result = old_send_state(*args, **kwargs)
-        redraw_silhouettes(False)
-        return result
-
+    # Persistent-geometry redraws remain a valid silhouette invalidation point.
+    # Sending state to the HTML palette is deliberately NOT one.
     def redraw_marks(*args, **kwargs):
         result = old_redraw_marks(*args, **kwargs)
         redraw_silhouettes(False)
         return result
 
-    m._send_state = send_state
     m._redraw_marks = redraw_marks
 
     class CameraChanged(adsk.core.CameraEventHandler):
         def notify(self, args):
             now = time.perf_counter()
-            # Camera events can fire continuously while orbiting.  Rebuild only
-            # this small silhouette overlay and cap it to ~8 Hz.
             if now - state["last_camera_draw"] < 0.12:
                 return
             state["last_camera_draw"] = now
@@ -388,7 +362,7 @@ def install(m):
         except Exception as exc:
             log("camera handler unavailable: {}".format(exc))
         redraw_silhouettes(True)
-        log("VIEW SILHOUETTE READY: thin apparent contours react to camera orientation")
+        log("READY: silhouette reacts to geometry/camera changes, not panel state sends")
         return result
 
     def stop(context):
