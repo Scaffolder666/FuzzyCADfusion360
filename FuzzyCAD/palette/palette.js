@@ -40,7 +40,7 @@
 
   var GLYPH = {
     move: "⇄", rotate: "↻", scale: "⤢", scale_axis: "⇥",
-    axis_rotate: "⟳", extrude: "⤒", fillet: "◜", note: "◈"
+    axis_rotate: "⟳", extrude: "⤒", fillet: "◜", note: "◈", compare: "⑂"
   };
 
   var MTYPES = [
@@ -50,8 +50,6 @@
   ];
 
   function canonicalType(t) {
-    // Old builds called the conflict state "alternative". Render old cards with
-    // the new taxonomy without mutating their stored data.
     if (t === "alternative") return "conflict";
     if (t === "constraint" || t === "conflict") return t;
     return "need_input";
@@ -64,17 +62,11 @@
     editTimers[k] = setTimeout(function () { send("edit", { id: id, key: key, value: value }); }, 120);
   }
 
-  /* Move hover animation.
-   * Keep the browser responsible only for timing. Fusion receives a throttled
-   * normalized progress value and updates the CustomGraphics BRep on its main thread.
-   */
   var hoverMoveTimer = null;
   var hoverMoveId = null;
   var hoverMoveStarted = 0;
 
-  function easeMove(t) {
-    return t * t * (3 - 2 * t);
-  }
+  function easeMove(t) { return t * t * (3 - 2 * t); }
 
   function stopMoveHover(notifyFusion) {
     if (hoverMoveTimer) {
@@ -92,32 +84,87 @@
   function startMoveHover(mark) {
     if (!mark || mark.tool !== "move") return;
     if (hoverMoveId === mark.id && hoverMoveTimer) return;
-
     stopMoveHover(true);
     hoverMoveId = mark.id;
     hoverMoveStarted = performance.now();
     send("hoverMoveStart", { id: mark.id });
-
     function tick() {
       if (hoverMoveId !== mark.id) return;
       var elapsed = performance.now() - hoverMoveStarted;
       var cycle = elapsed % 1040;
       var t;
-      if (cycle < 720) {
-        t = easeMove(cycle / 720);
-      } else if (cycle < 940) {
-        t = 1.0;
-      } else {
-        t = 0.0;
-      }
+      if (cycle < 720) t = easeMove(cycle / 720);
+      else if (cycle < 940) t = 1.0;
+      else t = 0.0;
       send("hoverMoveFrame", { id: mark.id, t: t });
     }
-
     tick();
     hoverMoveTimer = setInterval(tick, 60);
   }
 
   function stop(ev) { ev.stopPropagation(); }
+
+  function svgThumb(lines) {
+    var svg = document.createElementNS("http://www.w3.org/2000/svg", "svg");
+    svg.setAttribute("viewBox", "0 0 100 70");
+    svg.setAttribute("class", "alt__svg");
+    (lines || []).forEach(function (poly) {
+      if (!poly || poly.length < 2) return;
+      var pl = document.createElementNS("http://www.w3.org/2000/svg", "polyline");
+      pl.setAttribute("points", poly.map(function (p) { return p[0] + "," + p[1]; }).join(" "));
+      pl.setAttribute("fill", "none");
+      pl.setAttribute("vector-effect", "non-scaling-stroke");
+      svg.appendChild(pl);
+    });
+    return svg;
+  }
+
+  function compareOptions(m) {
+    var wrap = document.createElement("div");
+    wrap.className = "compare";
+
+    var hint = document.createElement("div");
+    hint.className = "compare__hint";
+    hint.textContent = m.selected === 0 || m.selected === 1
+      ? "Previewing the selected alternative at " + (m.target_label || "the target")
+      : "Unresolved — both alternatives are visible at " + (m.target_label || "the target");
+    wrap.appendChild(hint);
+
+    var grid = document.createElement("div");
+    grid.className = "compare__grid";
+    (m.alternatives || []).slice(0, 2).forEach(function (alt, idx) {
+      var card = document.createElement("button");
+      card.type = "button";
+      card.className = "alt" + (m.selected === idx ? " alt--selected" : "");
+      card.addEventListener("click", function (ev) {
+        stop(ev);
+        send("compare_choice", { id: m.id, choice: idx });
+      });
+      var pic = document.createElement("div");
+      pic.className = "alt__pic";
+      pic.appendChild(svgThumb(alt.thumb || []));
+      var label = document.createElement("div");
+      label.className = "alt__label";
+      label.textContent = alt.name || ("Alternative " + (idx + 1));
+      var badge = document.createElement("div");
+      badge.className = "alt__badge";
+      badge.textContent = "Alternative " + (idx + 1);
+      card.appendChild(pic); card.appendChild(label); card.appendChild(badge);
+      grid.appendChild(card);
+    });
+    wrap.appendChild(grid);
+
+    var unresolved = document.createElement("button");
+    unresolved.type = "button";
+    unresolved.className = "compare__unresolved" + (m.selected === null || typeof m.selected === "undefined" ? " active" : "");
+    unresolved.textContent = "Keep unresolved";
+    unresolved.addEventListener("click", function (ev) {
+      stop(ev);
+      send("compare_choice", { id: m.id, choice: null });
+    });
+    wrap.appendChild(unresolved);
+    return wrap;
+  }
 
   function render() {
     stopMoveHover(true);
@@ -153,56 +200,61 @@
       var typeTag = document.createElement("span");
       typeTag.className = "typetag typetag--" + mtype;
       typeTag.textContent = mt.glyph + " " + mt.label;
-      head.appendChild(glyph);
-      head.appendChild(name);
-      head.appendChild(typeTag);
+      head.appendChild(glyph); head.appendChild(name); head.appendChild(typeTag);
       li.appendChild(head);
 
-      var fields = document.createElement("div");
-      fields.className = "mark__fields";
-      (m.fields || []).forEach(function (f) {
-        if (f.kind === "text") {
-          var ta = document.createElement("textarea");
-          ta.className = "fld__text";
-          ta.value = f.value;
-          ta.rows = 2;
-          ta.placeholder = "Type the constraint / note…";
-          ta.addEventListener("click", stop);
-          ta.addEventListener("input", function () { editLive(m.id, f.key, ta.value); });
-          fields.appendChild(ta);
-          return;
-        }
-        var row = document.createElement("label");
-        row.className = "fld";
-        var lab = document.createElement("span");
-        lab.className = "fld__label";
-        lab.textContent = f.label;
-        var inp = document.createElement("input");
-        inp.type = "number";
-        inp.value = f.value;
-        inp.className = "fld__input";
-        inp.addEventListener("click", stop);
-        inp.addEventListener("input", function () {
-          editLive(m.id, f.key, parseFloat(inp.value || "0"));
+      if (m.tool === "compare") {
+        li.appendChild(compareOptions(m));
+      } else {
+        var fields = document.createElement("div");
+        fields.className = "mark__fields";
+        (m.fields || []).forEach(function (f) {
+          if (f.kind === "text") {
+            var ta = document.createElement("textarea");
+            ta.className = "fld__text";
+            ta.value = f.value;
+            ta.rows = 2;
+            ta.placeholder = "Type the constraint / note…";
+            ta.addEventListener("click", stop);
+            ta.addEventListener("input", function () { editLive(m.id, f.key, ta.value); });
+            fields.appendChild(ta);
+            return;
+          }
+          var row = document.createElement("label");
+          row.className = "fld";
+          var lab = document.createElement("span");
+          lab.className = "fld__label";
+          lab.textContent = f.label;
+          var inp = document.createElement("input");
+          inp.type = "number";
+          inp.value = f.value;
+          inp.className = "fld__input";
+          inp.addEventListener("click", stop);
+          inp.addEventListener("input", function () {
+            editLive(m.id, f.key, parseFloat(inp.value || "0"));
+          });
+          var unit = document.createElement("span");
+          unit.className = "fld__unit";
+          unit.textContent = f.unit;
+          row.appendChild(lab); row.appendChild(inp); row.appendChild(unit);
+          fields.appendChild(row);
         });
-        var unit = document.createElement("span");
-        unit.className = "fld__unit";
-        unit.textContent = f.unit;
-        row.appendChild(lab);
-        row.appendChild(inp);
-        row.appendChild(unit);
-        fields.appendChild(row);
-      });
-      li.appendChild(fields);
+        li.appendChild(fields);
+      }
 
       var acts = document.createElement("div");
       acts.className = "mark__acts";
-      var acceptLabel = m.tool === "note" ? "Accept" : "Accept (apply)";
-      acts.appendChild(btn(acceptLabel, "act act--apply", function (ev) {
+      var acceptLabel = m.tool === "note" ? "Accept" : (m.tool === "compare" ? "Confirm choice" : "Accept (apply)");
+      var apply = btn(acceptLabel, "act act--apply", function (ev) {
         stop(ev);
         stopMoveHover(true);
         send("accept", { id: m.id });
-      }));
+      });
+      if (m.tool === "compare" && !(m.selected === 0 || m.selected === 1)) {
+        apply.disabled = true;
+        apply.title = "Choose an alternative first";
+      }
+      acts.appendChild(apply);
       acts.appendChild(btn("Reject", "act act--no", function (ev) {
         stop(ev);
         stopMoveHover(true);
@@ -236,10 +288,7 @@
       cin.addEventListener("keydown", function (e) {
         if (e.key === "Enter") post.click();
       });
-      crow.appendChild(cin);
-      crow.appendChild(post);
-      cwrap.appendChild(crow);
-      li.appendChild(cwrap);
+      crow.appendChild(cin); crow.appendChild(post); cwrap.appendChild(crow); li.appendChild(cwrap);
 
       els.marks.appendChild(li);
     });
@@ -254,8 +303,6 @@
   }
 
   document.addEventListener("DOMContentLoaded", function () {
-    cache();
-    render();
-    send("ready", {});
+    cache(); render(); send("ready", {});
   });
 })();
