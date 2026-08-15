@@ -1,22 +1,19 @@
-"""Keep Fillet direct manipulation live without rebuilding real Fusion features per frame.
+"""Keep Fillet uncertainty visible continuously while throttling exact kernel work.
 
-The exact-candidate patch can build/delete a temporary fillet to validate and
-capture geometry. Doing that from inputChanged/executePreview is unsafe on large
-or imported models and can destabilize Fusion.
+The research interaction needs both layers:
+- a continuously visible hand-drawn/provisional rounding representation;
+- periodically refreshed exact Fusion geometry so collaborators can still inspect
+  the true rounded volume while dragging.
 
-The stability rule is therefore:
-- while dragging, update a lightweight hand-drawn rounding scaffold only;
-- keep the selected edge and rounded intent visibly emphasized in orange;
-- if an exact TemporaryBRep candidate already exists from a settle point, show it
-  underneath the same hand-drawn uncertainty scaffold;
-- never create/delete a real Fusion feature from draw() or the high-frequency
-  inputChanged path.
-
-This preserves FuzzyCAD's core uncertainty representation while reducing kernel
-work, instead of removing the visualization.
+The expensive exact candidate is therefore recomputed at a coarse interval, not
+on every inputChanged event.  Between exact refreshes the hand-drawn scaffold
+continues to follow the native manipulator immediately.
 """
 
+import time
+
 FILLET_MIN_CM = 0.01
+EXACT_REFRESH_SEC = 0.55
 MAX_STATIONS = 10
 ARC_STEPS = 8
 
@@ -27,6 +24,7 @@ def install(m):
     LegacyPreview = getattr(m, "_fuzzycad_legacy_preview", None)
     LegacyDrawFillet = getattr(m, "_fuzzycad_legacy_draw_fillet", None)
     old_run = m.run
+    state = {"last_exact": 0.0, "busy_exact": False, "last_amount": None}
 
     if LegacyPreview is not None:
         m.FuzzyPreview = LegacyPreview
@@ -42,8 +40,7 @@ def install(m):
         try:
             rgb = (225, 126, 38)
             weight = 2 if role == "affected_boundary" else 1
-            m._sketchy(group, pts, rgb, 0.0, seed,
-                       weight=weight, strokes=1)
+            m._sketchy(group, pts, rgb, 0.0, seed, weight=weight, strokes=1)
         except Exception:
             pass
 
@@ -108,8 +105,6 @@ def install(m):
                 except Exception:
                     continue
         elif edge and radius > 1e-8:
-            # Curved-edge fallback: a few tiny orange ticks keep the affected edge
-            # visually "rounding" without constructing any surface or kernel feature.
             n = len(edge)
             if n >= 2:
                 try:
@@ -133,17 +128,14 @@ def install(m):
             candidate = g.get("candidate_body")
             radius = g.get("candidate_radius")
             amount = float(mark.get("amount", 0.0))
-            exact_cached = (
-                candidate is not None and radius is not None and
-                abs(float(radius) - amount) <= 1e-7)
+            exact_cached = (candidate is not None and radius is not None and
+                            abs(float(radius) - amount) <= 1e-7)
 
             if exact_cached:
-                # A settled exact candidate is useful context, but it does not
-                # replace the provisional hand-drawn language.
                 try:
                     cg = group.addBRepBody(candidate)
                     cg.color = m._solid((190, 190, 186))
-                    cg.setOpacity(0.24, True)
+                    cg.setOpacity(0.26, True)
                 except Exception:
                     pass
                 for i, poly in enumerate(g.get("candidate_edges", []) or []):
@@ -153,12 +145,17 @@ def install(m):
                                    weight=1, strokes=1)
                     except Exception:
                         pass
+                for i, poly in enumerate(g.get("fillet_edges", []) or []):
+                    try:
+                        m._visual_stroke(group, poly, "affected_boundary",
+                                         mark.get("id", 1) * 900 + i,
+                                         size=float(mark.get("size", 3.0)))
+                    except Exception:
+                        pass
             else:
-                # Continuous hand-drawn proposed rounding during drag.
                 LegacyDrawFillet(group, mark, rgb, amp)
 
-            # Always keep the uncertainty/change layer visible, including when an
-            # exact candidate is cached underneath it.
+            # Hand-drawn uncertainty is always present, even on top of exact BRep.
             draw_uncertainty(group, mark)
 
         m._DRAW["fillet"] = draw_fillet
@@ -181,10 +178,29 @@ def install(m):
                 m._draw_one(group, mark)
             m._refresh_ghost()
             m._send_state()
-            # Fusion's command preview cycle owns repainting during drag; forcing
-            # activeViewport.refresh here can release the native manipulator.
         except Exception:
             pass
+
+    def maybe_refresh_exact(mark, force=False):
+        if mark is None or state["busy_exact"]:
+            return False
+        now = time.perf_counter()
+        amount = float(mark.get("amount", 0.0))
+        changed = (state["last_amount"] is None or
+                   abs(float(state["last_amount"]) - amount) > 1e-5)
+        if not force and (not changed or now - state["last_exact"] < EXACT_REFRESH_SEC):
+            return False
+        state["busy_exact"] = True
+        try:
+            ok = bool(m._compute_real(mark))
+            if ok:
+                state["last_exact"] = now
+                state["last_amount"] = amount
+            return ok
+        except Exception:
+            return False
+        finally:
+            state["busy_exact"] = False
 
     class FuzzyInputChanged(BaseInputChanged):
         def notify(self, args):
@@ -205,6 +221,10 @@ def install(m):
                             it.isMinimumValueInclusive = True
                         except Exception:
                             pass
+                    mark = live_mark()
+                    if mark is not None:
+                        maybe_refresh_exact(mark, force=True)
+                        draw_live(mark)
                     return
                 if cid != "d":
                     return
@@ -214,11 +234,11 @@ def install(m):
                 amount = max(float(m._val("d")), FILLET_MIN_CM)
                 mark["amount"] = amount
                 g = m._geom.get(mark.get("id"), {}) or {}
-                # Once the handle moves, the old exact candidate is no longer the
-                # proposed radius. Leave its BRep cached in memory, but mark it stale
-                # so it is not rendered until a later settle recomputes it.
+                # Old exact body remains cached but is marked stale until the
+                # throttled kernel refresh catches up with the current radius.
                 g["candidate_radius"] = None
                 g.pop("real", None)
+                maybe_refresh_exact(mark, force=False)
                 draw_live(mark)
             except Exception:
                 pass
