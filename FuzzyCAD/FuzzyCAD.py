@@ -143,6 +143,10 @@ _compare_focus = _load(
     "fuzzycad_compare_card_focus",
     "fuzzycad_compare_card_focus.py")
 _compare_focus.install(_legacy)
+_card_focus = _load(
+    "fuzzycad_card_focus_zoom",
+    "fuzzycad_card_focus_zoom.py")
+_card_focus.install(_legacy)
 _layout = _load("fuzzycad_layout_lock", "fuzzycad_layout_lock.py")
 _layout.install(_legacy)
 
