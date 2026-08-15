@@ -1,0 +1,34 @@
+.mark--reference-lost {
+  border-color: #e0b45b;
+  background: #fffdf7;
+}
+.mark--reference-lost:hover { background: #fffaf0; }
+
+.refwarn {
+  margin: 9px 0 7px;
+  padding: 8px 9px;
+  border: 1px solid #efd18a;
+  border-radius: 6px;
+  background: #fff8df;
+  color: #6e5317;
+}
+.refwarn__title { font-size: 11px; font-weight: 750; margin-bottom: 2px; }
+.refwarn__text { font-size: 10.5px; line-height: 1.4; }
+.refwarn__action {
+  margin-top: 7px;
+  padding: 5px 8px;
+  border: 1px solid #b78420;
+  border-radius: 5px;
+  background: #fff;
+  color: #8a6419;
+  font-size: 11px;
+  font-weight: 700;
+  cursor: pointer;
+}
+.refwarn__action:hover { background: #fff4ce; }
+
+.alt:disabled,
+.compare__unresolved:disabled {
+  opacity: .5;
+  cursor: default;
+}
