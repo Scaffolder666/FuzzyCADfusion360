@@ -1,14 +1,19 @@
-"""Treat a Compare alternative as its containing component/occurrence when possible.
+"""Treat a Compare alternative as its containing semantic group when possible.
 
 The connector is still picked on one face/edge, but the clicked body is only the
 anchor used to discover the alternative scope:
 - body in an assembly occurrence -> all BRep bodies in that occurrence;
 - body in a non-root component -> all BRep bodies in that component;
-- body in the root component -> that body only.
+- root-level body owned by one BaseFeature -> all result bodies of that BaseFeature;
+- otherwise -> the clicked body only.
+
+Fusion's Browser body folders/groups are presentation-only and are not exposed by
+the public Fusion API. After a derived link is broken, however, the imported bodies
+normally share the same BaseFeature. Treating that BaseFeature as the alternative
+therefore gives the expected grouped behavior without requiring Ctrl/multi-select.
 
 All bodies in the alternative receive the same connector placement transform, so
-multi-body alternatives preview and commit as one design option without requiring
-Ctrl/multi-selection.
+multi-body alternatives preview and commit as one design option.
 """
 
 import math
@@ -54,6 +59,8 @@ def install(m):
 
     def collection_items(coll):
         out = []
+        if coll is None:
+            return out
         try:
             for i in range(coll.count):
                 item = coll.item(i)
@@ -70,6 +77,42 @@ def install(m):
             return True
         ta, tb = token(a), token(b)
         return bool(ta and tb and ta == tb)
+
+    def base_feature_group(body):
+        """Return all result bodies owned by the clicked body's BaseFeature."""
+        if body is None:
+            return None
+        try:
+            feature = body.baseFeature
+        except Exception:
+            feature = None
+        if feature is None:
+            return None
+
+        # BaseFeature.bodies returns result bodies while the BaseFeature is not
+        # being edited, which is exactly the representation visible to Compare.
+        bodies = collection_items(getattr(feature, "bodies", None))
+        if not bodies:
+            return None
+
+        # Defensive: only claim the feature as scope if it actually contains the
+        # clicked body (or an equivalent entity token). This avoids swallowing an
+        # unrelated feature if Fusion returns a stale feature reference.
+        clicked_token = token(body)
+        belongs = any(b is body or (clicked_token and token(b) == clicked_token) for b in bodies)
+        if not belongs:
+            return None
+
+        try:
+            name = str(feature.name or "Base Feature")
+        except Exception:
+            name = "Base Feature"
+        return {
+            "kind": "base_feature",
+            "name": name,
+            "bodies": bodies,
+            "key": token(feature) or "basefeature:{}".format(id(feature)),
+        }
 
     def group_for_body(body):
         """Return one semantic alternative group around the clicked body."""
@@ -109,6 +152,13 @@ def install(m):
                     "bodies": bodies,
                     "key": token(comp) or "comp:{}".format(id(comp)),
                 }
+
+        # Break Link on a Derived feature commonly leaves all imported bodies in
+        # one BaseFeature. Fusion's Browser Group itself has no public model API,
+        # so this is the reliable geometry-level grouping signal available to us.
+        bf_group = base_feature_group(body)
+        if bf_group is not None and len(bf_group["bodies"]) > 1:
+            return bf_group
 
         return {
             "kind": "body",
@@ -358,4 +408,4 @@ def install(m):
     m._public = public
     m._accept = accept
     m._compare_alternative_group = alternative_group
-    log("READY: Compare automatically expands clicked bodies to their component/occurrence")
+    log("READY: Compare expands clicked bodies to occurrence/component/base-feature scope")
