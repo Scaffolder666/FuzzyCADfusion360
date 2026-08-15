@@ -27,8 +27,9 @@ bodies have too few topology edges, add view-dependent apparent contours, add
 operation-specific motion rulers and lightweight card-hover replays, centralize
 all known line hierarchy/colors/wobble into one semantic visual system, add
 Conflict Compare slots backed by Fusion Joint Origins or point targets, reopen
-native manipulators when unresolved Need Input cards are clicked, and restore
-the preferred FuzzyCAD panel layout on every add-in start.
+native manipulators when unresolved Need Input cards are clicked, harden Compare
+into a staged command with explicit focus/cleanup, and restore the preferred
+FuzzyCAD panel layout on every add-in start.
 """
 import importlib.util
 import os
@@ -116,6 +117,8 @@ _compare = _load("fuzzycad_compare_conflict", "fuzzycad_compare_conflict.py")
 _compare.install(_legacy)
 _reopen = _load("fuzzycad_card_manipulator_reopen", "fuzzycad_card_manipulator_reopen.py")
 _reopen.install(_legacy)
+_compare_safe = _load("fuzzycad_compare_interaction_fix", "fuzzycad_compare_interaction_fix.py")
+_compare_safe.install(_legacy)
 _layout = _load("fuzzycad_layout_lock", "fuzzycad_layout_lock.py")
 _layout.install(_legacy)
 
