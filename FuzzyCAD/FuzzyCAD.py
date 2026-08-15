@@ -93,20 +93,28 @@ _reopen = _load("fuzzycad_card_manipulator_reopen", "fuzzycad_card_manipulator_r
 _reopen.install(_legacy)
 
 # Compare used to be implemented by several successive patches that all owned
-# the same Fusion command id.  Keep those files for history, but install only
-# the consolidated implementation below.  A placement-only patch then keeps the
-# source alternative's existing orientation while moving its connector center.
+# the same Fusion command id. Keep those files for history, but install only the
+# consolidated implementation below. Placement preserves the source orientation,
+# while the viewport uses the complete BRep for each of the two alternatives.
 _compare = _load("fuzzycad_compare_stable", "fuzzycad_compare_stable.py")
 _compare.install(_legacy)
 _compare_orientation = _load(
     "fuzzycad_compare_preserve_orientation",
     "fuzzycad_compare_preserve_orientation.py")
 _compare_orientation.install(_legacy)
+_compare_full = _load(
+    "fuzzycad_compare_full_preview",
+    "fuzzycad_compare_full_preview.py")
+_compare_full.install(_legacy)
 
 _hydrate = _load("fuzzycad_persistence_hydration", "fuzzycad_persistence_hydration.py")
 _hydrate.install(_legacy)
 _panel_resync = _load("fuzzycad_panel_state_resync", "fuzzycad_panel_state_resync.py")
 _panel_resync.install(_legacy)
+_compare_focus = _load(
+    "fuzzycad_compare_card_focus",
+    "fuzzycad_compare_card_focus.py")
+_compare_focus.install(_legacy)
 _layout = _load("fuzzycad_layout_lock", "fuzzycad_layout_lock.py")
 _layout.install(_legacy)
 
