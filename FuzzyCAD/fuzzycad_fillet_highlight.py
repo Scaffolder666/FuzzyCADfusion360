@@ -1,9 +1,9 @@
 """Strengthen the Fillet visual language without changing other tools.
 
-The exact fillet candidate already exists as a transient BRep. This patch uses
-its cached fillet-boundary edges to identify corresponding candidate faces and
-overlays those rounded surfaces. Color/opacity/boundary styling are supplied by
-the centralized visual system.
+The exact fillet candidate is refreshed periodically by the stability layer.
+This patch colors its rounded surface only when that cached BRep matches the
+current radius. Between exact refreshes, the live hand-drawn orange scaffold
+remains authoritative and avoids presenting a stale exact surface as current.
 """
 
 
@@ -50,7 +50,19 @@ def install(m):
                 out.add(sig)
         return out
 
+    def exact_is_current(mark):
+        g = m._geom.get(mark.get("id"), {}) or {}
+        radius = g.get("candidate_radius")
+        if g.get("candidate_body") is None or radius is None:
+            return False
+        try:
+            return abs(float(radius) - float(mark.get("amount", 0.0))) <= 1e-7
+        except Exception:
+            return False
+
     def find_fillet_face_bodies(mark):
+        if not exact_is_current(mark):
+            return []
         g = m._geom.get(mark.get("id"), {})
         radius = g.get("candidate_radius")
         cached_radius = g.get("fillet_color_radius")
@@ -112,6 +124,10 @@ def install(m):
         return found
 
     def draw_colored_region(group, mark):
+        # The exact orange surface is a validation layer, not the provisional
+        # representation. Draw it only for a current exact candidate.
+        if not exact_is_current(mark):
+            return
         face_style = vstyle("affected_surface", {"rgb": (235, 132, 42), "opacity": 0.46})
         face_rgb = tuple(face_style.get("rgb", (235, 132, 42)))
         face_opacity = float(face_style.get("opacity", 0.46))
@@ -148,7 +164,7 @@ def install(m):
 
     def run(context):
         result = old_run(context)
-        log("FILLET COLOR READY: affected surface/boundary use central visual tokens")
+        log("FILLET COLOR READY: exact surface colors only when candidate is current")
         return result
 
     m.run = run
