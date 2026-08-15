@@ -71,10 +71,9 @@ _move_polish.install(_legacy)
 _contrast = _load("fuzzycad_visual_contrast", "fuzzycad_visual_contrast.py")
 _contrast.install(_legacy)
 
-# Install exact opacity preservation inside startup hygiene/persistence so an
-# interrupted previous session is restored before saved marks are rehydrated.
-_opacity = _load("fuzzycad_opacity_guard", "fuzzycad_opacity_guard.py")
-_opacity.install(_legacy)
+# Startup/persistence stay on the older, proven lifecycle. Opacity preservation
+# is reasserted later as a runtime-only display concern so command previews do
+# not write Design attributes.
 _hygiene = _load("fuzzycad_startup_hygiene", "fuzzycad_startup_hygiene.py")
 _hygiene.install(_legacy)
 _store = _load("fuzzycad_persistence", "fuzzycad_persistence.py")
@@ -86,8 +85,8 @@ _fillet_color = _load("fuzzycad_fillet_highlight", "fuzzycad_fillet_highlight.py
 _fillet_color.install(_legacy)
 _groups = _load("fuzzycad_proposal_groups", "fuzzycad_proposal_groups.py")
 _groups.install(_legacy)
-_opacity_final = _load("fuzzycad_opacity_finalize", "fuzzycad_opacity_finalize.py")
-_opacity_final.install(_legacy)
+_opacity_runtime = _load("fuzzycad_opacity_runtime", "fuzzycad_opacity_runtime.py")
+_opacity_runtime.install(_legacy)
 _stages = _load("fuzzycad_stage_ui", "fuzzycad_stage_ui.py")
 _stages.install(_legacy)
 
@@ -110,6 +109,9 @@ _visual_system.install(_legacy)
 _reopen = _load("fuzzycad_card_manipulator_reopen", "fuzzycad_card_manipulator_reopen.py")
 _reopen.install(_legacy)
 
+# Compare stays on the consolidated, already-tested command shell. The complete
+# BRep preview remains, but we deliberately keep the legacy shared graphics group
+# for this stability pass instead of overriding _clear/_group globally.
 _compare = _load("fuzzycad_compare_stable", "fuzzycad_compare_stable.py")
 _compare.install(_legacy)
 _compare_orientation = _load(
@@ -121,17 +123,12 @@ _compare_full = _load(
     "fuzzycad_compare_full_preview.py")
 _compare_full.install(_legacy)
 
-_incremental = _load("fuzzycad_incremental_render", "fuzzycad_incremental_render.py")
-_incremental.install(_legacy)
-
 _hydrate = _load("fuzzycad_persistence_hydration", "fuzzycad_persistence_hydration.py")
 _hydrate.install(_legacy)
 _panel_resync = _load("fuzzycad_panel_state_resync", "fuzzycad_panel_state_resync.py")
 _panel_resync.install(_legacy)
-_reference = _load("fuzzycad_reference_relink", "fuzzycad_reference_relink.py")
-_reference.install(_legacy)
-_reference_health = _load("fuzzycad_reference_health", "fuzzycad_reference_health.py")
-_reference_health.install(_legacy)
+_reference_warning = _load("fuzzycad_reference_warning", "fuzzycad_reference_warning.py")
+_reference_warning.install(_legacy)
 _hover_guard = _load("fuzzycad_hover_guard", "fuzzycad_hover_guard.py")
 _hover_guard.install(_legacy)
 _compare_focus = _load(
