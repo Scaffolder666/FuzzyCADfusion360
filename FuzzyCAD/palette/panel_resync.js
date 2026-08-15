@@ -1,8 +1,10 @@
-/* Ask Fusion for sidebar state more than once during palette startup.
+/* Ask Fusion for sidebar state during palette startup without disrupting hover.
  *
- * Palette HTML and Design/persistence hydration do not always become ready in the
- * same order. These requests are intentionally idempotent; Python only reloads
- * persisted state when its runtime mark list is still empty.
+ * Palette HTML and Design/persistence hydration can become ready in either order,
+ * so a few startup retries remain useful.  Do not request state every time the
+ * palette gains focus: moving the pointer from the viewport into the panel can
+ * focus the palette, trigger a full state render, and cancel the hover dwell just
+ * before replay starts. Document activation is already handled on the Python side.
  */
 (function () {
   "use strict";
@@ -13,7 +15,7 @@
         window.adsk.fusionSendData("request_state", "{}");
       }
     } catch (e) {
-      // The next scheduled request will retry.
+      // The next scheduled startup request will retry.
     }
   }
 
@@ -21,10 +23,5 @@
     [120, 450, 1100, 2400].forEach(function (delay) {
       window.setTimeout(requestState, delay);
     });
-  });
-
-  window.addEventListener("focus", requestState);
-  document.addEventListener("visibilitychange", function () {
-    if (!document.hidden) requestState();
   });
 })();
