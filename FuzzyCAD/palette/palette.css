@@ -90,16 +90,39 @@ html, body {
 }
 .fld__text:focus { outline: none; border-color: var(--blue); }
 
+/* Conflict / Compare: image-first choice. */
+.compare { margin: 10px 0 4px; }
+.compare__hint { font-size: 10.5px; line-height: 1.35; color: var(--muted); margin-bottom: 7px; }
+.compare__grid { display: grid; grid-template-columns: 1fr 1fr; gap: 7px; }
+.alt {
+  min-width: 0; padding: 0; overflow: hidden; border: 1px solid var(--line); border-radius: 7px;
+  background: #fff; cursor: pointer; color: var(--text); text-align: left;
+}
+.alt:hover { border-color: #b7a6cf; background: #fdfcff; }
+.alt--selected { border: 2px solid var(--t-conflict); box-shadow: 0 0 0 2px rgba(128,90,180,.10); }
+.alt__pic { height: 78px; display: flex; align-items: center; justify-content: center; background: #f8f8fa; border-bottom: 1px solid var(--line); }
+.alt__svg { width: 100%; height: 100%; stroke: #4e5660; stroke-width: 1.15; }
+.alt--selected .alt__svg { stroke: var(--t-conflict); stroke-width: 1.45; }
+.alt__label { padding: 6px 7px 2px; font-size: 11px; font-weight: 700; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.alt__badge { padding: 0 7px 6px; font-size: 9.5px; color: var(--muted); }
+.compare__unresolved {
+  width: 100%; margin-top: 7px; padding: 5px 7px; border: 1px dashed #c7bdD6; border-radius: 6px;
+  background: #fff; color: var(--t-conflict); font-size: 10.5px; font-weight: 650; cursor: pointer;
+}
+.compare__unresolved:hover, .compare__unresolved.active { background: #f5f1fa; border-style: solid; }
+
 .mark__acts { display: flex; gap: 6px; margin: 10px 0 4px; }
 .act {
   flex: 1; padding: 6px 4px; border: 1px solid var(--line); border-radius: 6px;
   background: #fff; font-size: 12px; font-weight: 600; cursor: pointer; color: var(--text);
 }
 .act:hover { background: var(--panel); }
+.act:disabled { opacity: .45; cursor: default; }
 .act--ok { border-color: var(--green); color: var(--green); }
 .act--no { border-color: #f2c7c1; color: var(--red); }
 .act--apply { background: var(--green); border-color: var(--green); color: #fff; }
 .act--apply:hover { filter: brightness(0.95); background: var(--green); }
+.act--apply:disabled:hover { filter: none; background: var(--green); }
 
 .mark__comments { margin-top: 8px; padding-top: 8px; border-top: 1px dashed var(--line); }
 .cmt {
