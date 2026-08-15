@@ -1,16 +1,9 @@
 """Progressive viewport visibility for persistent FuzzyCAD uncertainty.
 
-The persistent overview should stay legible when many unresolved decisions exist:
-- Move/Rotate/Scale/Axis Rotate/Extrude and Compare collapse to their 3D badge.
-- Fillet remains visible because its local cue overlaps the source geometry.
-- Note remains visible because the annotation itself is the information.
-- Clicking/editing a card reveals that mark; revealing another card collapses the
-  previous non-local proposal.
-- Confirm or switching creation tools returns the viewport to the overview.
-
-Live command previews are unchanged because they render in GROUP_PREVIEW. The
-existing opacity layer remains authoritative, so unresolved source bodies stay
-semi-transparent even while their proposal sketch is collapsed.
+The persistent overview stays compact, but hovering a proposal temporarily reveals
+its full proposed wireframe while the lightweight replay animation runs. This
+keeps three states readable at once: current geometry, the proposed destination,
+and the moving line-art replay between them.
 """
 
 
@@ -20,7 +13,7 @@ def install(m):
     CurrentPaletteHTMLHandler = m.PaletteHTMLHandler
 
     ALWAYS_VISIBLE = {"note", "fillet"}
-    state = {"revealed_id": None}
+    state = {"revealed_id": None, "hover_reveal_id": None}
 
     def is_revealed(mark):
         if mark is None:
@@ -36,12 +29,8 @@ def install(m):
             return False
 
     def draw_one(group, mark):
-        # Preview groups keep the full proposal. Only the persistent overview
-        # collapses non-local geometry.
         if not is_persistent_group(group) or is_revealed(mark):
             return old_draw_one(group, mark)
-
-        # Badge-only overview. Do not touch opacity here.
         if mark.get("status", "open") == "open":
             try:
                 m._draw_badge(group, mark)
@@ -73,7 +62,33 @@ def install(m):
         if state.get("revealed_id") is None:
             return
         state["revealed_id"] = None
+        state["hover_reveal_id"] = None
         if redraw:
+            try:
+                m._redraw_marks()
+            except Exception:
+                pass
+
+    def hover_reveal(mid):
+        try:
+            mid = int(mid)
+        except Exception:
+            return
+        # Only remember it as hover-owned when hover itself opened the proposal.
+        if state.get("revealed_id") != mid:
+            state["hover_reveal_id"] = mid
+            reveal(mid, True)
+        else:
+            state["hover_reveal_id"] = None
+
+    def hover_collapse(mid):
+        try:
+            mid = int(mid)
+        except Exception:
+            return
+        if state.get("hover_reveal_id") == mid and state.get("revealed_id") == mid:
+            state["hover_reveal_id"] = None
+            state["revealed_id"] = None
             try:
                 m._redraw_marks()
             except Exception:
@@ -98,29 +113,32 @@ def install(m):
             except Exception:
                 pass
 
-            # Explicit inspection/edit means "show me this uncertainty." A
-            # single revealed_id guarantees that opening one card collapses the
-            # previously inspected non-local proposal.
-            if action in ("focus", "editManipulator", "edit", "compare_choice"):
+            # Hover animation should show the actual proposed destination as a
+            # stationary sketch while a temporary sketch copy travels toward it.
+            if action in ("hoverMoveStart", "hoverOpStart"):
+                hover_reveal(data.get("id"))
+
+            elif action in ("hoverMoveEnd", "hoverOpEnd"):
+                hover_collapse(data.get("id"))
+
+            # Click/inspect/edit owns the reveal after hover ends.
+            elif action in ("focus", "editManipulator", "edit", "compare_choice"):
+                state["hover_reveal_id"] = None
                 reveal(data.get("id"), True)
 
-            # Starting another creation tool returns to the overview. The new
-            # tool still renders fully in GROUP_PREVIEW while it is being made.
             elif action == "tool":
                 collapse(True)
 
-            # Confirm terminates the current edit/creation command. Clear the
-            # reveal state first; the command destroy path performs the redraw,
-            # so we avoid an extra viewport refresh while a manipulator is live.
             elif action == "confirm":
                 collapse(False)
 
-            # Downstream accept/reject removes the mark and redraws the model.
             elif action in ("accept", "reject"):
                 try:
                     mid = int(data.get("id"))
                     if state.get("revealed_id") == mid:
                         state["revealed_id"] = None
+                    if state.get("hover_reveal_id") == mid:
+                        state["hover_reveal_id"] = None
                 except Exception:
                     pass
 
