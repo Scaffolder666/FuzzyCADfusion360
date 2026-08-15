@@ -1,15 +1,17 @@
 /* Extra card-hover replay for non-Move FuzzyCAD proposals.
- * Move keeps its existing animation.  These tools use the same interaction
- * convention while sending only normalized progress to Fusion.
+ * A short dwell distinguishes intentional inspection from simply moving the
+ * pointer across the panel. Once started, replay remains real-time.
  */
 (function () {
   "use strict";
 
   var SUPPORTED = { rotate:true, scale:true, scale_axis:true, axis_rotate:true, extrude:true };
   var timer = null;
+  var dwell = null;
   var hoverId = null;
   var hoverTool = null;
   var started = 0;
+  var active = false;
 
   function send(action, data) {
     if (window.adsk && typeof window.adsk.fusionSendData === "function") {
@@ -21,25 +23,25 @@
   function ease(t) { return t * t * (3 - 2 * t); }
 
   function stop(notifyFusion) {
+    if (dwell) { clearTimeout(dwell); dwell = null; }
     if (timer) { clearInterval(timer); timer = null; }
     var oldId = hoverId;
-    hoverId = null; hoverTool = null; started = 0;
-    if (notifyFusion !== false && oldId !== null) {
+    var wasActive = active;
+    hoverId = null; hoverTool = null; started = 0; active = false;
+    if (notifyFusion !== false && wasActive && oldId !== null) {
       send("hoverOpEnd", { id: oldId });
     }
   }
 
-  function start(mark) {
-    if (!mark || !SUPPORTED[mark.tool]) return;
-    if (hoverId === mark.id && timer) return;
-    stop(true);
-    hoverId = mark.id;
+  function begin(mark) {
+    if (!mark || hoverId !== mark.id) return;
+    active = true;
     hoverTool = mark.tool;
     started = performance.now();
     send("hoverOpStart", { id: mark.id, tool: mark.tool });
 
     function tick() {
-      if (hoverId !== mark.id) return;
+      if (hoverId !== mark.id || !active) return;
       var elapsed = performance.now() - started;
       var cycle = elapsed % 1180;
       var t;
@@ -50,16 +52,30 @@
     }
 
     tick();
-    // 80ms is intentionally calmer than the original Move replay and reduces
-    // Fusion viewport refresh pressure while still reading as motion.
     timer = setInterval(tick, 80);
+  }
+
+  function start(mark) {
+    if (!mark || !SUPPORTED[mark.tool] || mark.reference_lost) return;
+    if (hoverId === mark.id && (dwell || timer)) return;
+    stop(true);
+    hoverId = mark.id;
+    hoverTool = mark.tool;
+    dwell = setTimeout(function () {
+      dwell = null;
+      begin(mark);
+    }, 220);
   }
 
   function attach(marks) {
     var cards = document.querySelectorAll("#marks > .mark");
     Array.prototype.forEach.call(cards, function (card, i) {
       var mark = marks[i];
-      if (!mark || !SUPPORTED[mark.tool]) return;
+      if (!mark || !SUPPORTED[mark.tool] || mark.reference_lost) return;
+      /* Incremental state updates preserve DOM nodes. Never stack duplicate
+       * listeners when the same cards receive another state snapshot. */
+      if (card.getAttribute("data-hover-op-bound") === "1") return;
+      card.setAttribute("data-hover-op-bound", "1");
       card.title = "Hover to replay the proposed " + mark.tool.replace("_", " ") + "; click to focus";
       card.addEventListener("mouseenter", function () { start(mark); });
       card.addEventListener("mouseleave", function () {
