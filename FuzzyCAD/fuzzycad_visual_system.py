@@ -18,8 +18,11 @@ VISUAL_TOKENS = {
         "rgb": (0, 0, 0), "weight": 1, "strokes": 2,
         "wobble_ratio": 0.0, "wobble_min": 0.0, "wobble_max": 0.0,
     },
+    # Proposed topology remains visibly hand-drawn.  This is the persistent
+    # uncertainty language for Move/Rotate/Scale/Extrude and is intentionally
+    # separate from the stronger view silhouette and orange operation cues.
     "proposal_internal": {
-        "rgb": (0, 0, 0), "weight": 1.8, "strokes": 0,
+        "rgb": (0, 0, 0), "weight": 1.35, "strokes": 2,
         "wobble_ratio": 0.0028, "wobble_min": 0.0115, "wobble_max": 0.118,
     },
     "proposal_outer": {
@@ -145,8 +148,6 @@ def install(m):
         strokes = int(strokes if strokes is not None else 1)
         if strokes <= 0:
             return
-        # Crisp semantic strokes need only one pass; sketchy strokes may request
-        # more than one independent hand-drawn pass.
         if amp <= 1e-12:
             strokes = 1
         color_obj = m._solid(tuple(rgb))
@@ -173,8 +174,6 @@ def install(m):
             coords = adsk.fusion.CustomGraphicsCoordinates.create(flat)
             line = group.addLines(coords, list(range(n)), True)
             line.color = color_obj
-            # CustomGraphicsLines.weight is a floating-point value. Preserve the
-            # semantic token instead of truncating values such as 1.8 to 1.
             line.weight = max(0.1, float(weight if weight is not None else 1.0))
 
     def visual_stroke(group, pts, role, seed, size=3.0, amp=None,
@@ -217,7 +216,7 @@ def install(m):
 
     def run(context):
         result = old_run(context)
-        log("CENTRAL VISUAL SYSTEM READY: zero strokes disable a layer; fractional line weights preserved")
+        log("CENTRAL VISUAL SYSTEM READY: hand-drawn proposal strokes restored")
         return result
 
     m.run = run
