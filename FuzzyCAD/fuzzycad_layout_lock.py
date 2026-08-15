@@ -1,13 +1,8 @@
 """Reapply the preferred FuzzyCAD workspace layout on every add-in start.
 
-Fusion remembers palette layouts imperfectly across add-in reloads/documents.  This
-module treats the workspace arrangement as part of the FuzzyCAD interface:
-- FuzzyCAD Tools stays docked on the left at a useful rail width;
-- the collaboration/sidebar palette stays docked on the right;
-- TEXT COMMANDS stays docked at the bottom at a compact debug height.
-
-The layout is reapplied, not hard-locked: users can still resize panes during a
-session.  The next FuzzyCAD run restores the preferred arrangement.
+The study/runtime interface keeps FuzzyCAD Tools on the left and the
+collaboration panel on the right. Fusion's Text Commands palette is development
+instrumentation only and stays hidden unless FuzzyCAD.DEV_MODE is enabled.
 """
 
 
@@ -52,8 +47,6 @@ def install(m):
                 palette.dockingState = state
             except Exception:
                 pass
-        # Fusion can lock one dimension after docking. Try both APIs; whichever
-        # the current build permits will take effect.
         try:
             palette.width = int(width)
         except Exception:
@@ -65,7 +58,6 @@ def install(m):
             pass
 
     def find_native_browser(ui):
-        """Find the built-in Browser for diagnostics without moving native UI."""
         try:
             pals = ui.palettes
             for i in range(pals.count):
@@ -79,6 +71,32 @@ def install(m):
         except Exception:
             pass
         return None
+
+    def configure_text_commands(text):
+        if text is None:
+            return
+        dev = bool(getattr(m, "DEV_MODE", False))
+        try:
+            text.isVisible = dev
+        except Exception:
+            pass
+        if not dev:
+            return
+        bottom = dock_state("PaletteDockStateBottom")
+        if bottom is not None:
+            try:
+                text.dockingState = bottom
+            except Exception:
+                pass
+        try:
+            text.height = TEXT_HEIGHT
+        except Exception:
+            pass
+        try:
+            w = max(900, int(getattr(text, "width", 1200) or 1200))
+            text.setSize(w, TEXT_HEIGHT)
+        except Exception:
+            pass
 
     def apply_layout():
         ui = m._ui
@@ -105,34 +123,14 @@ def install(m):
 
         set_docked_width(tools, dock_state("PaletteDockStateLeft"), LEFT_WIDTH)
         set_docked_width(side, dock_state("PaletteDockStateRight"), RIGHT_WIDTH)
-
-        if text is not None:
-            try:
-                text.isVisible = True
-            except Exception:
-                pass
-            bottom = dock_state("PaletteDockStateBottom")
-            if bottom is not None:
-                try:
-                    text.dockingState = bottom
-                except Exception:
-                    pass
-            try:
-                text.height = TEXT_HEIGHT
-            except Exception:
-                pass
-            try:
-                w = max(900, int(getattr(text, "width", 1200) or 1200))
-                text.setSize(w, TEXT_HEIGHT)
-            except Exception:
-                pass
+        configure_text_commands(text)
 
         browser = find_native_browser(ui)
         try:
-            log("APPLY tools={}px left side={}px right text={}px bottom browser={}".format(
+            log("APPLY tools={}px left side={}px right text_visible={} browser={}".format(
                 getattr(tools, "width", -1) if tools else -1,
                 getattr(side, "width", -1) if side else -1,
-                getattr(text, "height", -1) if text else -1,
+                bool(getattr(text, "isVisible", False)) if text else False,
                 getattr(browser, "id", "not-found") if browser else "not-found"))
         except Exception:
             pass
@@ -141,16 +139,14 @@ def install(m):
 
     def run(context):
         result = old_run(context)
-        # A first pass immediately after palette creation, then one UI flush and
-        # a second pass. Fusion occasionally resolves docking geometry only after
-        # processing the first layout event.
         try:
             apply_layout()
             adsk.doEvents()
             apply_layout()
         except Exception:
             log("layout apply failed\n{}".format(m.traceback.format_exc()))
-        log("LAYOUT READY: left tools / right collaboration / bottom text commands")
+        log("LAYOUT READY: left tools / right collaboration / dev console={}".format(
+            bool(getattr(m, "DEV_MODE", False))))
         return result
 
     m.run = run
