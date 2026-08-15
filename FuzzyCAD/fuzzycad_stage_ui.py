@@ -4,6 +4,11 @@ Procedural progress (what to select/do next) belongs in the tool rail, while
 actual design decisions continue to use the separate FuzzyCAD decision popup.
 This keeps Axis Rotate and other staged tools legible without adding more Fusion
 command-panel UI.
+
+The stage card also exposes an optional Confirm action. Confirm simply ends the
+currently active FuzzyCAD/Fusion command through the same deferred main-thread
+termination path used when switching tools. Switching directly to another tool
+still works exactly as before and remains the fastest path.
 """
 
 import json
@@ -13,6 +18,7 @@ def install(m):
     adsk = m.adsk
     old_ensure_palettes = m._ensure_palettes
     CurrentFuzzyCommandCreated = m.FuzzyCommandCreated
+    CurrentPaletteHTMLHandler = m.PaletteHTMLHandler
     old_run = m.run
 
     def log(msg):
@@ -160,6 +166,36 @@ def install(m):
                 log("stage setup failed tool={}\n{}".format(self.cmd, m.traceback.format_exc()))
 
     m.FuzzyCommandCreated = FuzzyCommandCreated
+
+    class StagePaletteHTMLHandler(adsk.core.HTMLEventHandler):
+        """Adds a lightweight explicit finish path without changing tool switching.
+
+        The existing LaunchHandler always terminates the active command before
+        launching a requested tool. Firing that same custom event with an empty
+        command id therefore means: terminate only, launch nothing.
+        """
+        def __init__(self):
+            super().__init__()
+            self._delegate = CurrentPaletteHTMLHandler()
+
+        def notify(self, args):
+            action = None
+            try:
+                e = adsk.core.HTMLEventArgs.cast(args)
+                action = e.action
+            except Exception:
+                pass
+
+            if action == "confirm":
+                try:
+                    m._app.fireCustomEvent(m.LAUNCH_EVENT_ID, "")
+                except Exception:
+                    pass
+                return
+
+            self._delegate.notify(args)
+
+    m.PaletteHTMLHandler = StagePaletteHTMLHandler
 
     def run(context):
         result = old_run(context)
