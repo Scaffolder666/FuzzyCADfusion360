@@ -10,10 +10,37 @@ def install(m):
     adsk = m.adsk
     CurrentPaletteHTMLHandler = m.PaletteHTMLHandler
     old_focus_camera = m._focus_camera
-    ZOOM_FACTOR = 0.72
-    MAX_BODY_FRAMES = 5.0
-    MIN_BODY_FRAMES = 1.8
+
+    # Card focus should feel like inspection, not a camera jump.  Keep enough
+    # context around the object and never zoom out from the user's current view.
+    ZOOM_FACTOR = 0.78
+    MAX_BODY_FRAMES = 4.5
+    MIN_BODY_FRAMES = 1.9
+    BODY_TOOLS = {"move", "rotate", "scale", "scale_axis"}
     state = {"pending_edit_id": None}
+
+    def body_center(mark):
+        """Use the body center for whole-body operations.
+
+        The mark anchor can intentionally sit on a manipulator handle or another
+        local construction point.  Centering on the body makes a card click read
+        as "show me this object" while local operations still focus their exact
+        edge/face/annotation anchor.
+        """
+        try:
+            if mark.get("tool") not in BODY_TOOLS:
+                return None
+            body = m._body.get(mark.get("id"))
+            if body is None:
+                return None
+            bb = body.boundingBox
+            return [
+                (bb.minPoint.x + bb.maxPoint.x) * 0.5,
+                (bb.minPoint.y + bb.maxPoint.y) * 0.5,
+                (bb.minPoint.z + bb.maxPoint.z) * 0.5,
+            ]
+        except Exception:
+            return None
 
     def focus_mark(mark):
         if mark is None:
@@ -21,8 +48,9 @@ def install(m):
         try:
             viewport = m._app.activeViewport
             camera = viewport.camera
-            anchor = mark.get("anchor") or [0.0, 0.0, 0.0]
-            target = adsk.core.Point3D.create(float(anchor[0]), float(anchor[1]), float(anchor[2]))
+            target_xyz = body_center(mark) or mark.get("anchor") or [0.0, 0.0, 0.0]
+            target = adsk.core.Point3D.create(
+                float(target_xyz[0]), float(target_xyz[1]), float(target_xyz[2]))
 
             old_target = camera.target
             old_eye = camera.eye
@@ -36,9 +64,11 @@ def install(m):
             size = max(float(mark.get("size", 1.0) or 1.0), 0.2)
             desired = min(current * ZOOM_FACTOR, size * MAX_BODY_FRAMES)
             desired = max(desired, size * MIN_BODY_FRAMES)
-            desired = min(desired, current)  # never zoom out on a card click
+            desired = min(desired, current)  # a card click must never zoom out
             ratio = desired / current
 
+            # Preserve the exact view direction. Only retarget and move the eye
+            # along the existing view ray, which avoids disorienting rotations.
             camera.target = target
             camera.eye = adsk.core.Point3D.create(
                 target.x + vx * ratio,
@@ -68,10 +98,10 @@ def install(m):
 
     m._focus_mark_card = focus_mark
 
-    # The existing edit launcher calls m._focus_camera just before it opens the
-    # native manipulator. Mark the next such call so it gets the same gentle zoom
-    # instead of the older pan-only camera move. Other uses of _focus_camera keep
-    # their original behavior.
+    # The existing Need Input edit launcher calls m._focus_camera immediately
+    # before reopening the native manipulator. Mark that one call so the same
+    # focus+zoom behavior happens before edit mode; all unrelated camera calls
+    # retain their original behavior.
     def focus_camera(point):
         mid = state.get("pending_edit_id")
         if mid is not None:
@@ -103,8 +133,8 @@ def install(m):
                 pass
 
             if action == "focus":
-                # Note / Conflict / lost-reference inspection: consume the old
-                # pan-only action so it cannot overwrite this zoom immediately.
+                # Note / Conflict / lost-reference inspection. Consume the old
+                # pan-only action so it cannot immediately overwrite this zoom.
                 mark = m._find(data.get("id"))
                 if mark is not None and focus_mark(mark):
                     return
