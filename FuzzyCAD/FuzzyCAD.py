@@ -86,8 +86,6 @@ _fillet_color = _load("fuzzycad_fillet_highlight", "fuzzycad_fillet_highlight.py
 _fillet_color.install(_legacy)
 _groups = _load("fuzzycad_proposal_groups", "fuzzycad_proposal_groups.py")
 _groups.install(_legacy)
-# proposal_groups contains an older opacity helper. The exact manager already
-# understands Move-Together subjects, so reassert it after that patch installs.
 _opacity_final = _load("fuzzycad_opacity_finalize", "fuzzycad_opacity_finalize.py")
 _opacity_final.install(_legacy)
 _stages = _load("fuzzycad_stage_ui", "fuzzycad_stage_ui.py")
@@ -112,8 +110,6 @@ _visual_system.install(_legacy)
 _reopen = _load("fuzzycad_card_manipulator_reopen", "fuzzycad_card_manipulator_reopen.py")
 _reopen.install(_legacy)
 
-# Compare owns one consolidated command path. Placement preserves source
-# orientation and the viewport keeps the complete BRep for both alternatives.
 _compare = _load("fuzzycad_compare_stable", "fuzzycad_compare_stable.py")
 _compare.install(_legacy)
 _compare_orientation = _load(
@@ -125,8 +121,6 @@ _compare_full = _load(
     "fuzzycad_compare_full_preview.py")
 _compare_full.install(_legacy)
 
-# Persistent graphics are split per mark after all renderers (including Compare)
-# are finalized. This keeps unrelated questions from rebuilding each other.
 _incremental = _load("fuzzycad_incremental_render", "fuzzycad_incremental_render.py")
 _incremental.install(_legacy)
 
@@ -136,6 +130,8 @@ _panel_resync = _load("fuzzycad_panel_state_resync", "fuzzycad_panel_state_resyn
 _panel_resync.install(_legacy)
 _reference = _load("fuzzycad_reference_relink", "fuzzycad_reference_relink.py")
 _reference.install(_legacy)
+_reference_health = _load("fuzzycad_reference_health", "fuzzycad_reference_health.py")
+_reference_health.install(_legacy)
 _hover_guard = _load("fuzzycad_hover_guard", "fuzzycad_hover_guard.py")
 _hover_guard.install(_legacy)
 _compare_focus = _load(
