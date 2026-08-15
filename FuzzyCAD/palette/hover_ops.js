@@ -1,11 +1,14 @@
 /* Extra card-hover replay for non-Move FuzzyCAD proposals.
- * A short dwell distinguishes intentional inspection from simply moving the
- * pointer across the panel. Once started, replay remains real-time.
+ * Hover is only a lightweight preview of change tendency: wait briefly, move
+ * once toward the proposal, hold there while the pointer stays on the card, and
+ * disappear immediately on leave/click. It never expands persistent geometry.
  */
 (function () {
   "use strict";
 
   var SUPPORTED = { rotate:true, scale:true, scale_axis:true, axis_rotate:true, extrude:true };
+  var FRAME_MS = 90;
+  var FORWARD_MS = 900;
   var timer = null;
   var dwell = null;
   var hoverId = null;
@@ -43,21 +46,25 @@
     function tick() {
       if (hoverId !== mark.id || !active) return;
       var elapsed = performance.now() - started;
-      var cycle = elapsed % 1180;
-      var t;
-      if (cycle < 780) t = ease(cycle / 780);
-      else if (cycle < 1040) t = 1.0;
-      else t = 0.0;
-      send("hoverOpFrame", { id: mark.id, tool: mark.tool, t: t });
+      if (elapsed >= FORWARD_MS) {
+        send("hoverOpFrame", { id: mark.id, tool: mark.tool, t: 1.0 });
+        if (timer) { clearInterval(timer); timer = null; }
+        return;
+      }
+      send("hoverOpFrame", {
+        id: mark.id,
+        tool: mark.tool,
+        t: ease(elapsed / FORWARD_MS)
+      });
     }
 
     tick();
-    timer = setInterval(tick, 80);
+    timer = setInterval(tick, FRAME_MS);
   }
 
   function start(mark) {
     if (!mark || !SUPPORTED[mark.tool] || mark.reference_lost) return;
-    if (hoverId === mark.id && (dwell || timer)) return;
+    if (hoverId === mark.id && (dwell || timer || active)) return;
     stop(true);
     hoverId = mark.id;
     hoverTool = mark.tool;
@@ -76,11 +83,16 @@
        * listeners when the same cards receive another state snapshot. */
       if (card.getAttribute("data-hover-op-bound") === "1") return;
       card.setAttribute("data-hover-op-bound", "1");
-      card.title = "Hover to replay the proposed " + mark.tool.replace("_", " ") + "; click to focus";
+      card.title = "Hover to preview the proposed " + mark.tool.replace("_", " ") + "; click to inspect/edit";
       card.addEventListener("mouseenter", function () { start(mark); });
       card.addEventListener("mouseleave", function () {
         if (hoverId === mark.id) stop(true);
       });
+      /* Stop before the card's normal click handler focuses/opens the proposal,
+       * so replay graphics can never overlap the inspected geometry. */
+      card.addEventListener("click", function () {
+        if (hoverId === mark.id) stop(true);
+      }, true);
     });
   }
 
