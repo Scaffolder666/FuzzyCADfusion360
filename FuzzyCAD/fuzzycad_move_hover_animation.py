@@ -1,30 +1,23 @@
-"""Lightweight line-art hover animation for Move proposal cards.
+"""Move-card hover replay.
 
-Hover replay communicates movement by pushing a temporary wireframe copy of the
-current geometry toward the proposal. The committed body stays where it is, so
-the relationship between current and proposed states remains legible. No filled
-arrow or solid preview is added during hover.
-
-Interaction rule:
-- enter a Move card -> a thin line-art copy moves once toward the proposal;
-- stay hovered -> the line-art copy remains at the proposed position;
-- leave/click -> remove the replay immediately.
-
-The primary body uses a sparse subset of already-sampled edge polylines. Together
-bodies use cheap bounding-box wireframes. Graphics are built once and animation
-frames only update one CustomGraphicsGroup transform.
+Hover keeps the real proposed sketch visible, adds a separate thin wireframe copy
+that travels from the current position to the proposal, and keeps an orange
+movement arrow on screen. The committed body never moves.
 """
 
 import math
 import time
 
 HOVER_GROUP = "FuzzyCAD_HoverAnimation"
+HOVER_ARROW_GROUP = "FuzzyCAD_HoverDirectionArrow"
 ANIM_RGB = (68, 72, 76)
 ANIM_WEIGHT = 1.25
-MAX_PRIMARY_POLYS = 34
+ARROW_RGB = (225, 126, 38)
+MAX_PRIMARY_POLYS = 30
+MAX_RELATED_POLYS = 12
 MAX_POINTS_PER_POLY = 14
-FRAME_INTERVAL_SEC = 0.12       # ~8.3 viewport refreshes/sec
-FORWARD_SEC = 1.90              # slow, readable one-way motion
+FRAME_INTERVAL_SEC = 0.12
+FORWARD_SEC = 1.90
 
 
 def install(m):
@@ -36,7 +29,7 @@ def install(m):
     state = {
         "mid": None,
         "group": None,
-        "line_count": 0,
+        "arrow_group": None,
         "frame": 0,
         "started": 0.0,
         "last_refresh": 0.0,
@@ -49,41 +42,26 @@ def install(m):
         except Exception:
             pass
 
-    def clear_group():
-        try:
-            m._clear(HOVER_GROUP)
-        except Exception:
-            pass
-        # Clean up the old arrow group as well so stale graphics from a previous
-        # build cannot survive an add-in reload.
-        try:
-            m._clear("FuzzyCAD_HoverDirectionArrow")
-        except Exception:
-            pass
+    def clear_groups():
+        for gid in (HOVER_GROUP, HOVER_ARROW_GROUP):
+            try:
+                m._clear(gid)
+            except Exception:
+                pass
 
     def stop_animation(refresh_view=True):
-        had_animation = state["mid"] is not None or state["group"] is not None
-        clear_group()
+        had = state["mid"] is not None or state["group"] is not None or state["arrow_group"] is not None
+        clear_groups()
         state.update({
             "mid": None,
             "group": None,
-            "line_count": 0,
+            "arrow_group": None,
             "frame": 0,
             "started": 0.0,
             "last_refresh": 0.0,
         })
-        if had_animation and refresh_view:
+        if had and refresh_view:
             refresh()
-
-    def move_matrix(mark, t):
-        vec = mark.get("vec") or [0.0, 0.0, 0.0]
-        mat = adsk.core.Matrix3D.create()
-        mat.translation = adsk.core.Vector3D.create(
-            float(vec[0]) * t,
-            float(vec[1]) * t,
-            float(vec[2]) * t,
-        )
-        return mat
 
     def valid_body(body):
         if body is None:
@@ -93,7 +71,14 @@ def install(m):
         except Exception:
             return True
 
-    def decimate_poly(poly):
+    def move_matrix(mark, t):
+        vec = mark.get("vec") or [0.0, 0.0, 0.0]
+        mat = adsk.core.Matrix3D.create()
+        mat.translation = adsk.core.Vector3D.create(
+            float(vec[0]) * t, float(vec[1]) * t, float(vec[2]) * t)
+        return mat
+
+    def decimate(poly):
         if not poly or len(poly) < 2:
             return []
         if len(poly) <= MAX_POINTS_PER_POLY:
@@ -104,34 +89,61 @@ def install(m):
             out.append(poly[-1])
         return out[:MAX_POINTS_PER_POLY]
 
-    def bbox_polys(body):
+    def poly_length(poly):
+        total = 0.0
+        for i in range(1, len(poly)):
+            a, b = poly[i - 1], poly[i]
+            total += math.sqrt(sum((float(b[j]) - float(a[j])) ** 2 for j in range(3)))
+        return total
+
+    def choose_longest(polys, limit):
+        rows = [decimate(p) for p in polys if p and len(p) >= 2]
+        rows = [p for p in rows if len(p) >= 2]
+        rows.sort(key=poly_length, reverse=True)
+        return rows[:limit]
+
+    def primary_polys(mark):
+        rows = list((m._geom.get(mark.get("id"), {}) or {}).get("edges") or [])
+        return choose_longest(rows, MAX_PRIMARY_POLYS)
+
+    def related_polys(body):
+        """Use recognizable body edges, not bbox proxy sticks."""
         if not valid_body(body):
             return []
+        rows = []
         try:
-            bb = body.boundingBox
-            x0, y0, z0 = bb.minPoint.x, bb.minPoint.y, bb.minPoint.z
-            x1, y1, z1 = bb.maxPoint.x, bb.maxPoint.y, bb.maxPoint.z
-            p = [
-                (x0, y0, z0), (x1, y0, z0), (x1, y1, z0), (x0, y1, z0),
-                (x0, y0, z1), (x1, y0, z1), (x1, y1, z1), (x0, y1, z1),
-            ]
-            edges = ((0, 1), (1, 2), (2, 3), (3, 0),
-                     (4, 5), (5, 6), (6, 7), (7, 4),
-                     (0, 4), (1, 5), (2, 6), (3, 7))
-            return [[p[a], p[b]] for a, b in edges]
+            edges = body.edges
+            count = int(edges.count)
+            if count < 1:
+                return []
+            step = max(1, int(math.ceil(count / float(MAX_RELATED_POLYS))))
+            for i in range(0, count, step):
+                if len(rows) >= MAX_RELATED_POLYS:
+                    break
+                try:
+                    poly = m._sample_edge(edges.item(i), n=6)
+                    if poly and len(poly) >= 2:
+                        rows.append(poly)
+                except Exception:
+                    pass
         except Exception:
-            return []
+            pass
+        return choose_longest(rows, MAX_RELATED_POLYS)
 
-    def sparse_primary(mark, body):
-        polys = list((m._geom.get(mark.get("id"), {}) or {}).get("edges") or [])
-        if not polys:
-            return bbox_polys(body)
-        step = max(1, int(math.ceil(len(polys) / float(MAX_PRIMARY_POLYS))))
-        chosen = polys[::step][:MAX_PRIMARY_POLYS]
-        return [decimate_poly(poly) for poly in chosen if poly and len(poly) >= 2]
+    def animation_polys(mark, primary):
+        rows = list(primary_polys(mark))
+        if not rows:
+            try:
+                rows = related_polys(primary)
+            except Exception:
+                rows = []
+        if mark.get("move_scope") == "together":
+            for body in mark.get("related_bodies") or []:
+                rows.extend(related_polys(body))
+        return rows
 
     def add_polyline(group, poly):
-        pts = decimate_poly(poly)
+        pts = decimate(poly)
         if len(pts) < 2:
             return False
         try:
@@ -150,12 +162,58 @@ def install(m):
         except Exception:
             return False
 
-    def animation_polys(mark, primary):
-        rows = list(sparse_primary(mark, primary))
-        if mark.get("move_scope") == "together":
-            for body in mark.get("related_bodies") or []:
-                rows.extend(bbox_polys(body))
-        return rows
+    def body_center(body):
+        try:
+            bb = body.boundingBox
+            return (
+                (bb.minPoint.x + bb.maxPoint.x) * 0.5,
+                (bb.minPoint.y + bb.maxPoint.y) * 0.5,
+                (bb.minPoint.z + bb.maxPoint.z) * 0.5,
+            )
+        except Exception:
+            return (0.0, 0.0, 0.0)
+
+    def normalized(v):
+        n = math.sqrt(sum(float(x) * float(x) for x in v))
+        if n < 1e-9:
+            return None
+        return tuple(float(x) / n for x in v)
+
+    def add_arrow(mark, primary):
+        vec = tuple(float(x) for x in (mark.get("vec") or [0.0, 0.0, 0.0]))
+        direction = normalized(vec)
+        if direction is None:
+            return None
+        distance = math.sqrt(sum(x * x for x in vec))
+        if distance < 1e-6:
+            return None
+
+        group = m._group(HOVER_ARROW_GROUP)
+        if group is None:
+            return None
+
+        start = body_center(primary)
+        end = tuple(start[i] + vec[i] for i in range(3))
+        try:
+            m._sketchy(group, [start, end], ARROW_RGB, 0.0,
+                       mark.get("id", 1) * 77001, weight=2, strokes=1)
+
+            # Screen-facing V arrowhead.
+            right, up = m._camera_xy()
+            side = up
+            dot = abs(sum(direction[i] * side[i] for i in range(3)))
+            if dot > 0.88:
+                side = right
+            head = max(0.22, min(float(mark.get("size", 3.0) or 3.0) * 0.10, 0.75))
+            base = tuple(end[i] - direction[i] * head for i in range(3))
+            w = head * 0.48
+            p1 = tuple(base[i] + side[i] * w for i in range(3))
+            p2 = tuple(base[i] - side[i] * w for i in range(3))
+            m._sketchy(group, [p1, end, p2], ARROW_RGB, 0.0,
+                       mark.get("id", 1) * 77002, weight=2, strokes=1)
+        except Exception:
+            pass
+        return group
 
     def eased(t):
         t = max(0.0, min(1.0, float(t)))
@@ -172,7 +230,6 @@ def install(m):
             mid = int(mid)
         except Exception:
             return
-
         mark = m._find(mid)
         if mark is None or mark.get("tool") != "move":
             stop_animation()
@@ -182,30 +239,30 @@ def install(m):
             stop_animation()
             return
 
-        stop_animation(refresh_view=False)
+        stop_animation(False)
         group = m._group(HOVER_GROUP)
         if group is None:
             return
-
         count = 0
         for poly in animation_polys(mark, primary):
             if add_polyline(group, poly):
                 count += 1
         if count < 1:
-            clear_group()
+            clear_groups()
             return
 
+        arrow_group = add_arrow(mark, primary)
         now = time.perf_counter()
         try:
             group.transform = move_matrix(mark, 0.0)
         except Exception:
-            clear_group()
+            clear_groups()
             return
 
         state.update({
             "mid": mid,
             "group": group,
-            "line_count": count,
+            "arrow_group": arrow_group,
             "frame": 0,
             "started": now,
             "last_refresh": 0.0,
@@ -219,7 +276,6 @@ def install(m):
             return
         if state["mid"] != mid or state["group"] is None:
             return
-
         mark = m._find(mid)
         if mark is None or mark.get("tool") != "move":
             stop_animation()
@@ -262,24 +318,22 @@ def install(m):
                 animation_frame(data.get("id"), data.get("t", 0.0))
                 return
             if action == "hoverMoveEnd":
-                if state["mid"] == data.get("id") or str(state["mid"]) == str(data.get("id")):
+                if str(state["mid"]) == str(data.get("id")):
                     stop_animation()
                 return
-
             if action in ("editManipulator", "accept", "reject", "tool"):
                 stop_animation()
-
             self._delegate.notify(args)
 
     m.PaletteHTMLHandler = PaletteHTMLHandler
 
     def run(context):
         result = old_run(context)
-        clear_group()
+        clear_groups()
         return result
 
     def stop(context):
-        stop_animation(refresh_view=False)
+        stop_animation(False)
         return old_stop(context)
 
     m.run = run
