@@ -13,7 +13,7 @@ import random
 
 
 VISUAL_TOKENS = {
-    "current_geometry": {"opacity": 0.08},
+    "current_geometry": {"opacity": 0.5},
     "current_outline": {
         "rgb": (0, 0, 0), "weight": 1, "strokes": 2,
         "wobble_ratio": 0.0, "wobble_min": 0.0, "wobble_max": 0.0,
