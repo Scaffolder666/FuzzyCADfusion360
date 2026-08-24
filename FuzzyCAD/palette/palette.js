@@ -33,6 +33,11 @@
     els.marks = document.getElementById("marks");
     els.empty = document.getElementById("empty");
     els.count = document.getElementById("count");
+    els.dumpState = document.getElementById("dumpState");
+    if (els.dumpState && !els.dumpState._wired) {
+      els.dumpState._wired = true;
+      els.dumpState.addEventListener("click", function () { send("dumpState", {}); });
+    }
     els.clearAll = document.getElementById("clearAll");
     if (els.clearAll && !els.clearAll._wired) {
       els.clearAll._wired = true;
