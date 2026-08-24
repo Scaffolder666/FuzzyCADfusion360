@@ -81,8 +81,23 @@ def install(m):
         except Exception:
             pass
 
+    def fill_body(group, body, opacity, matrix=None):
+        """A solid orange wash over the whole related body, so the coupling is
+        obvious at a glance rather than communicated by thin outlines alone."""
+        if body is None:
+            return
+        try:
+            cg = group.addBRepBody(body)
+            if matrix is not None:
+                cg.transform = matrix
+            cg.color = m._solid(ORANGE)
+            cg.setOpacity(opacity, True)
+        except Exception:
+            pass
+
     def draw_outline(group, item, matrix=None, moved=False):
         rgb = ORANGE
+        fill_body(group, item.get("body"), 0.5 if moved else 0.4, matrix)
         for i, loop in enumerate(item.get("edges", [])):
             pts = transform_points(loop, matrix) if matrix is not None else loop
             if len(pts) >= 2:

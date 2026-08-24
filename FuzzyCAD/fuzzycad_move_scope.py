@@ -104,15 +104,35 @@ def install(m):
             getattr(primary, "name", "body"), len(result), tol * 10.0, dt))
         return result
 
+    # Move + rotate handles for the transform command. Hidden until the reviewer
+    # has answered the scope question, so a related change is a deliberate choice.
+    MANIP_IDS = ("mX", "mY", "mZ", "rX", "rY", "rZ", "sc")
+
     def scope_value():
+        """'together', 'only', or None when the reviewer has not chosen yet."""
         try:
             it = m._inputs.itemById("moveScope") if m._inputs else None
             selected = it.selectedItem if it else None
-            if selected and selected.name.startswith("Together"):
-                return "together"
+            if selected:
+                if selected.name.startswith("Move together"):
+                    return "together"
+                if selected.name.startswith("Only"):
+                    return "only"
         except Exception:
             pass
-        return "only"
+        return None
+
+    def hide_manipulators():
+        if m._inputs is None:
+            return
+        for cid in MANIP_IDS:
+            it = m._inputs.itemById(cid)
+            if it is not None:
+                try:
+                    it.isVisible = False
+                    it.isEnabled = False
+                except Exception:
+                    pass
 
     def set_scope_ui(count):
         if m._inputs is None:
@@ -126,8 +146,8 @@ def install(m):
             info.isVisible = visible
             if visible:
                 info.formattedText = (
-                    "<b>{}</b> nearby part{} highlighted. Choose the Move scope once; "
-                    "the set stays cached while you drag.".format(
+                    "<b>{}</b> nearby part{} highlighted in orange. Choose whether they move "
+                    "with this one — the handles appear once you pick.".format(
                         count, " is" if count == 1 else "s are"))
 
     def relation_data(mark=None):
@@ -180,7 +200,7 @@ def install(m):
         if group is None:
             return
         for body in related:
-            add_body_graphic(group, body, color=HILITE_RGB, opacity=0.10)
+            add_body_graphic(group, body, color=HILITE_RGB, opacity=0.45)
         question_text(group, m._pending.get("anchor", [0, 0, 0]), len(related))
         try:
             m._app.activeViewport.refresh()
@@ -217,7 +237,7 @@ def install(m):
         if mark is None:
             return None
         mark["related_bodies"] = list(m._pending.get("related_bodies", []))
-        mark["move_scope"] = m._pending.get("move_scope", scope_value())
+        mark["move_scope"] = m._pending.get("move_scope") or scope_value() or "only"
         return mark
 
     def redraw_scope():
@@ -232,7 +252,7 @@ def install(m):
                 if m._pending:
                     related = m._pending.get("related_bodies", [])
                     for body in related:
-                        add_body_graphic(group, body, color=HILITE_RGB, opacity=0.10)
+                        add_body_graphic(group, body, color=HILITE_RGB, opacity=0.45)
                     if related:
                         question_text(group, m._pending.get("anchor", [0, 0, 0]), len(related))
         m._refresh_ghost()
@@ -261,17 +281,39 @@ def install(m):
                     primary = m._pending.get("body")
                     related = detect_related(primary)
                     m._pending["related_bodies"] = related
-                    m._pending["move_scope"] = "only"
-                    set_scope_ui(len(related))
                     if related:
+                        # Related parts nearby: make the coupling visible and force
+                        # a deliberate scope choice. super().notify already placed
+                        # the handles for the selection, so hide them again until
+                        # the reviewer answers Only / Together.
+                        m._pending["move_scope"] = None
+                        m._pending["scope_chosen"] = False
+                        hide_manipulators()
+                        set_scope_ui(len(related))
                         draw_relation_selection()
+                    else:
+                        # Nothing coupled: behave like a plain move, handles ready.
+                        m._pending["move_scope"] = "only"
+                        m._pending["scope_chosen"] = True
+                        set_scope_ui(0)
                     return
 
                 if cid == "moveScope" and m._pending:
-                    m._pending["move_scope"] = scope_value()
-                    mark = attach_to_live_mark()
+                    choice = scope_value()
+                    if choice is None:
+                        # Still on the "Choose…" placeholder — keep handles hidden.
+                        hide_manipulators()
+                        return
+                    m._pending["move_scope"] = choice
+                    m._pending["scope_chosen"] = True
+                    # Now reveal the move/rotate handles.
+                    try:
+                        m._place_manipulator()
+                    except Exception:
+                        pass
+                    attach_to_live_mark()
                     log("SCOPE={} related_count={}".format(
-                        m._pending["move_scope"], len(m._pending.get("related_bodies", []))))
+                        choice, len(m._pending.get("related_bodies", []))))
                     redraw_scope()
             except Exception:
                 log("input failed\n{}".format(m.traceback.format_exc()))
@@ -305,9 +347,10 @@ def install(m):
                 info.isFullWidth = True
                 info.isVisible = False
                 scope = inputs.addRadioButtonGroupCommandInput(
-                    "moveScope", "Move highlighted parts together?")
-                scope.listItems.add("Only this", True)
-                scope.listItems.add("Together", False)
+                    "moveScope", "Move scope — pick before dragging")
+                scope.listItems.add("Choose…", True)
+                scope.listItems.add("Only this part", False)
+                scope.listItems.add("Move together", False)
                 scope.isVisible = False
             except Exception:
                 log("could not add move scope UI\n{}".format(m.traceback.format_exc()))
