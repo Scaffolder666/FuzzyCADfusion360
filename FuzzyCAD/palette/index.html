@@ -14,7 +14,12 @@
   </header>
 
   <section class="list">
-    <div class="list__head"><span id="count" class="chip">0 open questions</span></div>
+    <div class="list__head" style="display:flex;align-items:center;justify-content:space-between;gap:8px">
+      <span id="count" class="chip">0 open questions</span>
+      <button id="clearAll" type="button"
+        title="Delete every FuzzyCAD question stored in this document"
+        style="display:none;border:1px solid #e2b6b0;color:#d92f1c;background:#fff;font:600 11px/1 -apple-system,'Segoe UI',Roboto,sans-serif;padding:5px 9px;border-radius:6px;cursor:pointer;flex:none">Clear all</button>
+    </div>
     <ul id="marks" class="marks"></ul>
     <p id="empty" class="empty">
       No open questions yet.<br />

@@ -33,6 +33,27 @@
     els.marks = document.getElementById("marks");
     els.empty = document.getElementById("empty");
     els.count = document.getElementById("count");
+    els.clearAll = document.getElementById("clearAll");
+    if (els.clearAll && !els.clearAll._wired) {
+      els.clearAll._wired = true;
+      // Two-click confirm — deleting every stored question is irreversible and
+      // there is no browser confirm() dialog in the Fusion palette webview.
+      var armed = false, timer = null;
+      els.clearAll.addEventListener("click", function () {
+        if (!armed) {
+          armed = true;
+          els.clearAll.textContent = "Delete all?";
+          timer = setTimeout(function () {
+            armed = false; els.clearAll.textContent = "Clear all";
+          }, 3500);
+          return;
+        }
+        if (timer) clearTimeout(timer);
+        armed = false;
+        els.clearAll.textContent = "Clear all";
+        send("clearAll", {});
+      });
+    }
   }
 
   var GLYPH = {
@@ -207,6 +228,7 @@
 
     els.count.textContent = state.marks.length + (state.marks.length === 1 ? " open question" : " open questions");
     els.empty.style.display = state.marks.length ? "none" : "block";
+    if (els.clearAll) els.clearAll.style.display = state.marks.length ? "inline-block" : "none";
     els.marks.innerHTML = "";
 
     state.marks.forEach(function (m) {

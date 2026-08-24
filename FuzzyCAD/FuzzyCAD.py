@@ -171,5 +171,11 @@ _dependency.install(_legacy)
 _reconcile = _load("fuzzycad_state_reconcile", "fuzzycad_state_reconcile.py")
 _reconcile.install(_legacy)
 
+# "Clear all" panel action: permanently delete this document's stored FuzzyCAD
+# uncertainty (the persistence attributes + overlays + in-memory marks). Loaded
+# last so its palette handler is outermost and intercepts the action first.
+_clear_all = _load("fuzzycad_clear_all", "fuzzycad_clear_all.py")
+_clear_all.install(_legacy)
+
 run = _legacy.run
 stop = _legacy.stop
