@@ -158,5 +158,12 @@ _silhouette_visibility.install(_legacy)
 _layout = _load("fuzzycad_layout_lock", "fuzzycad_layout_lock.py")
 _layout.install(_legacy)
 
+# Soft dependency prompts: after a Scale/Extrude is accepted, ask a follow-up
+# "have you considered the neighbouring parts?" and tint the affected bodies
+# until that question is resolved. Loaded last so its _accept/_redraw wrappers
+# sit outermost over the commit + visual chain.
+_dependency = _load("fuzzycad_dependency_prompts", "fuzzycad_dependency_prompts.py")
+_dependency.install(_legacy)
+
 run = _legacy.run
 stop = _legacy.stop
