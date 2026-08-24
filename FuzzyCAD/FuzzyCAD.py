@@ -165,5 +165,11 @@ _layout.install(_legacy)
 _dependency = _load("fuzzycad_dependency_prompts", "fuzzycad_dependency_prompts.py")
 _dependency.install(_legacy)
 
+# State reconciliation: outermost redraw wrapper. Reclaims ghost bodies left
+# semi-transparent after a rebuild invalidated their restore proxy, and clears
+# stray idle PREVIEW graphics, keeping the 3D view in sync with the open marks.
+_reconcile = _load("fuzzycad_state_reconcile", "fuzzycad_state_reconcile.py")
+_reconcile.install(_legacy)
+
 run = _legacy.run
 stop = _legacy.stop
