@@ -310,10 +310,20 @@ def install(m):
             base_feats = comp.features.baseFeatures
             bf = base_feats.add()
             bf.startEdit()
-            tool_body = comp.bRepBodies.add(cyl, bf)
+            comp.bRepBodies.add(cyl, bf)
             bf.finishEdit()
+            # The body proxy returned during the edit is invalidated by
+            # finishEdit ("ALL_TOOL_BODY_REFERENCE_LOST"). Re-fetch the base
+            # feature's own result body for the combine.
             tools = adsk.core.ObjectCollection.create()
-            tools.add(tool_body)
+            try:
+                for i in range(bf.bodies.count):
+                    tools.add(bf.bodies.item(i))
+            except Exception:
+                pass
+            if tools.count < 1:
+                m._ui.messageBox("FuzzyCAD couldn't build the hole tool body.")
+                return False
             combos = comp.features.combineFeatures
             ci = combos.createInput(target, tools)
             ci.operation = adsk.fusion.FeatureOperations.CutFeatureOperation
