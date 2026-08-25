@@ -26,10 +26,13 @@ import random
 #  file; there is nothing to hunt for inside the functions below.)
 # ============================================================================
 FUZZY_ON        = True            # False -> fall straight back to the plain ghost
-BODY_OPACITY    = 0.01             # the real (clickable) body's fade, like the ghost
+HIDE_BODY       = False           # True -> hide the questioned body entirely, show only
+                                  #         its sketchy ghost (drops the crisp CAD edges)
+BODY_OPACITY    = 0.2             # the real body's fade when HIDE_BODY is False
 COPIES_PER_BODY = 6               # how many offset wireframe copies = the ghosting
-SCATTER         = 0.01            # copy offset, as a fraction of body size (bigger = more spread)
-LINE_WEIGHT     = 2.5             # ghost line thickness (try 0.6 thin .. 2.5 bold)
+SCATTER         = 0.03            # copy offset, as a fraction of body size (bigger = more spread)
+OVERSHOOT       = 0.05            # how far lines run PAST each corner (loosens sharp corners)
+LINE_WEIGHT     = 1.0             # ghost line thickness (try 0.6 thin .. 2.5 bold)
 GRAY_LIGHT      = 165             # lightest ghost copy (0=black .. 255=white)
 GRAY_DARK       = 45              # darkest ghost copy — copies fade across this range
 MAX_LINES       = 2400            # cost guard across all questioned bodies
@@ -45,6 +48,7 @@ def install(m):
 
     m._FUZZY_BOUNDARY = FUZZY_ON
     GID = "FuzzyCAD_FuzzyBoundary"
+    hidden = {}          # token -> body we set invisible, so we can restore it
 
     def log(msg):
         try:
@@ -81,6 +85,19 @@ def install(m):
         g = max(0, min(255, g))
         return (g, g, g)
 
+    def overshoot(poly, ext):
+        """Run each edge a little PAST its two endpoints so corners cross/overshoot
+        like a hand sketch instead of meeting at a precise point."""
+        if ext <= 0 or len(poly) < 2:
+            return poly
+
+        def past(a, b):     # a point ext beyond a, along the direction away from b
+            dx, dy, dz = a[0] - b[0], a[1] - b[1], a[2] - b[2]
+            d = math.sqrt(dx * dx + dy * dy + dz * dz) or 1.0
+            return (a[0] + dx / d * ext, a[1] + dy / d * ext, a[2] + dz / d * ext)
+
+        return [past(poly[0], poly[1])] + list(poly) + [past(poly[-1], poly[-2])]
+
     def stroke(grp, pts, rgb, seed, size):
         """One hand-drawn ghost line: the proposals' sketchy wobble, our grey."""
         vs = getattr(m, "_visual_stroke", None)
@@ -102,6 +119,12 @@ def install(m):
             pass
         if not getattr(m, "_FUZZY_BOUNDARY", True):
             return
+        # Reconcile hide/fade here too, so a resolved body is restored on any redraw
+        # (accept/reject, Inspector Repair) even if refresh_ghost didn't fire.
+        try:
+            apply_body_state()
+        except Exception:
+            pass
         bodies = questioned_bodies()
         if not bodies:
             return
@@ -115,6 +138,7 @@ def install(m):
             except Exception:
                 size = 3.0
             step = max(0.02, min(float(size) * SCATTER, 0.80))  # copy offset ~ body size
+            ext = max(0.0, min(float(size) * OVERSHOOT, 0.8))   # corner overshoot
             try:
                 loops = m._sample_edges(b.edges)
             except Exception:
@@ -134,7 +158,7 @@ def install(m):
                 for j, poly in enumerate(loops):
                     if drawn >= MAX_LINES:
                         break
-                    pts = [(q[0] + ox, q[1] + oy, q[2] + oz) for q in poly]
+                    pts = overshoot([(q[0] + ox, q[1] + oy, q[2] + oz) for q in poly], ext)
                     try:
                         stroke(grp, pts, rgb, (bi * 911 + k * 131 + j) & 0xffff, size)
                         drawn += 1
@@ -148,17 +172,55 @@ def install(m):
         except Exception:
             pass
 
-    def refresh_ghost():
-        old_refresh_ghost()
+    def body_tok(b):
+        try:
+            return b.entityToken
+        except Exception:
+            return id(b)
+
+    def apply_body_state():
+        """Hide the questioned bodies (so only the sketchy ghost shows, without the
+        real body's crisp CAD edges) or fade them, and restore any body that is no
+        longer questioned. Runs on every ghost refresh and every redraw, so a
+        resolved body always comes back."""
         if not getattr(m, "_FUZZY_BOUNDARY", True):
             return
-        # Soften the fade the base ghost applied: keep the body clearly present so
-        # the boundary blur -- not the transparency -- is what reads as uncertain.
-        for b in questioned_bodies():
+        want = questioned_bodies()
+        want_keys = set()
+        for b in want:
+            tok = body_tok(b)
+            want_keys.add(tok)
             try:
-                b.opacity = BODY_OPACITY
+                if HIDE_BODY:
+                    hidden[tok] = b
+                    b.isVisible = False
+                else:
+                    b.opacity = BODY_OPACITY
             except Exception:
                 pass
+        for tok in list(hidden.keys()):
+            if tok not in want_keys:
+                b = hidden.pop(tok)
+                try:
+                    if b.isValid:
+                        b.isVisible = True
+                except Exception:
+                    pass
+
+    def restore_all_visibility():
+        for tok in list(hidden.keys()):
+            b = hidden.pop(tok)
+            try:
+                if b.isValid:
+                    b.isVisible = True
+            except Exception:
+                pass
+
+    m._fuzzy_restore_visibility = restore_all_visibility
+
+    def refresh_ghost():
+        old_refresh_ghost()
+        apply_body_state()
 
     m._refresh_ghost = refresh_ghost
 
