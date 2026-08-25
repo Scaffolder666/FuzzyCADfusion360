@@ -158,8 +158,7 @@ def install(m):
         tint(tokens, True)
         try:
             m._ui.messageBox(
-                followup_text(tool, len(tokens)) + "\n\n"
-                "Nothing was changed automatically — this is just a check.",
+                followup_text(tool, len(tokens)),
                 "FuzzyCAD — dependency check",
                 adsk.core.MessageBoxButtonTypes.OKButtonType,
                 adsk.core.MessageBoxIconTypes.WarningIconType)
