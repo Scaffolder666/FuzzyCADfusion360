@@ -280,41 +280,20 @@ def install(m):
                         return
                     primary = m._pending.get("body")
                     related = detect_related(primary)
+                    # Keep the related set only for the passive highlight — the
+                    # "carry attached parts along?" decision is NOT made here. It
+                    # happens once, at accept (fuzzycad_dependent_follow), which
+                    # avoids the fragile hide/re-show of handles, the frozen
+                    # pre-move set, and asking the same thing twice. So the
+                    # manipulator shows immediately (super already placed it),
+                    # no scope radio is forced, and move_scope stays "only".
                     m._pending["related_bodies"] = related
-                    if related:
-                        # Related parts nearby: make the coupling visible and force
-                        # a deliberate scope choice. super().notify already placed
-                        # the handles for the selection, so hide them again until
-                        # the reviewer answers Only / Together.
-                        m._pending["move_scope"] = None
-                        m._pending["scope_chosen"] = False
-                        hide_manipulators()
-                        set_scope_ui(len(related))
-                        draw_relation_selection()
-                    else:
-                        # Nothing coupled: behave like a plain move, handles ready.
-                        m._pending["move_scope"] = "only"
-                        m._pending["scope_chosen"] = True
-                        set_scope_ui(0)
-                    return
-
-                if cid == "moveScope" and m._pending:
-                    choice = scope_value()
-                    if choice is None:
-                        # Still on the "Choose…" placeholder — keep handles hidden.
-                        hide_manipulators()
-                        return
-                    m._pending["move_scope"] = choice
+                    m._pending["move_scope"] = "only"
                     m._pending["scope_chosen"] = True
-                    # Now reveal the move/rotate handles.
-                    try:
-                        m._place_manipulator()
-                    except Exception:
-                        pass
-                    attach_to_live_mark()
-                    log("SCOPE={} related_count={}".format(
-                        choice, len(m._pending.get("related_bodies", []))))
-                    redraw_scope()
+                    set_scope_ui(0)               # keep the scope radio hidden
+                    if related:
+                        draw_relation_selection()  # passive highlight only
+                    return
             except Exception:
                 log("input failed\n{}".format(m.traceback.format_exc()))
 
