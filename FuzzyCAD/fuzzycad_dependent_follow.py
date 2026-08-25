@@ -206,14 +206,114 @@ def install(m):
                 m.traceback.format_exc()))
             return False
 
+    # ---- non-rigid follow (Scale / Extrude): per-body displacement ---------
+    def normalize(v):
+        n = math.sqrt(v[0] * v[0] + v[1] * v[1] + v[2] * v[2]) or 1.0
+        return [v[0] / n, v[1] / n, v[2] / n]
+
+    def resolve_body(design, tok):
+        if design is None or not tok:
+            return None
+        try:
+            ents = design.findEntityByToken(tok)
+        except Exception:
+            return None
+        try:
+            for e in ents:
+                if isinstance(e, adsk.fusion.BRepBody):
+                    return e
+        except Exception:
+            pass
+        return None
+
+    def displacement(mark, p):
+        """How far a dependant at point p should translate to stay attached.
+
+        Scale moves each point away from the centre in proportion to distance
+        ((f-1)(p-c)); a directional scale only along its axis; an extrude pushes
+        the extruded face by d along its normal."""
+        tool = mark.get("tool")
+        if tool == "scale":
+            c = mark.get("anchor", [0.0, 0.0, 0.0])
+            f = float(mark.get("factor", 1.0))
+            return [(f - 1.0) * (p[i] - c[i]) for i in range(3)]
+        if tool == "scale_axis":
+            base = mark.get("base_anchor") or mark.get("anchor") or [0.0, 0.0, 0.0]
+            f = float(mark.get("factor", 1.0))
+            idx = {"X": 0, "Y": 1, "Z": 2}.get(mark.get("axis", "X"), 0)
+            d = [0.0, 0.0, 0.0]
+            d[idx] = (f - 1.0) * (p[idx] - base[idx])
+            return d
+        if tool == "extrude":
+            n = normalize(m._geom.get(mark["id"], {}).get("normal", [0.0, 0.0, 1.0]))
+            amt = float(mark.get("amount", 0.0))
+            return [n[i] * amt for i in range(3)]
+        return [0.0, 0.0, 0.0]
+
+    def translate_body(body, disp):
+        comp = body.parentComponent
+        coll = adsk.core.ObjectCollection.create()
+        coll.add(body)
+        mtx = adsk.core.Matrix3D.create()
+        mtx.translation = adsk.core.Vector3D.create(disp[0], disp[1], disp[2])
+        comp.features.moveFeatures.add(
+            comp.features.moveFeatures.createInput(coll, mtx))
+
+    def detect_flex_deps(mark, primary):
+        """Dependants for a Scale/Extrude. For Extrude, only bodies touching the
+        extruded face itself follow (parts on other faces don't move)."""
+        tool = mark.get("tool")
+        design = m._design()
+        if design is None or primary is None:
+            return []
+        try:
+            _, size = m._bbox_center_size(primary)
+        except Exception:
+            size = 3.0
+        tol = max(0.05, min(float(size) * 0.02, 0.20))
+        if tool == "extrude":
+            ent = m._entity.get(mark["id"])
+            try:
+                target = ent.boundingBox
+            except Exception:
+                return []
+        else:
+            try:
+                target = primary.boundingBox
+            except Exception:
+                return []
+        ptok = body_token(primary)
+        out = []
+        seen = set()
+        for b in all_bodies(design):
+            try:
+                tok = body_token(b)
+                if not tok or tok == ptok or tok in seen:
+                    continue
+                seen.add(tok)
+                if hasattr(b, "isVisible") and not b.isVisible:
+                    continue
+                try:
+                    if m._body_locked(b):
+                        continue
+                except Exception:
+                    pass
+                if bbox_gap(target, b.boundingBox) <= tol:
+                    out.append(b)
+            except Exception:
+                continue
+        log("DETECT flex deps tool={} found={}".format(tool, len(out)))
+        return out[:12]
+
+    RIGID_TOOLS = ("move", "rotate")
+    FLEX_TOOLS = ("scale", "scale_axis", "extrude")
+
     def accept(mark):
         tool = mark.get("tool")
-        # Rigid co-motion tools: Move, Rotate (world axes) and Axis Rotate.
-        # Pre-selected move-together is already handled by fuzzycad_move_scope,
-        # so don't double-ask for that one.
-        eligible = (tool == "axis_rotate"
-                    or (tool in ("move", "rotate") and mark.get("move_scope") != "together"))
-        if eligible:
+
+        # Rigid co-motion: Move / Rotate (world axes) / Axis Rotate -> the same
+        # transform to every confirmed dependant.
+        if tool == "axis_rotate" or (tool in RIGID_TOOLS and mark.get("move_scope") != "together"):
             primary = m._body.get(mark["id"])
             deps = []
             try:
@@ -230,7 +330,45 @@ def install(m):
                     except Exception:
                         pass
                     return apply_together(rigid_matrix(mark), primary, deps)
+            return old_accept(mark)
+
+        # Non-rigid: Scale / Extrude -> each dependant follows its own local
+        # displacement (position follows; the primary is scaled/extruded as usual).
+        if tool in FLEX_TOOLS:
+            primary = m._body.get(mark["id"])
+            deps = []
+            try:
+                deps = detect_flex_deps(mark, primary)
+            except Exception:
+                deps = []
+            if deps:
+                highlight(deps, True)
+                take = confirm(len(deps))
+                highlight(deps, False)
+                if take:
+                    design = m._design()
+                    # Capture each dependant's move from its pre-op centroid.
+                    plan = []
+                    for b in deps:
+                        try:
+                            c = m._bbox_center_size(b)[0]
+                            disp = displacement(mark, c)
+                            if any(abs(x) > 1e-9 for x in disp):
+                                plan.append((body_token(b), disp))
+                        except Exception:
+                            continue
+                    ok = old_accept(mark)      # scale / extrude the primary
+                    if ok:
+                        for tok, disp in plan:
+                            try:
+                                body = resolve_body(design, tok)
+                                if body is not None:
+                                    translate_body(body, disp)
+                            except Exception:
+                                continue
+                    return ok
+
         return old_accept(mark)
 
     m._accept = accept
-    log("DEPENDENT FOLLOW READY (rigid move/rotate)")
+    log("DEPENDENT FOLLOW READY (move/rotate rigid + scale/extrude per-body)")
