@@ -195,7 +195,10 @@ def install(m):
                     hidden[tok] = b
                     b.isVisible = False
                 else:
-                    b.opacity = BODY_OPACITY
+                    # Fusion ignores opacity == 0 (it reverts to the previous value,
+                    # so the face looked "unchanged" at 0). Clamp to a tiny minimum
+                    # so 0 reads as nearly-invisible instead of snapping back to 0.5.
+                    b.opacity = max(0.02, float(BODY_OPACITY))
             except Exception:
                 pass
         for tok in list(hidden.keys()):
