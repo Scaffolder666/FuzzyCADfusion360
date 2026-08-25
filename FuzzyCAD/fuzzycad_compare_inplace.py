@@ -63,11 +63,28 @@ def install(m):
             if old_draw is not None:
                 return old_draw(group, mark, rgb, amp)
             return
-        # In-place uses the original Compare language: only one option is shown,
-        # the other is hidden. Visibility is toggled in reconcile_visibility on
-        # every redraw; here there is nothing to draw (the conflict badge is
-        # still added by _draw_one).
-        return
+        # In-place uses the original Compare language: while unresolved BOTH real
+        # bodies are hidden (reconcile_visibility) and the shown option is drawn
+        # as hand-drawn sketchy edges -- so it reads as an uncertain proposal, not
+        # a finished body. Accept then restores the chosen body solid.
+        design = m._design()
+        alts = mark.get("alternatives") or []
+        shown = shown_index(mark)
+        if not (0 <= shown < len(alts)):
+            return
+        seed = mark["id"] * 700
+        idx = 0
+        for tok in alts[shown].get("body_tokens", []):
+            b = resolve_body(design, tok)
+            if b is None:
+                continue
+            try:
+                for poly in m._sample_edges(b.edges):
+                    if len(poly) >= 2:
+                        m._sketchy(group, poly, rgb, amp, seed + idx, weight=1, strokes=2)
+                        idx += 1
+            except Exception:
+                continue
 
     m._DRAW["compare"] = draw_compare
 
@@ -85,10 +102,11 @@ def install(m):
         for mark in list(getattr(m, "_marks", []) or []):
             if (mark.get("tool") == "compare" and mark.get("inplace")
                     and mark.get("status", "open") == "open"):
-                alts = mark.get("alternatives") or []
-                loser = 1 - shown_index(mark)
-                if 0 <= loser < len(alts):
-                    for tok in alts[loser].get("body_tokens", []):
+                # While the comparison is open BOTH real bodies are hidden; the
+                # shown option is represented by the sketchy edges drawn in
+                # draw_compare.
+                for alt in (mark.get("alternatives") or [])[:2]:
+                    for tok in alt.get("body_tokens", []):
                         want_hidden.add(tok)
         for tok in want_hidden:
             b = resolve_body(design, tok)
@@ -118,21 +136,39 @@ def install(m):
                 except Exception:
                     pass
                 return False
-            loser = 1 - int(choice)
+            winner = int(choice)
+            loser = 1 - winner
             design = m._design()
+            alts = mark.get("alternatives") or []
             deleted = 0
             try:
-                for tok in (mark.get("alternatives") or [])[loser].get("body_tokens", []):
-                    b = resolve_body(design, tok)
-                    if b is not None:
-                        try:
-                            b.deleteMe()
-                            deleted += 1
-                        except Exception:
-                            pass
+                if 0 <= loser < len(alts):
+                    for tok in alts[loser].get("body_tokens", []):
+                        b = resolve_body(design, tok)
+                        hidden.discard(tok)
+                        if b is not None:
+                            try:
+                                b.deleteMe()
+                                deleted += 1
+                            except Exception:
+                                pass
             except Exception:
                 log("delete loser failed\n{}".format(m.traceback.format_exc()))
-            log("INPLACE accept keep=Option {} deleted={}".format(int(choice) + 1, deleted))
+            # Restore the chosen option to a solid, visible body (it was hidden
+            # while the comparison was unresolved).
+            try:
+                if 0 <= winner < len(alts):
+                    for tok in alts[winner].get("body_tokens", []):
+                        hidden.discard(tok)
+                        b = resolve_body(design, tok)
+                        if b is not None:
+                            try:
+                                b.isVisible = True
+                            except Exception:
+                                pass
+            except Exception:
+                pass
+            log("INPLACE accept keep=Option {} deleted={}".format(winner + 1, deleted))
             return True
         return old_accept(mark)
 
