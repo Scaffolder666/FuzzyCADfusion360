@@ -57,13 +57,8 @@ def install(m):
     }
 
     def log(msg):
-        try:
-            fn = getattr(m, "_debug", None)
-            if fn:
-                fn(msg)
-                return
-        except Exception:
-            pass
+        # Always write to the app log (Text Commands) so Compare can be diagnosed
+        # in the non-dev build where _debug is a no-op.
         try:
             (m._app or adsk.core.Application.get()).log("[FuzzyCAD COMPARE STABLE] " + msg)
         except Exception:
@@ -818,6 +813,7 @@ def install(m):
         def notify(self, args):
             pending = state.get("pending")
             state["pending"] = None
+            log("FINISH fired pending={}".format("yes" if pending else "no"))
             try:
                 # Close Fusion's modal command first.  Heavy sampling/redraw is
                 # deliberately deferred until after the command has terminated.
@@ -845,19 +841,28 @@ def install(m):
                 bc = selected_connector("cmp_b")
                 ab = selected_bodies("cmp_a_bodies")
                 bb = selected_bodies("cmp_b_bodies")
+                log("EXECUTE target={} a={} b={} a_bodies={} b_bodies={}".format(
+                    tc is not None, ac is not None, bc is not None, len(ab), len(bb)))
                 if tc and ac and bc:
                     state["pending"] = (tc, ac, bc, ab, bb)
                     request_finish()
+                else:
+                    log("EXECUTE aborted: a connector is missing/invalid")
             except Exception:
                 log("execute failed\n{}".format(m.traceback.format_exc()))
 
     class Validate(adsk.core.ValidateInputsEventHandler):
         def notify(self, args):
+            # Enable OK once all three connections have a selection. Keep it cheap
+            # (no connector rebuild here) so OK does not flicker disabled.
             try:
-                args.areInputsValid = bool(
-                    count("cmp_target") and selected_connector("cmp_target") and
-                    count("cmp_a") and selected_connector("cmp_a") and
-                    count("cmp_b") and selected_connector("cmp_b"))
+                ins = args.inputs
+
+                def picked(cid):
+                    it = ins.itemById(cid)
+                    return it is not None and it.selectionCount > 0
+
+                args.areInputsValid = picked("cmp_target") and picked("cmp_a") and picked("cmp_b")
             except Exception:
                 args.areInputsValid = False
 
