@@ -17,6 +17,9 @@ softens the ghost fade and adds one overlay group (FuzzyCAD_FuzzyBoundary), whic
 is redrawn from the open marks each _redraw_marks (mark-owned, not ephemeral).
 """
 
+import math
+import random
+
 
 def install(m):
     adsk = m.adsk
@@ -28,13 +31,11 @@ def install(m):
 
     GID = "FuzzyCAD_FuzzyBoundary"
     SOFT_OPACITY = 0.85          # the real (clickable) body stays clearly present
-    GHOST_RGB = (96, 118, 156)   # cool blue-grey afterimage, distinct from the body
-    GHOST_OPACITY = 0.22         # each offset copy is faint; they layer into a blur
-    # Offset directions for the non-selectable ghost doubles, as fractions of the
-    # body size. A couple of opposed offsets read as "not pinned / double vision"
-    # rather than "moved one way".
-    OFFSETS = [(0.9, 0.35, 0.0), (-0.7, -0.3, 0.35)]
-    MAX_COPIES = 8               # cost guard across all questioned bodies
+    GHOST_RGB = (240, 195, 45)   # yellow afterimage
+    GHOST_OPACITY = 0.12         # each copy very faint; many of them layer up
+    COPIES_PER_BODY = 6          # more doubles, scattered
+    ROT_MAX_DEG = 2.5            # tiny random rotation per copy = the jitter
+    MAX_COPIES = 18              # cost guard across all questioned bodies
 
     def log(msg):
         try:
@@ -83,22 +84,39 @@ def install(m):
         except Exception:
             return
         made = 0
-        for b in bodies:
+        for bi, b in enumerate(bodies):
             try:
-                _, size = m._bbox_center_size(b)
+                center, size = m._bbox_center_size(b)
             except Exception:
-                size = 3.0
-            step = max(0.05, min(float(size) * 0.03, 0.6))   # offset scales with body
-            for off in OFFSETS:
+                center, size = [0.0, 0.0, 0.0], 3.0
+            step = max(0.05, min(float(size) * 0.03, 0.6))   # scatter scales with body
+            ctr = adsk.core.Point3D.create(center[0], center[1], center[2])
+            # Seeded per body so the scatter is stable across redraws (no flicker),
+            # but random enough to read as jitter rather than a clean offset.
+            rnd = random.Random(1234 + bi * 97)
+            for _k in range(COPIES_PER_BODY):
                 if made >= MAX_COPIES:
                     break
                 try:
                     dup = tmp.copy(b)                        # temp BRep copy
                     if dup is None:
                         continue
+                    # random scatter direction + magnitude
+                    dirx = rnd.uniform(-1, 1); diry = rnd.uniform(-1, 1); dirz = rnd.uniform(-1, 1)
+                    dl = math.sqrt(dirx * dirx + diry * diry + dirz * dirz) or 1.0
+                    mag = step * rnd.uniform(0.35, 1.15)
+                    ox, oy, oz = dirx / dl * mag, diry / dl * mag, dirz / dl * mag
+                    # tiny random rotation about the body centre = the shimmer
+                    ang = math.radians(rnd.uniform(-ROT_MAX_DEG, ROT_MAX_DEG))
+                    ax = adsk.core.Vector3D.create(rnd.uniform(-1, 1), rnd.uniform(-1, 1), rnd.uniform(-1, 1))
+                    try:
+                        ax.normalize()
+                    except Exception:
+                        ax = adsk.core.Vector3D.create(0, 0, 1)
                     mtx = adsk.core.Matrix3D.create()
-                    mtx.translation = adsk.core.Vector3D.create(
-                        off[0] * step, off[1] * step, off[2] * step)
+                    mtx.setToRotation(ang, ax, ctr)
+                    t = mtx.translation
+                    mtx.translation = adsk.core.Vector3D.create(t.x + ox, t.y + oy, t.z + oz)
                     tmp.transform(dup, mtx)
                     cg = grp.addBRepBody(dup)               # CustomGraphics = not selectable
                     cg.color = m._solid(GHOST_RGB)
