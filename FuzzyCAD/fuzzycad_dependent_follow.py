@@ -31,12 +31,8 @@ def install(m):
     FOLLOW_RGB = (225, 126, 38)
 
     def log(msg):
-        try:
-            fn = getattr(m, "_debug", None)
-            if fn:
-                fn(msg); return
-        except Exception:
-            pass
+        # Always write to the app log (visible in Text Commands) so detection can
+        # be diagnosed even in the non-dev build where _debug is a no-op.
         try:
             (m._app or adsk.core.Application.get()).log("[FuzzyCAD FOLLOW] " + msg)
         except Exception:
@@ -56,78 +52,50 @@ def install(m):
         dz = max(0.0, bmn.z - amx.z, amn.z - bmx.z)
         return math.sqrt(dx * dx + dy * dy + dz * dz)
 
-    def planar(face):
-        """Return (point, unit-normal) for a planar face, else None."""
+    def all_bodies(design):
+        """Every solid body in the design: root plus all occurrence proxies, so a
+        shape built in a different component from the marked part is still seen."""
+        out = []
         try:
-            geo = face.geometry
-            if not isinstance(geo, adsk.core.Plane):
-                return None
-            o = geo.origin
-            n = geo.normal.copy(); n.normalize()
-            return (o, n)
-        except Exception:
-            return None
-
-    def boxes_overlap(a, b, tol):
-        return not (b.minPoint.x - a.maxPoint.x > tol or a.minPoint.x - b.maxPoint.x > tol or
-                    b.minPoint.y - a.maxPoint.y > tol or a.minPoint.y - b.maxPoint.y > tol or
-                    b.minPoint.z - a.maxPoint.z > tol or a.minPoint.z - b.maxPoint.z > tol)
-
-    def faces_coincident(fa, fb, tol, ang=0.985):
-        pa = planar(fa); pb = planar(fb)
-        if pa is None or pb is None:
-            return False
-        (oa, na), (ob, nb) = pa, pb
-        # normals parallel or anti-parallel
-        if abs(na.x * nb.x + na.y * nb.y + na.z * nb.z) < ang:
-            return False
-        # the two planes are (nearly) the same plane: ob lies on A's plane
-        d = abs((ob.x - oa.x) * na.x + (ob.y - oa.y) * na.y + (ob.z - oa.z) * na.z)
-        if d > tol:
-            return False
-        try:
-            return boxes_overlap(fa.boundingBox, fb.boundingBox, tol)
-        except Exception:
-            return True
-
-    def is_dependent(primary, other, tol):
-        """other is built on primary if they share a coincident planar face."""
-        try:
-            if bbox_gap(primary.boundingBox, other.boundingBox) > tol:
-                return False
-        except Exception:
-            return False
-        try:
-            fa_all = primary.faces
-            fb_all = other.faces
-            for i in range(fa_all.count):
-                fa = fa_all.item(i)
-                if planar(fa) is None:
+            root = design.rootComponent
+            for i in range(root.bRepBodies.count):
+                out.append(root.bRepBodies.item(i))
+            occs = root.allOccurrences
+            for i in range(occs.count):
+                try:
+                    bs = occs.item(i).bRepBodies
+                    for j in range(bs.count):
+                        out.append(bs.item(j))
+                except Exception:
                     continue
-                for j in range(fb_all.count):
-                    if faces_coincident(fa, fb_all.item(j), tol):
-                        return True
         except Exception:
-            return False
-        return False
+            pass
+        return out
 
     def detect_dependents(primary):
+        """Bodies that touch the marked body (bounding-box contact) -- the same
+        proven proximity signal Move scope uses. Loose on purpose: the user
+        confirms the set, so a false positive just gets left unchecked."""
         if primary is None:
             return []
+        design = m._design()
+        if design is None:
+            return []
         try:
-            comp = primary.parentComponent
-            bodies = comp.bRepBodies
             _, size = m._bbox_center_size(primary)
+            pbb = primary.boundingBox
         except Exception:
             return []
         tol = max(0.05, min(float(size) * 0.02, 0.20))   # 0.5mm .. 2mm contact tol
         ptok = body_token(primary)
         out = []
-        for i in range(bodies.count):
+        seen = set()
+        for b in all_bodies(design):
             try:
-                b = bodies.item(i)
-                if body_token(b) == ptok:
+                tok = body_token(b)
+                if tok is None or tok == ptok or tok in seen:
                     continue
+                seen.add(tok)
                 if hasattr(b, "isVisible") and not b.isVisible:
                     continue
                 try:
@@ -135,10 +103,12 @@ def install(m):
                         continue
                 except Exception:
                     pass
-                if is_dependent(primary, b, tol):
+                if bbox_gap(pbb, b.boundingBox) <= tol:
                     out.append(b)
             except Exception:
                 continue
+        log("DETECT dependents primary={} found={} tol_mm={:.2f}".format(
+            getattr(primary, "name", "body"), len(out), tol * 10.0))
         return out[:12]
 
     def highlight(bodies, on):
@@ -181,26 +151,42 @@ def install(m):
             return False
 
     def apply_together(mark, primary, deps):
+        """Apply the same rigid transform to the marked body and the dependants.
+        Bodies are grouped by their owning component (a MoveFeature is scoped to
+        one component), so a shape built in a different component still moves."""
         try:
-            comp = primary.parentComponent
-            coll = adsk.core.ObjectCollection.create()
-            coll.add(primary)
-            added = {body_token(primary)}
-            for b in deps:
+            matrix = m._op_matrix(mark)
+            groups = []      # list of (component, [bodies])
+            added = set()
+
+            def enroll(b):
                 tok = body_token(b)
-                if tok in added:
-                    continue
-                try:
-                    if b.parentComponent != comp:
-                        continue
-                except Exception:
-                    continue
-                coll.add(b)
+                if tok is None or tok in added:
+                    return
                 added.add(tok)
-            comp.features.moveFeatures.add(
-                comp.features.moveFeatures.createInput(coll, m._op_matrix(mark)))
-            log("APPLIED move/rotate to {} bodies (1 marked + {} dependants)".format(
-                coll.count, coll.count - 1))
+                try:
+                    comp = b.parentComponent
+                except Exception:
+                    return
+                for g in groups:
+                    if g[0] == comp:
+                        g[1].append(b); return
+                groups.append((comp, [b]))
+
+            enroll(primary)
+            for b in deps:
+                enroll(b)
+
+            moved = 0
+            for comp, bodies in groups:
+                coll = adsk.core.ObjectCollection.create()
+                for b in bodies:
+                    coll.add(b)
+                comp.features.moveFeatures.add(
+                    comp.features.moveFeatures.createInput(coll, matrix))
+                moved += coll.count
+            log("APPLIED move/rotate to {} bodies across {} component(s)".format(
+                moved, len(groups)))
             return True
         except Exception:
             m._ui.messageBox("FuzzyCAD couldn't carry the dependent parts:\n{}".format(
