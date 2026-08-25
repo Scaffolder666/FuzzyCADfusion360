@@ -28,11 +28,11 @@ import random
 FUZZY_ON        = True            # False -> fall straight back to the plain ghost
 HIDE_BODY       = False           # True -> hide the questioned body entirely, show only
                                   #         its sketchy ghost (drops the crisp CAD edges)
-BODY_OPACITY    = 0.2             # the real body's fade when HIDE_BODY is False
-COPIES_PER_BODY = 6               # how many offset wireframe copies = the ghosting
-SCATTER         = 0.03            # copy offset, as a fraction of body size (bigger = more spread)
-OVERSHOOT       = 0.05            # how far lines run PAST each corner (loosens sharp corners)
-LINE_WEIGHT     = 1.0             # ghost line thickness (try 0.6 thin .. 2.5 bold)
+BODY_OPACITY    = 0.00             # the real body's fade when HIDE_BODY is False
+COPIES_PER_BODY = 4               # how many offset wireframe copies = the ghosting
+SCATTER         = 0.01            # copy offset, as a fraction of body size (bigger = more spread)
+OVERSHOOT       = 0.0001            # how far lines run PAST each corner (loosens sharp corners)
+LINE_WEIGHT     = 2.0             # ghost line thickness (try 0.6 thin .. 2.5 bold)
 GRAY_LIGHT      = 165             # lightest ghost copy (0=black .. 255=white)
 GRAY_DARK       = 45              # darkest ghost copy — copies fade across this range
 MAX_LINES       = 2400            # cost guard across all questioned bodies
