@@ -601,29 +601,42 @@ def install(m):
                 pass
         return best
 
-    def make_alt(connector, ordinal):
-        group = group_for_body(connector.get("body"))
-        bodies = group["bodies"] or [connector.get("body")]
-        bodies = [b for b in bodies if b is not None]
+    def make_alt(connector, ordinal, explicit_bodies=None):
         clicked = connector.get("body")
+        explicit_bodies = [b for b in (explicit_bodies or []) if b is not None]
+        if explicit_bodies:
+            # The reviewer picked the exact bodies for this alternative -- use them
+            # verbatim (plus the connector's own body). This handles alternatives
+            # that are several loose bodies, not a clean component/occurrence.
+            bodies = list(explicit_bodies)
+            if clicked is not None and not any(same_entity(clicked, b) for b in bodies):
+                bodies.insert(0, clicked)
+            name = getattr(clicked, "name", "Alternative {}".format(ordinal))
+            scope = "explicit"
+        else:
+            group = group_for_body(clicked)
+            bodies = group["bodies"] or [clicked]
+            bodies = [b for b in bodies if b is not None]
+            name = group.get("name") or getattr(clicked, "name", "Alternative {}".format(ordinal))
+            scope = group.get("kind", "body")
         return {
-            "name": group.get("name") or getattr(clicked, "name", "Alternative {}".format(ordinal)),
+            "name": name,
             "token": token(clicked),
             "body_tokens": [token(b) for b in bodies if token(b)],
-            "scope": group.get("kind", "body"),
+            "scope": scope,
             "connector_token": token(connector.get("entity")),
             "connector_frame": list(connector.get("frame") or []),
             "connector_radius": connector.get("radius"),
             "connector_kind": connector.get("kind"),
         }, bodies
 
-    def create_mark(target_c, a_c, b_c):
+    def create_mark(target_c, a_c, b_c, a_bodies=None, b_bodies=None):
         if not target_c or not a_c or not b_c:
             return None
-        if same_entity(a_c.get("body"), b_c.get("body")):
+        if not (a_bodies or b_bodies) and same_entity(a_c.get("body"), b_c.get("body")):
             return None
-        alt_a, bodies_a = make_alt(a_c, 1)
-        alt_b, bodies_b = make_alt(b_c, 2)
+        alt_a, bodies_a = make_alt(a_c, 1, a_bodies)
+        alt_b, bodies_b = make_alt(b_c, 2, b_bodies)
         mid = m._next_id
         m._next_id += 1
         num = m._tool_count.get("compare", 0) + 1
@@ -694,6 +707,23 @@ def install(m):
             return it.selectionCount if it is not None else 0
         except Exception:
             return 0
+
+    def selected_bodies(cid):
+        out = []
+        try:
+            it = state["inputs"].itemById(cid) if state.get("inputs") else None
+            if it is None:
+                return out
+            for i in range(it.selectionCount):
+                try:
+                    b = adsk.fusion.BRepBody.cast(it.selection(i).entity)
+                    if b is not None:
+                        out.append(b)
+                except Exception:
+                    continue
+        except Exception:
+            pass
+        return out
 
     def set_focus(cid):
         if not state.get("inputs"):
@@ -767,13 +797,9 @@ def install(m):
                     set_focus("cmp_b")
                     stage()
                     return
-                if count("cmp_target") and count("cmp_a") and count("cmp_b"):
-                    state["pending"] = (
-                        selected_connector("cmp_target"),
-                        selected_connector("cmp_a"),
-                        selected_connector("cmp_b"),
-                    )
-                    request_finish()
+                # No auto-finish: after the three connections the reviewer may add
+                # extra bodies to each alternative's body list, then click the
+                # "Create comparison" OK button.
             except Exception:
                 log("input failed\n{}".format(m.traceback.format_exc()))
 
@@ -799,12 +825,41 @@ def install(m):
                     m._ui.terminateActiveCommand()
                 except Exception:
                     pass
-                if pending and all(pending):
-                    create_mark(pending[0], pending[1], pending[2])
+                if pending and all(pending[:3]):
+                    create_mark(pending[0], pending[1], pending[2],
+                                pending[3] if len(pending) > 3 else None,
+                                pending[4] if len(pending) > 4 else None)
             except Exception:
                 log("finish failed\n{}".format(m.traceback.format_exc()))
             finally:
                 state["finishing"] = False
+
+    class Execute(adsk.core.CommandEventHandler):
+        def notify(self, args):
+            # OK ("Create comparison") pressed: capture the three connectors and
+            # each alternative's (optional) explicit body list, then defer the
+            # heavy create/redraw until after the command closes.
+            try:
+                tc = selected_connector("cmp_target")
+                ac = selected_connector("cmp_a")
+                bc = selected_connector("cmp_b")
+                ab = selected_bodies("cmp_a_bodies")
+                bb = selected_bodies("cmp_b_bodies")
+                if tc and ac and bc:
+                    state["pending"] = (tc, ac, bc, ab, bb)
+                    request_finish()
+            except Exception:
+                log("execute failed\n{}".format(m.traceback.format_exc()))
+
+    class Validate(adsk.core.ValidateInputsEventHandler):
+        def notify(self, args):
+            try:
+                args.areInputsValid = bool(
+                    count("cmp_target") and selected_connector("cmp_target") and
+                    count("cmp_a") and selected_connector("cmp_a") and
+                    count("cmp_b") and selected_connector("cmp_b"))
+            except Exception:
+                args.areInputsValid = False
 
     class Created(adsk.core.CommandCreatedEventHandler):
         def notify(self, args):
@@ -818,7 +873,8 @@ def install(m):
                 except Exception:
                     pass
                 try:
-                    cmd.isOKButtonVisible = False
+                    cmd.isOKButtonVisible = True
+                    cmd.okButtonText = "Create comparison"
                     cmd.cancelButtonText = "Cancel Compare"
                 except Exception:
                     pass
@@ -840,12 +896,31 @@ def install(m):
                         it.isUseCurrentSelections = False
                     except Exception:
                         pass
+                a_bodies = inputs.addSelectionInput(
+                    "cmp_a_bodies", "   Alt 1 bodies (optional)",
+                    "Add every body that makes up Alternative 1")
+                b_bodies = inputs.addSelectionInput(
+                    "cmp_b_bodies", "   Alt 2 bodies (optional)",
+                    "Add every body that makes up Alternative 2")
+                for it in (a_bodies, b_bodies):
+                    it.addSelectionFilter("SolidBodies")
+                    it.setSelectionLimits(0, 0)   # optional, unlimited
+                    try:
+                        it.isUseCurrentSelections = False
+                    except Exception:
+                        pass
                 state["inputs"] = inputs
                 set_focus("cmp_target")
                 stage()
                 ih = InputChanged()
                 cmd.inputChanged.add(ih)
                 m._handlers.append(ih)
+                eh = Execute()
+                cmd.execute.add(eh)
+                m._handlers.append(eh)
+                vh = Validate()
+                cmd.validateInputs.add(vh)
+                m._handlers.append(vh)
                 dh = Destroy()
                 cmd.destroy.add(dh)
                 m._handlers.append(dh)
