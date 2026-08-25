@@ -128,6 +128,11 @@ _compare_full = _load(
     "fuzzycad_compare_full_preview",
     "fuzzycad_compare_full_preview.py")
 _compare_full.install(_legacy)
+# In-place Compare: two options already built at the same spot; keep one, drop
+# the other. Loaded after the target-aligned Compare so its _accept/_DRAW
+# wrappers sit outermost and delegate non-in-place marks down.
+_compare_here = _load("fuzzycad_compare_inplace", "fuzzycad_compare_inplace.py")
+_compare_here.install(_legacy)
 _badges = _load("fuzzycad_uncertainty_badges", "fuzzycad_uncertainty_badges.py")
 _badges.install(_legacy)
 
