@@ -29,10 +29,15 @@ def install(m):
     old_redraw = m._redraw_marks
     old_run = m.run
 
-    ghost = float(getattr(m, "GHOST_OPACITY", 0.16))
-    # Reclaim window around the values FuzzyCAD ghosts with (0.08 / 0.16). Kept
-    # tight so an opacity a user deliberately set (e.g. 0.5) is never touched.
-    LO, HI = 0.03, 0.34
+    # Reclaim window derived from the ACTUAL ghost opacity FuzzyCAD applies
+    # (fuzzycad_opacity_runtime ghosts with GHOST_OPACITY, currently 0.5). The old
+    # fixed 0.03..0.34 window predated the 0.5 ghost and silently excluded it, so a
+    # body left ghosted after a reject/reopen was never reclaimed. The window now
+    # tracks the ghost value with a small margin on each side; only bodies with no
+    # open question (see desired_ghost_tokens) inside it are restored to full.
+    ghost = float(getattr(m, "GHOST_OPACITY", 0.5))
+    LO = 0.03
+    HI = min(0.70, ghost + 0.10)
 
     def tok(body):
         try:

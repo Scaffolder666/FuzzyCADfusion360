@@ -50,12 +50,21 @@ def install(m):
 
     def refresh_ghost():
         wanted = desired_bodies()
+        ghost_v = float(getattr(m, "GHOST_OPACITY", 0.5))
         for tok, body in wanted.items():
             if tok not in records:
                 try:
-                    records[tok] = (body, float(body.opacity))
+                    cur = float(body.opacity)
                 except Exception:
-                    records[tok] = (body, 1.0)
+                    cur = 1.0
+                # A document reopened after being saved with an open question comes
+                # back with the body already at the ghost opacity. Capturing that as
+                # the "original" would make every later restore return to a ghost
+                # (the reported stuck-transparent-after-reject bug). Treat a body
+                # already sitting at the ghost value as originally fully visible.
+                if abs(cur - ghost_v) < 0.02:
+                    cur = 1.0
+                records[tok] = (body, cur)
             try:
                 body.opacity = float(getattr(m, "GHOST_OPACITY", 0.5))
             except Exception:
