@@ -475,10 +475,11 @@ def install(m):
                 if tok in s0:
                     if scope == "together":
                         specs.append((b, tok)); approved += 1
-                elif not all0 or tok not in all0:
+                elif all0 and tok not in all0:
                     # Genuinely new since the mark (built on the part afterwards) ->
-                    # auto-carry. A body that already existed at mark time but was not
-                    # a neighbour is left alone.
+                    # auto-carry. Requires the all-token snapshot: without it we can't
+                    # tell new from pre-existing, so we do NOT auto-carry (that empty-
+                    # snapshot case used to move every neighbour even on "Only this").
                     specs.append((b, tok)); built_on += 1
             log("MOVE/ROTATE carry scope={} approved_neighbours={} built_on_top={}".format(
                 scope, approved, built_on))
@@ -514,9 +515,11 @@ def install(m):
                     if tok in s0:
                         if scope == "together":
                             chosen.append(b); attached += 1
-                    elif not all0 or tok not in all0:
+                    elif all0 and tok not in all0:
                         # Genuinely new since the mark -> built on top -> auto.
-                        # A pre-existing part the growth merely reached is NOT moved.
+                        # Requires the all-token snapshot; without it we don't guess
+                        # (and a pre-existing part the growth merely reached is never
+                        # treated as new).
                         chosen.append(b); built_on += 1
                 log("SCALE carry scope={} attached={} built_on_top={}".format(
                     scope, attached, built_on))

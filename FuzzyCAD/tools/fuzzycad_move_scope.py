@@ -244,18 +244,36 @@ def install(m):
         except Exception:
             return "only"
 
+    def stamp_scope():
+        """Copy the selection-time scope snapshot onto whichever transform mark is
+        live -- BOTH move and rotate, since the transform command produces either.
+        Called on every transform inputChanged (the drag that creates/updates the
+        mark arrives as inputChanged, not executePreview, in this build), so the
+        mark reliably carries move_scope + the token snapshots by accept. Without
+        this the mark reached accept unstamped, defaulting to an empty all-token
+        snapshot -- which made accept auto-carry every touching neighbour and moved
+        parts together even when 'Only this part' was chosen."""
+        if not m._pending or not m._pending.get("scope_asked_for"):
+            return
+        rel_b = list(m._pending.get("related_bodies", []))
+        rel_t = list(m._pending.get("related_tokens", []))
+        all_t = list(m._pending.get("all_tokens", []))
+        scope = m._pending.get("move_scope") or scope_value() or "only"
+        for key in ("move", "rotate"):
+            mid = m._live.get(key)
+            mark = m._find(mid) if mid is not None else None
+            if mark is not None:
+                mark["related_bodies"] = rel_b
+                mark["related_tokens"] = rel_t
+                mark["all_tokens_at_mark"] = all_t
+                mark["move_scope"] = scope
+
     def attach_to_live_mark():
+        stamp_scope()
         if not m._pending:
             return None
         mid = m._live.get("move")
-        mark = m._find(mid) if mid is not None else None
-        if mark is None:
-            return None
-        mark["related_bodies"] = list(m._pending.get("related_bodies", []))
-        mark["related_tokens"] = list(m._pending.get("related_tokens", []))
-        mark["all_tokens_at_mark"] = list(m._pending.get("all_tokens", []))
-        mark["move_scope"] = m._pending.get("move_scope") or scope_value() or "only"
-        return mark
+        return m._find(mid) if mid is not None else None
 
     def redraw_scope():
         m._clear(m.GROUP_PREVIEW)
@@ -336,6 +354,10 @@ def install(m):
                     else:
                         m._pending["move_scope"] = "only"
                     return
+                # Any other transform input == a manipulator drag, which creates /
+                # updates the live move|rotate mark. Stamp the scope snapshot onto it
+                # now, because executePreview does not fire on drag in this build.
+                stamp_scope()
             except Exception:
                 log("input failed\n{}".format(m.traceback.format_exc()))
 
