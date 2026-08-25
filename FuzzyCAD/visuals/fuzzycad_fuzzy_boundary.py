@@ -26,10 +26,10 @@ import random
 #  file; there is nothing to hunt for inside the functions below.)
 # ============================================================================
 FUZZY_ON        = True            # False -> fall straight back to the plain ghost
-BODY_OPACITY    = 0.2             # the real (clickable) body's fade, like the ghost
+BODY_OPACITY    = 0.01             # the real (clickable) body's fade, like the ghost
 COPIES_PER_BODY = 6               # how many offset wireframe copies = the ghosting
-SCATTER         = 0.03            # copy offset, as a fraction of body size (bigger = more spread)
-LINE_WEIGHT     = 1.0             # ghost line thickness (try 0.6 thin .. 2.5 bold)
+SCATTER         = 0.01            # copy offset, as a fraction of body size (bigger = more spread)
+LINE_WEIGHT     = 2.5             # ghost line thickness (try 0.6 thin .. 2.5 bold)
 GRAY_LIGHT      = 165             # lightest ghost copy (0=black .. 255=white)
 GRAY_DARK       = 45              # darkest ghost copy — copies fade across this range
 MAX_LINES       = 2400            # cost guard across all questioned bodies
