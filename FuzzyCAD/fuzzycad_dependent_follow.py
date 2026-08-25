@@ -150,12 +150,25 @@ def install(m):
         except Exception:
             return False
 
-    def apply_together(mark, primary, deps):
+    def rigid_matrix(mark):
+        """The rigid transform for a co-motion mark, in world space."""
+        if mark.get("tool") == "axis_rotate":
+            g = m._geom.get(mark["id"], {})
+            origin = g.get("axis_origin") or mark.get("axis_origin") or [0.0, 0.0, 0.0]
+            direction = g.get("axis_dir") or mark.get("axis_dir") or [0.0, 0.0, 1.0]
+            mat = adsk.core.Matrix3D.create()
+            mat.setToRotation(
+                math.radians(float(mark.get("angle", 0.0))),
+                adsk.core.Vector3D.create(*direction),
+                adsk.core.Point3D.create(*origin))
+            return mat
+        return m._op_matrix(mark)
+
+    def apply_together(matrix, primary, deps):
         """Apply the same rigid transform to the marked body and the dependants.
         Bodies are grouped by their owning component (a MoveFeature is scoped to
         one component), so a shape built in a different component still moves."""
         try:
-            matrix = m._op_matrix(mark)
             groups = []      # list of (component, [bodies])
             added = set()
 
@@ -195,9 +208,12 @@ def install(m):
 
     def accept(mark):
         tool = mark.get("tool")
-        # Only rigid co-motion here; pre-selected move-together is already handled
-        # by fuzzycad_move_scope, so don't double-ask for it.
-        if tool in ("move", "rotate") and mark.get("move_scope") != "together":
+        # Rigid co-motion tools: Move, Rotate (world axes) and Axis Rotate.
+        # Pre-selected move-together is already handled by fuzzycad_move_scope,
+        # so don't double-ask for that one.
+        eligible = (tool == "axis_rotate"
+                    or (tool in ("move", "rotate") and mark.get("move_scope") != "together"))
+        if eligible:
             primary = m._body.get(mark["id"])
             deps = []
             try:
@@ -213,7 +229,7 @@ def install(m):
                         primary.opacity = 1.0
                     except Exception:
                         pass
-                    return apply_together(mark, primary, deps)
+                    return apply_together(rigid_matrix(mark), primary, deps)
         return old_accept(mark)
 
     m._accept = accept
