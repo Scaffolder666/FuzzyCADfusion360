@@ -2,11 +2,12 @@
 
 The advisor's point: a half-transparent body is ambiguous -- transparency is
 everywhere in CAD, so it doesn't read as "there's an open question here." This
-moves the "unsettled" signal off transparency and onto a shaky LINE GHOST: the
-questioned body stays clearly present and clickable, and its EDGES are redrawn as
-several faint, offset, jittered yellow copies -- a hand-shaky double image, "not
-pinned yet." The copies are CustomGraphics lines, so they render but can never be
-selected or picked; only the real body underneath responds to clicks.
+moves the "unsettled" signal off transparency and onto a LINE GHOST: the
+translucent, still-clickable body keeps a light fade, and its EDGES are redrawn as
+a few offset copies -- each a hand-drawn (sketchy) line, like the pulled-out
+proposal, in a grey that fades from light to near-black across the copies -- a
+soft double image, "not pinned yet." The copies are CustomGraphics lines, so they
+render but can never be selected or picked; only the real body responds to clicks.
 
 Fully reversible:
   * set m._FUZZY_BOUNDARY = False  -> reverts to the classic 0.5 ghost, or
@@ -26,15 +27,13 @@ import random
 # ============================================================================
 FUZZY_ON        = True            # False -> fall straight back to the plain ghost
 BODY_OPACITY    = 0.5             # the real (clickable) body's fade, like the ghost
-GHOST_RGB       = (240, 195, 45)  # colour of the ghost lines (yellow)
-GHOST_ALPHA     = 110             # line faintness 0-255 (Fusion may clamp line alpha)
-LINE_WEIGHT     = 1.0             # line thickness
 COPIES_PER_BODY = 3               # how many offset wireframe copies = the ghosting
 SCATTER         = 0.015           # copy offset, as a fraction of body size (small!)
-JITTER          = 0.0             # per-point wobble; 0 = clean offset outlines.
-                                  #   Raise a LITTLE (0.01-0.02) for a hand feel;
-                                  #   high values turn edges into a scribble.
+GRAY_LIGHT      = 165             # lightest ghost copy (0=black .. 255=white)
+GRAY_DARK       = 45              # darkest ghost copy — copies fade across this range
 MAX_LINES       = 1400            # cost guard across all questioned bodies
+# Each ghost line is drawn with the same hand-drawn "sketchy" wobble as the
+# proposals (the pulled-out preview), via _visual_stroke's proposal role.
 # ============================================================================
 
 
@@ -72,31 +71,28 @@ def install(m):
             out.append(b)
         return out
 
-    def faint_color():
-        return adsk.fusion.CustomGraphicsSolidColorEffect.create(
-            adsk.core.Color.create(GHOST_RGB[0], GHOST_RGB[1], GHOST_RGB[2], GHOST_ALPHA))
+    def gray_for(k):
+        if COPIES_PER_BODY <= 1:
+            g = GRAY_DARK
+        else:
+            t = k / float(COPIES_PER_BODY - 1)
+            g = int(round(GRAY_LIGHT + (GRAY_DARK - GRAY_LIGHT) * t))
+        g = max(0, min(255, g))
+        return (g, g, g)
 
-    def add_polyline(grp, pts, color):
-        n = len(pts)
-        if n < 2:
-            return False
-        flat = []
-        for p in pts:
-            flat.append(p[0]); flat.append(p[1]); flat.append(p[2])
-        coords = adsk.fusion.CustomGraphicsCoordinates.create(flat)
-        line = grp.addLines(coords, list(range(n)), True)
-        line.color = color
-        try:
-            line.weight = LINE_WEIGHT
-        except Exception:
-            pass
-        return True
+    def stroke(grp, pts, rgb, seed, size):
+        """One hand-drawn ghost line: the proposals' sketchy wobble, our grey."""
+        vs = getattr(m, "_visual_stroke", None)
+        if vs is not None:
+            vs(grp, pts, "proposal_internal", seed, size=size, rgb=rgb, weight=1, strokes=1)
+        else:
+            m._sketchy(grp, pts, rgb, max(0.01, size * 0.004), seed, weight=1, strokes=1)
 
     def draw_fuzzy():
-        """Draw the questioned body's EDGES as several offset, jittered copies --
-        a shaky yellow line-ghost, not a translucent solid. Lines live in a
-        CustomGraphics group, so they render but can never be clicked or picked;
-        only the real body underneath is selectable."""
+        """Draw the questioned body's EDGES as a few offset copies, each a
+        hand-drawn (sketchy) line in a grey that fades from light to near-black
+        across the copies. Lines live in a CustomGraphics group, so they render
+        but can never be clicked or picked; only the real body is selectable."""
         try:
             m._clear(GID)
         except Exception:
@@ -109,7 +105,6 @@ def install(m):
         grp = m._group(GID)
         if grp is None:
             return
-        col = faint_color()
         drawn = 0
         for bi, b in enumerate(bodies):
             try:
@@ -117,33 +112,31 @@ def install(m):
             except Exception:
                 size = 3.0
             step = max(0.02, min(float(size) * SCATTER, 0.30))  # copy offset ~ body size
-            jit = max(0.0, min(float(size) * JITTER, 0.30))     # per-point wobble (0 = clean)
             try:
                 loops = m._sample_edges(b.edges)
             except Exception:
                 loops = []
             if not loops:
                 continue
-            # Seeded per body so the scatter/jitter is stable across redraws
-            # (no flicker), but random enough to read as many shaky ghosts.
+            # Seeded per body so the scatter is stable across redraws (no flicker).
             rnd = random.Random(1234 + bi * 97)
-            for _k in range(COPIES_PER_BODY):
+            for k in range(COPIES_PER_BODY):
                 if drawn >= MAX_LINES:
                     break
+                rgb = gray_for(k)
                 dx = rnd.uniform(-1, 1); dy = rnd.uniform(-1, 1); dz = rnd.uniform(-1, 1)
                 dl = math.sqrt(dx * dx + dy * dy + dz * dz) or 1.0
-                mag = step * rnd.uniform(0.35, 1.15)
+                mag = step * rnd.uniform(0.4, 1.1)
                 ox, oy, oz = dx / dl * mag, dy / dl * mag, dz / dl * mag
-                for poly in loops:
+                for j, poly in enumerate(loops):
                     if drawn >= MAX_LINES:
                         break
-                    pts = []
-                    for q in poly:
-                        pts.append((q[0] + ox + rnd.uniform(-jit, jit),
-                                    q[1] + oy + rnd.uniform(-jit, jit),
-                                    q[2] + oz + rnd.uniform(-jit, jit)))
-                    if add_polyline(grp, pts, col):
+                    pts = [(q[0] + ox, q[1] + oy, q[2] + oz) for q in poly]
+                    try:
+                        stroke(grp, pts, rgb, (bi * 911 + k * 131 + j) & 0xffff, size)
                         drawn += 1
+                    except Exception:
+                        pass
             if drawn >= MAX_LINES:
                 break
         log("ghost lines drawn={} for {} body(ies)".format(drawn, len(bodies)))
@@ -180,8 +173,8 @@ def install(m):
 
     def run(context):
         result = old_run(context)
-        log("FUZZY BOUNDARY READY (experiment): {:.0%} real body + non-selectable shaky "
-            "yellow line-ghost".format(BODY_OPACITY))
+        log("FUZZY BOUNDARY READY (experiment): {:.0%} real body + non-selectable sketchy "
+            "grey line-ghost".format(BODY_OPACITY))
         return result
 
     m.run = run
