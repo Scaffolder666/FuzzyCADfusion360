@@ -1163,26 +1163,29 @@ def _scale_about_center(comp, coll, center, factor, axis_factors=None):
     vi = adsk.core.ValueInput.createByReal
     sf = comp.features.scaleFeatures
 
-    def make_input(base):
+    def add_scale(base):
         si = sf.createInput(coll, base, vi(1.0 if axis_factors else factor))
         if axis_factors:
             fx, fy, fz = axis_factors
-            if not si.setToNonUniform(vi(fx), vi(fy), vi(fz)):
-                raise RuntimeError("setToNonUniform rejected the scale input")
-        return si
+            si.setToNonUniform(vi(fx), vi(fy), vi(fz))
+        sf.add(si)
 
+    # Only the construction-point creation may hit the unsupported-environment
+    # error; guard just that and fall back. setToNonUniform / feature failures
+    # are real errors and must propagate to _accept, not silently fall back.
+    base = None
     try:
         cpi = comp.constructionPoints.createInput()
         cpi.setByPoint(adsk.core.Point3D.create(*center))
         base = comp.constructionPoints.add(cpi)
-        sf.add(make_input(base))
-        return
-    except RuntimeError:
-        raise
     except Exception:
-        pass
+        base = None
+
+    if base is not None:
+        add_scale(base)
+        return
     # Direct-modeling fallback: no construction geometry available.
-    sf.add(make_input(comp.originConstructionPoint))
+    add_scale(comp.originConstructionPoint)
     kx = 1.0 - (axis_factors[0] if axis_factors else float(factor))
     ky = 1.0 - (axis_factors[1] if axis_factors else float(factor))
     kz = 1.0 - (axis_factors[2] if axis_factors else float(factor))
