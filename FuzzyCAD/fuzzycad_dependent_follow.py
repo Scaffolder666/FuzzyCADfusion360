@@ -347,25 +347,41 @@ def install(m):
                 highlight(deps, False)
                 if take:
                     design = m._design()
-                    # Capture each dependant's move from its pre-op centroid.
+                    # Capture each dependant (ref + token) and its move from the
+                    # pre-op centroid.
                     plan = []
                     for b in deps:
                         try:
                             c = m._bbox_center_size(b)[0]
                             disp = displacement(mark, c)
-                            if any(abs(x) > 1e-9 for x in disp):
-                                plan.append((body_token(b), disp))
+                            plan.append((b, body_token(b), disp))
+                            log("FLEX plan tok={} disp=({:.3f}, {:.3f}, {:.3f})".format(
+                                body_token(b), disp[0], disp[1], disp[2]))
                         except Exception:
-                            continue
+                            log("FLEX plan failed\n{}".format(m.traceback.format_exc()))
                     ok = old_accept(mark)      # scale / extrude the primary
+                    moved = 0
                     if ok:
-                        for tok, disp in plan:
-                            try:
-                                body = resolve_body(design, tok)
-                                if body is not None:
-                                    translate_body(body, disp)
-                            except Exception:
+                        for body, tok, disp in plan:
+                            if all(abs(x) <= 1e-9 for x in disp):
                                 continue
+                            target = body
+                            try:
+                                if not target.isValid:
+                                    target = None
+                            except Exception:
+                                target = None
+                            if target is None:
+                                target = resolve_body(design, tok)
+                            if target is None:
+                                log("FLEX skip: body lost tok={}".format(tok))
+                                continue
+                            try:
+                                translate_body(target, disp)
+                                moved += 1
+                            except Exception:
+                                log("FLEX translate failed\n{}".format(m.traceback.format_exc()))
+                        log("FLEX moved {} of {} (tool={})".format(moved, len(plan), tool))
                     return ok
 
         return old_accept(mark)
