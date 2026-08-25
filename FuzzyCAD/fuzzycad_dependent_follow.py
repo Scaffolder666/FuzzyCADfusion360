@@ -111,6 +111,11 @@ def install(m):
             getattr(primary, "name", "body"), len(out), tol * 10.0))
         return out[:12]
 
+    # Shared so fuzzycad_move_scope can snapshot the SAME touching set at selection
+    # time. That snapshot (related_tokens) is what "built on top since" is measured
+    # against at accept, so both ends must use one detector for the delta to be real.
+    m._follow_detect_dependents = detect_dependents
+
     def highlight(bodies, on):
         try:
             m._clear(DEP_GID)
@@ -205,6 +210,56 @@ def install(m):
             m._ui.messageBox("FuzzyCAD couldn't carry the dependent parts:\n{}".format(
                 m.traceback.format_exc()))
             return False
+
+    def carry_bodies(matrix, specs, design):
+        """Apply one rigid matrix to a set of dependant bodies given as (ref, token).
+
+        Re-resolves any ref that the primary's own move invalidated, and groups by
+        owning component because a MoveFeature is component-scoped."""
+        groups = []      # [(component, [bodies])]
+        added = set()
+
+        def enroll(b):
+            tok = body_token(b)
+            key = tok or str(id(b))
+            if key in added:
+                return
+            added.add(key)
+            try:
+                comp = b.parentComponent
+            except Exception:
+                return
+            for g in groups:
+                if g[0] == comp:
+                    g[1].append(b); return
+            groups.append((comp, [b]))
+
+        for ref, tok in specs:
+            target = ref
+            try:
+                if target is None or not target.isValid:
+                    target = None
+            except Exception:
+                target = None
+            if target is None:
+                target = resolve_body(design, tok)
+            if target is None:
+                log("carry skip: body lost tok={}".format(tok))
+                continue
+            enroll(target)
+
+        moved = 0
+        for comp, bodies in groups:
+            try:
+                coll = adsk.core.ObjectCollection.create()
+                for b in bodies:
+                    coll.add(b)
+                comp.features.moveFeatures.add(
+                    comp.features.moveFeatures.createInput(coll, matrix))
+                moved += coll.count
+            except Exception:
+                log("carry move failed\n{}".format(m.traceback.format_exc()))
+        return moved
 
     # ---- non-rigid follow (Scale / Extrude): per-body displacement ---------
     def normalize(v):
@@ -311,9 +366,10 @@ def install(m):
     def accept(mark):
         tool = mark.get("tool")
 
-        # Rigid co-motion: Move / Rotate (world axes) / Axis Rotate -> the same
-        # transform to every confirmed dependant.
-        if tool == "axis_rotate" or (tool in RIGID_TOOLS and mark.get("move_scope") != "together"):
+        # Axis Rotate has no selection-time scope question, so it keeps the
+        # confirm-at-accept dialog: detect what's built on the part, highlight it,
+        # ask once, carry along if the reviewer says yes.
+        if tool == "axis_rotate":
             primary = m._body.get(mark["id"])
             deps = []
             try:
@@ -331,6 +387,44 @@ def install(m):
                         pass
                     return apply_together(rigid_matrix(mark), primary, deps)
             return old_accept(mark)
+
+        # Move / Rotate: the "carry the neighbours too?" question was already
+        # answered at selection (fuzzycad_move_scope's messageBox), so we DON'T ask
+        # again here. Two sets are handled, both silently:
+        #   - neighbours present when the mark was created (related_tokens): moved
+        #     only if the reviewer chose "together".
+        #   - parts touching the primary NOW but not in that snapshot: built on the
+        #     part *after* it became uncertain -> carried automatically. Leaving them
+        #     behind would silently break geometry that was stacked on an open
+        #     question, which is exactly the failure FuzzyCAD exists to prevent.
+        # Both are resolved from currently-live bodies (no stale refs), and the
+        # primary is moved by old_accept first so all its legacy bookkeeping runs.
+        if tool in RIGID_TOOLS:
+            primary = m._body.get(mark["id"])
+            design = m._design()
+            scope = mark.get("move_scope", "only")
+            s0 = set(mark.get("related_tokens", []) or [])
+            specs = []          # [(ref, token)] to carry with the primary
+            approved = 0
+            built_on = 0
+            try:
+                current = detect_dependents(primary)
+            except Exception:
+                current = []
+            for b in current:
+                tok = body_token(b)
+                if tok in s0:
+                    if scope == "together":
+                        specs.append((b, tok)); approved += 1
+                else:
+                    specs.append((b, tok)); built_on += 1     # built-on-top -> auto
+            log("MOVE/ROTATE carry scope={} approved_neighbours={} built_on_top={}".format(
+                scope, approved, built_on))
+            ok = old_accept(mark)                # move the primary (legacy path)
+            if ok and specs:
+                moved = carry_bodies(rigid_matrix(mark), specs, design)
+                log("carried {} of {} dependant bodies".format(moved, len(specs)))
+            return ok
 
         # Non-rigid: Scale / Extrude -> each dependant follows its own local
         # displacement (position follows; the primary is scaled/extruded as usual).

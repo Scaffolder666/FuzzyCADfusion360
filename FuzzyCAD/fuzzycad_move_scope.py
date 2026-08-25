@@ -229,6 +229,23 @@ def install(m):
 
     m._DRAW["move"] = draw_move
 
+    def ask_scope(count):
+        """One modal question, styled like the accept dialog the reviewer liked.
+        Yes -> carry the touching neighbours together; No -> move only this part."""
+        try:
+            res = m._ui.messageBox(
+                "{} adjacent part{} touching this one (highlighted in orange).\n\n"
+                "Move or rotate them together with this part?\n\n"
+                "Yes  —  keep them together\n"
+                "No   —  affect only this part".format(
+                    count, " is" if count == 1 else "s are"),
+                "FuzzyCAD — move scope",
+                adsk.core.MessageBoxButtonTypes.YesNoButtonType,
+                adsk.core.MessageBoxIconTypes.QuestionIconType)
+            return "together" if res == adsk.core.DialogResults.DialogYes else "only"
+        except Exception:
+            return "only"
+
     def attach_to_live_mark():
         if not m._pending:
             return None
@@ -237,6 +254,7 @@ def install(m):
         if mark is None:
             return None
         mark["related_bodies"] = list(m._pending.get("related_bodies", []))
+        mark["related_tokens"] = list(m._pending.get("related_tokens", []))
         mark["move_scope"] = m._pending.get("move_scope") or scope_value() or "only"
         return mark
 
@@ -279,20 +297,43 @@ def install(m):
                         set_scope_ui(0)
                         return
                     primary = m._pending.get("body")
-                    related = detect_related(primary)
-                    # Keep the related set only for the passive highlight — the
-                    # "carry attached parts along?" decision is NOT made here. It
-                    # happens once, at accept (fuzzycad_dependent_follow), which
-                    # avoids the fragile hide/re-show of handles, the frozen
-                    # pre-move set, and asking the same thing twice. So the
-                    # manipulator shows immediately (super already placed it),
-                    # no scope radio is forced, and move_scope stays "only".
-                    m._pending["related_bodies"] = related
-                    m._pending["move_scope"] = "only"
+                    ptok = body_token(primary) if primary is not None else None
+                    # Ask the scope question exactly once per selected body. The
+                    # native scope radio stays hidden -- super() already placed the
+                    # manipulator, so after the reviewer answers the dialog the
+                    # handles are live immediately (select -> ask -> drag).
+                    if m._pending.get("scope_asked_for") == ptok:
+                        return
+                    set_scope_ui(0)
+                    # Snapshot with the SAME detector accept uses, so "built on top
+                    # since" can be measured against this set later.
+                    detect = getattr(m, "_follow_detect_dependents", None)
+                    try:
+                        related = detect(primary) if detect else detect_related(primary)
+                    except Exception:
+                        related = detect_related(primary)
+                    m._pending["related_bodies"] = list(related)
+                    m._pending["related_tokens"] = [body_token(b) for b in related]
+                    m._pending["scope_asked_for"] = ptok
                     m._pending["scope_chosen"] = True
-                    set_scope_ui(0)               # keep the scope radio hidden
                     if related:
-                        draw_relation_selection()  # passive highlight only
+                        # Paint the touching set orange so it is visible behind the
+                        # modal dialog, then ask.
+                        grp = m._group(m.GROUP_PREVIEW)
+                        if grp is not None:
+                            for body in related:
+                                add_body_graphic(grp, body, color=HILITE_RGB, opacity=0.45)
+                        try:
+                            m._app.activeViewport.refresh()
+                        except Exception:
+                            pass
+                        m._pending["move_scope"] = ask_scope(len(related))
+                        log("SCOPE picked={} for {} touching part(s)".format(
+                            m._pending["move_scope"], len(related)))
+                        m._clear(m.GROUP_PREVIEW)
+                        draw_relation_selection()
+                    else:
+                        m._pending["move_scope"] = "only"
                     return
             except Exception:
                 log("input failed\n{}".format(m.traceback.format_exc()))
@@ -336,39 +377,13 @@ def install(m):
 
     m.FuzzyCommandCreated = FuzzyCommandCreated
 
+    # Carrying the related/dependent set for Move & Rotate is now owned entirely by
+    # fuzzycad_dependent_follow (loaded outermost): it honours the scope the reviewer
+    # picked at selection and auto-carries anything built on top since. Keeping a
+    # second "together" mover here would double-apply the transform, so this wrapper
+    # just delegates -- the scope snapshot it records (below) is what drives it.
     def accept(mark):
-        if mark.get("tool") != "move" or mark.get("move_scope") != "together":
-            return old_accept(mark)
-        primary = m._body.get(mark["id"])
-        if primary is None:
-            return False
-        try:
-            comp = primary.parentComponent
-            coll = adsk.core.ObjectCollection.create()
-            added = set()
-            for body in [primary] + list(mark.get("related_bodies", [])):
-                try:
-                    tok = body_token(body)
-                    if tok in added or body.parentComponent != comp:
-                        continue
-                    coll.add(body)
-                    added.add(tok)
-                    try:
-                        body.opacity = 1.0
-                    except Exception:
-                        pass
-                except Exception:
-                    continue
-            if coll.count < 1:
-                return False
-            comp.features.moveFeatures.add(
-                comp.features.moveFeatures.createInput(coll, m._op_matrix(mark)))
-            log("APPLY TOGETHER bodies={}".format(coll.count))
-            return True
-        except Exception:
-            m._ui.messageBox("FuzzyCAD couldn't move the highlighted set:\n{}".format(
-                m.traceback.format_exc()))
-            return False
+        return old_accept(mark)
 
     m._accept = accept
 
