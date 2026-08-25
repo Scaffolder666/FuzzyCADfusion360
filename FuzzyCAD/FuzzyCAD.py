@@ -170,6 +170,12 @@ _hole.install(_legacy)
 _dependency = _load("fuzzycad_dependency_prompts", "fuzzycad_dependency_prompts.py")
 _dependency.install(_legacy)
 
+# Dependent follow: accepting a Move/Rotate on a fuzzy part carries the parts
+# built on it (detected by a shared coincident face) along, after the user
+# confirms. Wraps _accept outermost so it decides before the change is applied.
+_follow = _load("fuzzycad_dependent_follow", "fuzzycad_dependent_follow.py")
+_follow.install(_legacy)
+
 # State reconciliation: outermost redraw wrapper. Reclaims ghost bodies left
 # semi-transparent after a rebuild invalidated their restore proxy, and clears
 # stray idle PREVIEW graphics, keeping the 3D view in sync with the open marks.
