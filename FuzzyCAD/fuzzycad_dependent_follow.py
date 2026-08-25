@@ -72,16 +72,12 @@ def install(m):
             pass
         return out
 
-    def detect_dependents(primary, exclude=None):
+    def detect_dependents(primary):
         """Bodies that touch the marked body (bounding-box contact) -- the same
         proven proximity signal Move scope uses. Loose on purpose: the user
-        confirms the set, so a false positive just gets left unchecked.
-
-        `exclude` is a set of tokens already decided before the move (the pre-move
-        Only/Together set), so the same parts are never asked about twice."""
+        confirms the set, so a false positive just gets left unchecked."""
         if primary is None:
             return []
-        exclude = exclude or set()
         design = m._design()
         if design is None:
             return []
@@ -97,7 +93,7 @@ def install(m):
         for b in all_bodies(design):
             try:
                 tok = body_token(b)
-                if tok is None or tok == ptok or tok in seen or tok in exclude:
+                if tok is None or tok == ptok or tok in seen:
                     continue
                 seen.add(tok)
                 if hasattr(b, "isVisible") and not b.isVisible:
@@ -144,11 +140,9 @@ def install(m):
     def confirm(count):
         try:
             res = m._ui.messageBox(
-                "Found {} part{} built on this (highlighted).\n\n"
-                "Carry {} along with this change so {} stay attached?".format(
-                    count, "" if count == 1 else "s",
-                    "it" if count == 1 else "them",
-                    "it does" if count == 1 else "they do"),
+                "{} part{} built on this were found.\n\n"
+                "Carry them along with this change so they stay attached?".format(
+                    count, " is" if count == 1 else "s are"),
                 "FuzzyCAD — dependent parts",
                 adsk.core.MessageBoxButtonTypes.YesNoButtonType,
                 adsk.core.MessageBoxIconTypes.QuestionIconType)
@@ -221,16 +215,9 @@ def install(m):
                     or (tool in ("move", "rotate") and mark.get("move_scope") != "together"))
         if eligible:
             primary = m._body.get(mark["id"])
-            # Parts already decided before the move (the pre-move Only/Together
-            # set) are not asked about again here.
-            exclude = set()
-            for b in mark.get("related_bodies") or []:
-                t = body_token(b)
-                if t:
-                    exclude.add(t)
             deps = []
             try:
-                deps = detect_dependents(primary, exclude)
+                deps = detect_dependents(primary)
             except Exception:
                 deps = []
             if deps:

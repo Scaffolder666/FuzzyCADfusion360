@@ -306,6 +306,7 @@ def install(m):
                         return
                     m._pending["move_scope"] = choice
                     m._pending["scope_chosen"] = True
+                    # Now reveal the move/rotate handles.
                     try:
                         m._place_manipulator()
                     except Exception:
