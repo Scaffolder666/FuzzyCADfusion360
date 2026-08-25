@@ -35,6 +35,8 @@ OVERSHOOT       = 0.0001            # how far lines run PAST each corner (loosen
 LINE_WEIGHT     = 2.0             # ghost line thickness (try 0.6 thin .. 2.5 bold)
 GRAY_LIGHT      = 165             # lightest ghost copy (0=black .. 255=white)
 GRAY_DARK       = 45              # darkest ghost copy — copies fade across this range
+SHOW_THROUGH    = True            # ghost lines stay visible even behind the solid (X-ray)
+SHOW_THRU_OPACITY = 0.6           # how strongly they bleed through (0 hidden .. 1 full)
 MAX_LINES       = 2400            # cost guard across all questioned bodies
 # Each ghost line is drawn with the same hand-drawn "sketchy" wobble as the
 # proposals (the pulled-out preview), via _visual_stroke's proposal role.
@@ -166,6 +168,19 @@ def install(m):
                         pass
             if drawn >= MAX_LINES:
                 break
+        # X-ray: let the ghost lines bleed through the solid so the back edges show.
+        if SHOW_THROUGH:
+            try:
+                eff = adsk.fusion.CustomGraphicsShowThroughColorEffect.create(
+                    adsk.core.Color.create(GRAY_DARK, GRAY_DARK, GRAY_DARK, 255),
+                    float(SHOW_THRU_OPACITY))
+                for i in range(grp.count):
+                    try:
+                        grp.item(i).showThrough = eff
+                    except Exception:
+                        pass
+            except Exception:
+                log("showThrough not applied\n{}".format(m.traceback.format_exc()))
         log("ghost lines drawn={} for {} body(ies)".format(drawn, len(bodies)))
         try:
             m._app.activeViewport.refresh()
