@@ -1,4 +1,4 @@
-"""Experimental ghost replacement: a fuzzy (un-pinned) boundary.
+"""Ghost replacement: a fuzzy, comic-style boundary (the default 'unsettled' look).
 
 The advisor's point: a half-transparent body is ambiguous -- transparency is
 everywhere in CAD, so it doesn't read as "there's an open question here." This
@@ -298,7 +298,7 @@ def install(m):
 
     def run(context):
         result = old_run(context)
-        log("FUZZY BOUNDARY READY (experiment): {:.0%} real body + non-selectable sketchy "
+        log("FUZZY BOUNDARY READY: {:.0%} real body + non-selectable sketchy "
             "grey line-ghost".format(BODY_OPACITY))
         return result
 

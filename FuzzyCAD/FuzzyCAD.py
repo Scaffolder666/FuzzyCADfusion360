@@ -207,12 +207,12 @@ _clear_all.install(_legacy)
 _inspector = _load("fuzzycad_inspector", "core/fuzzycad_inspector.py")
 _inspector.install(_legacy)
 
-# EXPERIMENT — fuzzy boundary as the ghost replacement. Keeps the questioned body
-# mostly visible and draws its edges as an offset hand-drawn blur ("the true edge
-# isn't pinned"), moving the "unsettled" signal off transparency. Loaded last so
-# it softens the fade after opacity_runtime and draws after every other layer.
-# To revert to the classic ghost: set _legacy._FUZZY_BOUNDARY = False, or remove
-# these two lines.
+# Fuzzy boundary — the default "unsettled" look that replaces the plain ghost.
+# The questioned body is drawn comic/cel-shaded: a flat matte fill under offset
+# hand-drawn (sketchy) outline copies, so uncertainty reads off the drawing style
+# rather than off transparency. Loaded last so it takes over the fade after
+# opacity_runtime and draws after every other layer. To fall back to the classic
+# ghost: set _legacy._FUZZY_BOUNDARY = False, or remove these two lines.
 _fuzzy = _load("fuzzycad_fuzzy_boundary", "visuals/fuzzycad_fuzzy_boundary.py")
 _fuzzy.install(_legacy)
 
