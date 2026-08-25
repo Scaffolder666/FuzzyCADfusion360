@@ -168,13 +168,6 @@ _layout.install(_legacy)
 _hole = _load("fuzzycad_hole", "tools/fuzzycad_hole.py")
 _hole.install(_legacy)
 
-# Soft dependency prompts: after a Scale/Extrude is accepted, ask a follow-up
-# "have you considered the neighbouring parts?" and tint the affected bodies
-# until that question is resolved. Loaded last so its _accept/_redraw wrappers
-# sit outermost over the commit + visual chain.
-_dependency = _load("fuzzycad_dependency_prompts", "tools/fuzzycad_dependency_prompts.py")
-_dependency.install(_legacy)
-
 # Dependent follow: accepting a Move/Rotate on a fuzzy part carries the parts
 # built on it (detected by a shared coincident face) along, after the user
 # confirms. Wraps _accept outermost so it decides before the change is applied.
@@ -187,6 +180,14 @@ _follow.install(_legacy)
 # dependent_follow so m._follow_detect_dependents is available.
 _scale_scope = _load("fuzzycad_scale_scope", "tools/fuzzycad_scale_scope.py")
 _scale_scope.install(_legacy)
+
+# Dependency check: after a Scale/Extrude is accepted, raise an OK messageBox --
+# "do the nearby parts still fit / any overlap?" -- highlighting them while it is
+# open. Awareness only; nothing is changed. Loaded AFTER dependent_follow so its
+# _accept sits outermost and the nudge appears once the whole operation (the
+# scale/extrude plus any dependent parts that followed) has finished.
+_dependency = _load("fuzzycad_dependency_prompts", "tools/fuzzycad_dependency_prompts.py")
+_dependency.install(_legacy)
 
 # State reconciliation: outermost redraw wrapper. Reclaims ghost bodies left
 # semi-transparent after a rebuild invalidated their restore proxy, and clears

@@ -1,21 +1,24 @@
-"""Soft dependency prompts for FuzzyCAD, shown in the left tool rail.
+"""Dependency check for FuzzyCAD, shown as a messageBox at accept.
 
 Design principle: the system makes a possible coupling *visible* but never makes
 the decision for the user. So this module does NOT auto-change, auto-link, or
-mark anything as uncertain. After a Scale or Extrude is accepted, it detects the
-nearby parts that might be affected and raises one soft nudge -- "you changed a
-fitting/reaching dimension; have you considered these parts?" -- as a compact
-banner at the top of the FuzzyCAD tool rail, and tints those parts orange while
-the nudge is open. The reviewer dismisses it (or acts on their own); nothing is
-applied automatically.
+mark anything. After a Scale or Extrude is accepted, it detects the nearby parts
+that might be affected, highlights them orange, and raises one modal nudge --
+"you changed a fitting/reaching dimension; do these parts still fit / any
+overlap?" -- which the reviewer simply acknowledges. Nothing is applied here.
 
-Timing matches how each operation couples: Move/Rotate ask *before* the motion
-(a real together/separate fork, handled in fuzzycad_move_scope). Scale (fit) and
-Extrude (reach) ask *afterward*, because scaling a bore or extending a boss does
-not imply the mating part should change too -- there is no fork, only a check.
+Timing matches how each operation couples: Move/Rotate and Scale ask a real
+together/attached fork *before* the change (fuzzycad_move_scope /
+fuzzycad_scale_scope). This afterward check is a different, awareness-only
+question -- "now that it changed, is the fit still OK?" -- so it is a plain OK
+acknowledgement, not another fork. It runs for Scale (fit) and Extrude (reach).
 
-The prompt is intentionally runtime-only: it is an ephemeral "did you consider"
-nudge, not a saved question, so it is never written to the document.
+Loaded AFTER fuzzycad_dependent_follow so its _accept wrapper is outermost: the
+messageBox appears only once the whole operation (the scale/extrude itself plus
+any dependent parts that followed) has finished, not in the middle of it.
+
+The nudge is intentionally runtime-only: an ephemeral "did you consider" check,
+never written to the document.
 """
 
 import math
@@ -24,18 +27,12 @@ import math
 def install(m):
     adsk = m.adsk
     old_accept = m._accept
-    old_redraw = m._redraw_marks
-    CurrentPaletteHTMLHandler = m.PaletteHTMLHandler
 
-    DEP_GID = "FuzzyCAD_DepColor"
-    DEP_RGB = (225, 126, 38)          # same relationship hue Move uses
+    CHECK_GID = "FuzzyCAD_DepCheck"
+    DEP_RGB = (225, 126, 38)          # same relationship hue Move/Scale use
     FIT_TOOLS = ("scale", "scale_axis")
     REACH_TOOLS = ("extrude",)
     DEP_TOOLS = FIT_TOOLS + REACH_TOOLS
-
-    # Runtime-only list of active nudges: {id, kind, text, related_tokens, source_token}
-    PROMPTS = []
-    seq = {"n": 0}
 
     def log(msg):
         try:
@@ -125,157 +122,81 @@ def install(m):
             return "Extrude reaches {} nearby {} — checked for overlap?".format(n, parts)
         return "Scale changed a fit — do the {} highlighted {} still fit?".format(n, parts)
 
-    # ---- left-rail banner --------------------------------------------------
-    def toolbar():
+    # ---- transient highlight + modal nudge ---------------------------------
+    def tint(tokens, on):
         try:
-            return m._ui.palettes.itemById(m.TOOLBAR_ID) if m._ui else None
-        except Exception:
-            return None
-
-    def send_banner():
-        p = toolbar()
-        if p is None:
-            return
-        import json
-        payload = {"prompts": [
-            {"id": pr["id"], "text": pr["text"], "kind": pr["kind"]}
-            for pr in PROMPTS]}
-        try:
-            p.sendInfoToHTML("depPrompt", json.dumps(payload))
+            m._clear(CHECK_GID)
         except Exception:
             pass
-
-    # ---- related-body tint -------------------------------------------------
-    def paint_dependencies():
-        try:
-            m._clear(DEP_GID)
-        except Exception:
-            return
-        if not PROMPTS:
+        if not on:
+            try:
+                m._app.activeViewport.refresh()
+            except Exception:
+                pass
             return
         design = m._design()
-        group = m._group(DEP_GID)
+        group = m._group(CHECK_GID)
         if design is None or group is None:
             return
-        seen = set()
-        for pr in PROMPTS:
-            for tok in pr.get("related_tokens", []):
-                if tok in seen:
-                    continue
-                seen.add(tok)
-                body = resolve_body(design, tok)
-                if body is None:
-                    continue
-                try:
-                    cg = group.addBRepBody(body)
-                    cg.color = m._solid(DEP_RGB)
-                    cg.setOpacity(0.45, True)
-                except Exception:
-                    continue
-
-    def refresh():
-        send_banner()
-        try:
-            paint_dependencies()
-        except Exception:
-            pass
+        for tok in tokens:
+            body = resolve_body(design, tok)
+            if body is None:
+                continue
+            try:
+                cg = group.addBRepBody(body)
+                cg.color = m._solid(DEP_RGB)
+                cg.setOpacity(0.45, True)
+            except Exception:
+                continue
         try:
             m._app.activeViewport.refresh()
         except Exception:
             pass
 
-    def has_prompt_for(source_token):
-        return any(pr.get("source_token") == source_token for pr in PROMPTS)
-
-    def add_prompt(tool, tokens, source_token):
-        if not tokens:
-            return
-        if source_token and has_prompt_for(source_token):
-            return
-        seq["n"] += 1
-        kind = "reach" if tool in REACH_TOOLS else "fit"
-        PROMPTS.append({
-            "id": seq["n"],
-            "kind": kind,
-            "text": followup_text(tool, len(tokens)),
-            "related_tokens": list(tokens),
-            "source_token": source_token,
-        })
-        log("PROMPT+ id={} kind={} related={}".format(seq["n"], kind, len(tokens)))
-
-    def dismiss(pid):
-        n = len(PROMPTS)
-        if pid is None:
-            PROMPTS[:] = []
-        else:
-            PROMPTS[:] = [pr for pr in PROMPTS if pr.get("id") != pid]
-        if len(PROMPTS) != n:
-            refresh()
+    def show_check(tool, tokens):
+        """Highlight the nearby parts, then raise a plain OK acknowledgement."""
+        tint(tokens, True)
+        try:
+            m._ui.messageBox(
+                followup_text(tool, len(tokens)) + "\n\n"
+                "Nothing was changed automatically — this is just a check.",
+                "FuzzyCAD — dependency check",
+                adsk.core.MessageBoxButtonTypes.OKButtonType,
+                adsk.core.MessageBoxIconTypes.WarningIconType)
+        except Exception:
+            log("dependency messageBox failed\n{}".format(m.traceback.format_exc()))
+        tint(tokens, False)
+        log("CHECK shown tool={} related={}".format(tool, len(tokens)))
 
     def reset():
-        if PROMPTS:
-            PROMPTS[:] = []
         try:
-            m._clear(DEP_GID)
+            m._clear(CHECK_GID)
         except Exception:
             pass
-        send_banner()
 
+    # Kept for callers (e.g. Clear all) that used to flush the old rail banner.
     m._reset_dependency_prompts = reset
-    m._dependency_prompts = PROMPTS
+    m._dependency_prompts = []          # nothing persistent any more
 
-    # ---- hooks -------------------------------------------------------------
+    # ---- hook --------------------------------------------------------------
     def accept(mark):
+        tool = mark.get("tool")
         tokens = []
         try:
-            if mark.get("tool") in DEP_TOOLS:
+            if tool in DEP_TOOLS:
                 primary = m._body.get(mark["id"])
-                tokens = detect_related_tokens(primary)
-                source_token = body_token(primary)
+                tokens = detect_related_tokens(primary)   # neighbours before the op
         except Exception:
             tokens = []
-            source_token = None
-        ok = old_accept(mark)
+        ok = old_accept(mark)     # the scale/extrude AND any dependent follow finish
         if ok and tokens:
             try:
-                add_prompt(mark.get("tool"), tokens, source_token)
-                refresh()
+                show_check(tool, tokens)
             except Exception:
-                log("add prompt failed\n{}".format(m.traceback.format_exc()))
+                log("dependency check failed\n{}".format(m.traceback.format_exc()))
         return ok
 
     m._accept = accept
 
-    def redraw(*args, **kwargs):
-        result = old_redraw(*args, **kwargs)
-        try:
-            paint_dependencies()
-        except Exception:
-            log("paint failed\n{}".format(m.traceback.format_exc()))
-        return result
-
-    m._redraw_marks = redraw
-
-    class PaletteHTMLHandler(adsk.core.HTMLEventHandler):
-        def __init__(self):
-            super().__init__()
-            self._delegate = CurrentPaletteHTMLHandler()
-
-        def notify(self, args):
-            try:
-                import json
-                e = adsk.core.HTMLEventArgs.cast(args)
-                if e is not None and e.action == "dismissDep":
-                    data = json.loads(e.data) if e.data else {}
-                    dismiss(data.get("id"))
-                    try: e.returnData = json.dumps({"ok": True})
-                    except Exception: pass
-                    return
-            except Exception:
-                log("dismissDep failed\n{}".format(m.traceback.format_exc()))
-            self._delegate.notify(args)
-
-    m.PaletteHTMLHandler = PaletteHTMLHandler
-
-    log("DEPENDENCY PROMPTS READY: scale/extrude accept raises a left-rail nudge "
-        "and tints the affected neighbours until dismissed")
+    log("DEPENDENCY CHECK READY: scale/extrude accept raises an OK messageBox "
+        "and highlights the affected neighbours while it is open")

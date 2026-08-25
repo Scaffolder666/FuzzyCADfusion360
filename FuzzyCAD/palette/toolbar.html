@@ -44,21 +44,11 @@
     .tool:active .tool__icon-img{filter:invert(1)}
     .tool--wide{grid-column:span 2}.tool--soon{opacity:.42;cursor:default}.tool--soon:hover{border-color:var(--line)}
     .sep{height:1px;background:var(--line);margin:0 1px}
-    .depbar{display:flex;flex-direction:column;gap:6px}
-    .depbar:empty{display:none}
-    .depbar__item{display:flex;align-items:flex-start;gap:7px;background:#fffaf5;border:1px solid #f0d3b6;border-left:4px solid var(--orange);border-radius:8px;padding:8px 9px;box-shadow:0 3px 10px rgba(20,31,43,.06)}
-    .depbar__body{flex:1;min-width:0}
-    .depbar__title{font-size:9.5px;font-weight:800;color:#a75612;letter-spacing:.4px;margin-bottom:2px}
-    .depbar__text{font-size:10px;line-height:1.3;color:var(--text)}
-    .depbar__x{flex:none;border:1px solid #e6c6a6;background:#fff;color:#a75612;font-size:9.5px;font-weight:700;border-radius:6px;padding:4px 7px;cursor:pointer;line-height:1}
-    .depbar__x:hover{background:var(--orange);color:#fff;border-color:var(--orange)}
   </style>
 </head>
 <body>
   <div class="rail">
     <div class="brand">FuzzyCAD</div>
-
-    <div id="depBanner" class="depbar"></div>
 
     <div id="stage" class="stage">
       <div id="stageTitle" class="stage__title"></div>
@@ -173,31 +163,11 @@
       updateStageShell();
     }
 
-    function renderDepPrompt(data){
-      var wrap=document.getElementById("depBanner");
-      if(!wrap)return;
-      wrap.innerHTML="";
-      var prompts=(data&&data.prompts)||[];
-      prompts.forEach(function(pr){
-        var item=document.createElement("div");item.className="depbar__item";
-        var body=document.createElement("div");body.className="depbar__body";
-        var title=document.createElement("div");title.className="depbar__title";
-        title.textContent=pr.kind==="reach"?"REACH CHECK":"FIT CHECK";
-        var text=document.createElement("div");text.className="depbar__text";text.textContent=pr.text||"";
-        body.appendChild(title);body.appendChild(text);
-        var x=document.createElement("button");x.type="button";x.className="depbar__x";x.textContent="Dismiss";
-        x.addEventListener("click",function(){send("dismissDep",{id:pr.id});});
-        item.appendChild(body);item.appendChild(x);
-        wrap.appendChild(item);
-      });
-    }
-
     window.fusionJavaScriptHandler={handle:function(action,dataString){
       try{
         var data=dataString?JSON.parse(dataString):{};
         if(action==="stage")renderStage(data);
         else if(action==="decision_prompt")renderDecision(data);
-        else if(action==="depPrompt")renderDepPrompt(data);
       }catch(e){return JSON.stringify({ok:false,error:String(e)});}
       return JSON.stringify({ok:true});
     }};
