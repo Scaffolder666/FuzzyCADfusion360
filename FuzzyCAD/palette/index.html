@@ -6,6 +6,36 @@
   <title>FuzzyCAD</title>
   <link rel="stylesheet" href="palette.css" />
   <link rel="stylesheet" href="hardening.css" />
+  <style>
+    .insp{position:fixed;inset:0;background:#fbfcfd;z-index:50;display:none;flex-direction:column;font:13px/1.4 -apple-system,'Segoe UI',Roboto,sans-serif;color:#2b3440}
+    .insp.open{display:flex}
+    .insp__head{display:flex;align-items:center;justify-content:space-between;padding:11px 13px;border-bottom:1px solid #e6eaef}
+    .insp__title{font-weight:800;letter-spacing:.3px}
+    .insp__x{border:none;background:none;font-size:20px;line-height:1;color:#8a94a0;cursor:pointer;padding:0 4px}
+    .insp__body{flex:1;overflow:auto;padding:12px 13px;display:flex;flex-direction:column;gap:12px}
+    .insp__repair{width:100%;border:1px solid #b9d5c4;background:#eef7f1;color:#1c7a4a;font-weight:700;font-size:13px;padding:10px;border-radius:9px;cursor:pointer}
+    .insp__repair:hover{background:#1c7a4a;color:#fff;border-color:#1c7a4a}
+    .insp__repair.busy{opacity:.6;pointer-events:none}
+    .insp__hint{font-size:11px;color:#7a8590;margin-top:-6px}
+    .insp__grid{display:grid;grid-template-columns:1fr 1fr;gap:8px}
+    .stat{background:#fff;border:1px solid #e6eaef;border-radius:9px;padding:9px 10px}
+    .stat__n{font-size:20px;font-weight:800}
+    .stat__l{font-size:10px;color:#7a8590;letter-spacing:.3px;text-transform:uppercase}
+    .stat--warn{border-color:#e9c39b;background:#fff8f0}
+    .stat--warn .stat__n{color:#b5651d}
+    .insp__meta{font-size:11px;color:#7a8590}
+    .insp__sec{font-size:10px;font-weight:800;letter-spacing:.5px;color:#8a94a0;text-transform:uppercase;margin-top:2px}
+    .insp__items{list-style:none;margin:0;padding:0;display:flex;flex-direction:column;gap:6px}
+    .irow{display:flex;align-items:center;gap:8px;background:#fff;border:1px solid #e6eaef;border-radius:8px;padding:7px 9px}
+    .irow__g{font-size:14px;width:16px;text-align:center;color:#5a6672}
+    .irow__l{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-weight:600}
+    .irow__t{font-size:9px;font-weight:800;letter-spacing:.3px;padding:2px 6px;border-radius:5px;color:#fff}
+    .t--need_input{background:#c8352a}.t--constraint{background:#b7791f}.t--conflict{background:#7e5ab4}
+    .irow__b{border:1px solid #d3d8df;background:#fff;color:#5a6672;font-size:10px;font-weight:700;padding:4px 7px;border-radius:6px;cursor:pointer}
+    .irow__b:hover{background:#eef1f4}
+    .irow__b--del{border-color:#e2b6b0;color:#d92f1c}.irow__b--del:hover{background:#fbece9}
+    .insp__none{font-size:12px;color:#9aa4af;text-align:center;padding:14px}
+  </style>
 </head>
 <body>
   <header class="head">
@@ -17,6 +47,9 @@
     <div class="list__head" style="display:flex;align-items:center;justify-content:space-between;gap:8px">
       <span id="count" class="chip">0 open questions</span>
       <span style="display:flex;gap:6px;flex:none">
+        <button id="openInspector" type="button"
+          title="Open the Inspector: status overview + one-click viewport repair"
+          style="border:1px solid #d3d8df;color:#5a6672;background:#fff;font:600 11px/1 -apple-system,'Segoe UI',Roboto,sans-serif;padding:5px 9px;border-radius:6px;cursor:pointer">⚙ Inspector</button>
         <button id="dumpState" type="button"
           title="Show where this document's FuzzyCAD state is stored and export the raw JSON"
           style="border:1px solid #d3d8df;color:#5a6672;background:#fff;font:600 11px/1 -apple-system,'Segoe UI',Roboto,sans-serif;padding:5px 9px;border-radius:6px;cursor:pointer">JSON</button>
@@ -33,9 +66,26 @@
     </p>
   </section>
 
+  <div id="inspector" class="insp" aria-hidden="true">
+    <div class="insp__head">
+      <span class="insp__title">FuzzyCAD Inspector</span>
+      <button id="inspClose" class="insp__x" type="button" title="Close">×</button>
+    </div>
+    <div class="insp__body">
+      <button id="inspRepair" class="insp__repair" type="button">Repair viewport</button>
+      <div class="insp__hint">Sweeps stray graphics and restores every half-transparent
+        body, then redraws. Use it if an icon or ghost got stuck.</div>
+      <div id="inspStats" class="insp__grid"></div>
+      <div id="inspMeta" class="insp__meta"></div>
+      <div class="insp__sec">Generated items</div>
+      <ul id="inspItems" class="insp__items"></ul>
+    </div>
+  </div>
+
   <script src="palette.js"></script>
   <script src="panel_incremental.js"></script>
   <script src="panel_resync.js"></script>
   <script src="hover_ops.js"></script>
+  <script src="panel_inspector.js"></script>
 </body>
 </html>

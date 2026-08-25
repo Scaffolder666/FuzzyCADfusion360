@@ -201,5 +201,11 @@ _reconcile.install(_legacy)
 _clear_all = _load("fuzzycad_clear_all", "core/fuzzycad_clear_all.py")
 _clear_all.install(_legacy)
 
+# Inspector: a fallback admin surface in the palette -- a live status snapshot
+# (open marks by type, ghosted bodies, stray graphics) and a one-click Repair
+# that runs the visual authority (sweep + restore + redraw) by hand.
+_inspector = _load("fuzzycad_inspector", "core/fuzzycad_inspector.py")
+_inspector.install(_legacy)
+
 run = _legacy.run
 stop = _legacy.stop
