@@ -158,6 +158,12 @@ _silhouette_visibility.install(_legacy)
 _layout = _load("fuzzycad_layout_lock", "fuzzycad_layout_lock.py")
 _layout.install(_legacy)
 
+# Two new tools: Press Pull (bidirectional, distance is Need Input) and Hole
+# (diameter and depth are Need Input). Loaded before the dependency layer so its
+# _accept handles hole/presspull directly.
+_hole_pp = _load("fuzzycad_hole_presspull", "fuzzycad_hole_presspull.py")
+_hole_pp.install(_legacy)
+
 # Soft dependency prompts: after a Scale/Extrude is accepted, ask a follow-up
 # "have you considered the neighbouring parts?" and tint the affected bodies
 # until that question is resolved. Loaded last so its _accept/_redraw wrappers
