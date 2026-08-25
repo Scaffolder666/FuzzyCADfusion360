@@ -142,13 +142,35 @@ def install(m):
                         center[2] + u[2] * cu + v[2] * sv))
         return pts
 
+    # "To be removed" tint for the proposed cavity — reads as a real hole while
+    # the host body is ghosted, and updates every frame as diameter/depth change.
+    CUT_RGB = (206, 66, 52)
+
     def draw_hole(group, mark, rgb, amp):
         g = m._geom.get(mark["id"], {})
         n = normalize(g.get("normal", [0, 0, 1]))
         u, v = in_plane_basis(n)
         c = mark.get("anchor", [0, 0, 0])
         r = max(mark.get("diameter", 0.0) / 2.0, 1e-4)
-        depth = max(mark.get("depth", 0.0), 0.0)
+        depth = max(mark.get("depth", 0.0), 1e-4)
+
+        # 1) Solid semi-transparent cylinder = the exact hole volume. A cheap
+        #    transient BRep (not a feature build), rebuilt each redraw so the
+        #    shape follows the manipulator/card live, like Fusion's own preview.
+        try:
+            eps = max(depth * 0.03, 0.01)
+            p_top = adsk.core.Point3D.create(c[0] + n[0] * eps, c[1] + n[1] * eps, c[2] + n[2] * eps)
+            p_bot = adsk.core.Point3D.create(c[0] - n[0] * depth, c[1] - n[1] * depth, c[2] - n[2] * depth)
+            cyl = adsk.fusion.TemporaryBRepManager.get().createCylinderOrCone(p_top, r, p_bot, r)
+            if cyl is not None:
+                cgb = group.addBRepBody(cyl)
+                cgb.color = m._solid(CUT_RGB)
+                cgb.setOpacity(0.40, True)
+        except Exception:
+            pass
+
+        # 2) Sketchy rims + a few wall strokes keep the hand-drawn "this size is
+        #    still uncertain" language on top of the solid preview.
         c_bot = [c[0] - n[0] * depth, c[1] - n[1] * depth, c[2] - n[2] * depth]
         top = circle_pts(c, u, v, r)
         bot = circle_pts(c_bot, u, v, r)
