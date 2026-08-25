@@ -223,21 +223,12 @@ def install(m):
             try:
                 cid = args.input.id
                 if self.cmd_name == "transform" and cid == "sel":
-                    related = m._pending.get("related_bodies", []) if m._pending else []
-                    if related:
-                        show_prompt({
-                            "kind": "move_scope",
-                            "title": "Move together?",
-                            "message": "Move the highlighted parts together or separately.",
-                            "related_count": len(related),
-                            "selected": m._pending.get("move_scope", "only"),
-                            "options": [
-                                {"value": "only", "label": "Separate", "glyph": "●"},
-                                {"value": "together", "label": "Together", "glyph": "◎"},
-                            ],
-                        })
-                    else:
-                        hide_prompt("move_scope")
+                    # No pre-move Separate/Together prompt any more: the "carry the
+                    # attached parts along?" decision is made once, at accept
+                    # (fuzzycad_dependent_follow). Showing it here caused the three
+                    # reported problems (handles never re-appeared, the frozen set
+                    # missed later-built bodies, and the same thing was asked twice).
+                    hide_prompt("move_scope")
                 elif self.cmd_name == "directional_scale" and cid == "dsb" and m._pending:
                     show_prompt({
                         "kind": "scale_scope",
