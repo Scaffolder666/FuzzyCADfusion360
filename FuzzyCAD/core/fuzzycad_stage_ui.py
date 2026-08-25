@@ -138,6 +138,14 @@ def install(m):
             ], 0 if not b else 1, "Fillet")
             return
 
+        if tool == "hole":
+            b = sel_count(inputs, "sel") > 0 if inputs else False
+            send_stage(tool, [
+                {"label": "Select face", "done": b},
+                {"label": "Set diameter & depth", "done": False, "hint": "both Need Input"},
+            ], 0 if not b else 1, "Hole")
+            return
+
         send_stage(None, [], None, "")
 
     class StageInput(adsk.core.InputChangedEventHandler):

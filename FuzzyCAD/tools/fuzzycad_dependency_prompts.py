@@ -31,7 +31,7 @@ def install(m):
     CHECK_GID = "FuzzyCAD_DepCheck"
     DEP_RGB = (225, 126, 38)          # same relationship hue Move/Scale use
     FIT_TOOLS = ("scale", "scale_axis")
-    REACH_TOOLS = ("extrude",)
+    REACH_TOOLS = ("extrude", "hole")   # both reach into the body, possibly beyond it
     DEP_TOOLS = FIT_TOOLS + REACH_TOOLS
 
     def log(msg):
@@ -118,6 +118,8 @@ def install(m):
 
     def followup_text(tool, n):
         parts = "part" if n == 1 else "parts"
+        if tool == "hole":
+            return "Hole may break into {} nearby {} — checked for clearance?".format(n, parts)
         if tool in REACH_TOOLS:
             return "Extrude reaches {} nearby {} — checked for overlap?".format(n, parts)
         return "Scale changed a fit — do the {} highlighted {} still fit?".format(n, parts)
