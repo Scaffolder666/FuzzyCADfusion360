@@ -116,6 +116,23 @@ def install(m):
     # against at accept, so both ends must use one detector for the delta to be real.
     m._follow_detect_dependents = detect_dependents
 
+    def all_body_tokens(design=None):
+        """Tokens of every body in the design right now. Snapshotted at selection so
+        accept can tell a genuinely NEW body (built on the part after the mark) from
+        a pre-existing one the operation merely grew into -- only the former should
+        be auto-carried."""
+        design = design or m._design()
+        toks = set()
+        if design is None:
+            return toks
+        for b in all_bodies(design):
+            t = body_token(b)
+            if t:
+                toks.add(t)
+        return toks
+
+    m._follow_all_tokens = all_body_tokens
+
     def highlight(bodies, on):
         try:
             m._clear(DEP_GID)
@@ -360,6 +377,47 @@ def install(m):
         log("DETECT flex deps tool={} found={}".format(tool, len(out)))
         return out[:12]
 
+    def apply_flex(mark, deps):
+        """Scale/extrude the primary, then translate each chosen dependant by its
+        own local displacement so it stays attached (position follows, size is
+        never changed). Returns old_accept's result. deps may be empty (then only
+        the primary changes)."""
+        design = m._design()
+        plan = []
+        for b in deps:
+            try:
+                c = m._bbox_center_size(b)[0]
+                disp = displacement(mark, c)
+                plan.append((b, body_token(b), disp))
+                log("FLEX plan tok={} disp=({:.3f}, {:.3f}, {:.3f})".format(
+                    body_token(b), disp[0], disp[1], disp[2]))
+            except Exception:
+                log("FLEX plan failed\n{}".format(m.traceback.format_exc()))
+        ok = old_accept(mark)      # scale / extrude the primary
+        moved = 0
+        if ok:
+            for body, tok, disp in plan:
+                if all(abs(x) <= 1e-9 for x in disp):
+                    continue
+                target = body
+                try:
+                    if not target.isValid:
+                        target = None
+                except Exception:
+                    target = None
+                if target is None:
+                    target = resolve_body(design, tok)
+                if target is None:
+                    log("FLEX skip: body lost tok={}".format(tok))
+                    continue
+                try:
+                    translate_body(target, disp)
+                    moved += 1
+                except Exception:
+                    log("FLEX translate failed\n{}".format(m.traceback.format_exc()))
+            log("FLEX moved {} of {} (tool={})".format(moved, len(plan), mark.get("tool")))
+        return ok
+
     RIGID_TOOLS = ("move", "rotate")
     FLEX_TOOLS = ("scale", "scale_axis", "extrude")
 
@@ -404,6 +462,7 @@ def install(m):
             design = m._design()
             scope = mark.get("move_scope", "only")
             s0 = set(mark.get("related_tokens", []) or [])
+            all0 = set(mark.get("all_tokens_at_mark", []) or [])
             specs = []          # [(ref, token)] to carry with the primary
             approved = 0
             built_on = 0
@@ -416,8 +475,11 @@ def install(m):
                 if tok in s0:
                     if scope == "together":
                         specs.append((b, tok)); approved += 1
-                else:
-                    specs.append((b, tok)); built_on += 1     # built-on-top -> auto
+                elif not all0 or tok not in all0:
+                    # Genuinely new since the mark (built on the part afterwards) ->
+                    # auto-carry. A body that already existed at mark time but was not
+                    # a neighbour is left alone.
+                    specs.append((b, tok)); built_on += 1
             log("MOVE/ROTATE carry scope={} approved_neighbours={} built_on_top={}".format(
                 scope, approved, built_on))
             ok = old_accept(mark)                # move the primary (legacy path)
@@ -427,9 +489,41 @@ def install(m):
             return ok
 
         # Non-rigid: Scale / Extrude -> each dependant follows its own local
-        # displacement (position follows; the primary is scaled/extruded as usual).
+        # displacement (position follows, size never changes; the primary is
+        # scaled/extruded as usual).
         if tool in FLEX_TOOLS:
             primary = m._body.get(mark["id"])
+
+            # Scale (uniform or directional): the "keep them attached?" question was
+            # already answered at selection (fuzzycad_scale_scope), so don't re-ask.
+            # Neighbours present at mark time follow only if the reviewer said yes;
+            # parts built on the primary since then follow automatically. Fixed-side
+            # neighbours simply get a zero displacement and stay put on their own.
+            if tool in ("scale", "scale_axis") and mark.get("scope_asked"):
+                scope = mark.get("move_scope", "only")
+                s0 = set(mark.get("related_tokens", []) or [])
+                all0 = set(mark.get("all_tokens_at_mark", []) or [])
+                try:
+                    current = detect_flex_deps(mark, primary)
+                except Exception:
+                    current = []
+                chosen = []
+                attached = built_on = 0
+                for b in current:
+                    tok = body_token(b)
+                    if tok in s0:
+                        if scope == "together":
+                            chosen.append(b); attached += 1
+                    elif not all0 or tok not in all0:
+                        # Genuinely new since the mark -> built on top -> auto.
+                        # A pre-existing part the growth merely reached is NOT moved.
+                        chosen.append(b); built_on += 1
+                log("SCALE carry scope={} attached={} built_on_top={}".format(
+                    scope, attached, built_on))
+                return apply_flex(mark, chosen)
+
+            # Extrude (and any scale with no selection-time answer): keep the
+            # confirm-at-accept dialog.
             deps = []
             try:
                 deps = detect_flex_deps(mark, primary)
@@ -440,43 +534,7 @@ def install(m):
                 take = confirm(len(deps))
                 highlight(deps, False)
                 if take:
-                    design = m._design()
-                    # Capture each dependant (ref + token) and its move from the
-                    # pre-op centroid.
-                    plan = []
-                    for b in deps:
-                        try:
-                            c = m._bbox_center_size(b)[0]
-                            disp = displacement(mark, c)
-                            plan.append((b, body_token(b), disp))
-                            log("FLEX plan tok={} disp=({:.3f}, {:.3f}, {:.3f})".format(
-                                body_token(b), disp[0], disp[1], disp[2]))
-                        except Exception:
-                            log("FLEX plan failed\n{}".format(m.traceback.format_exc()))
-                    ok = old_accept(mark)      # scale / extrude the primary
-                    moved = 0
-                    if ok:
-                        for body, tok, disp in plan:
-                            if all(abs(x) <= 1e-9 for x in disp):
-                                continue
-                            target = body
-                            try:
-                                if not target.isValid:
-                                    target = None
-                            except Exception:
-                                target = None
-                            if target is None:
-                                target = resolve_body(design, tok)
-                            if target is None:
-                                log("FLEX skip: body lost tok={}".format(tok))
-                                continue
-                            try:
-                                translate_body(target, disp)
-                                moved += 1
-                            except Exception:
-                                log("FLEX translate failed\n{}".format(m.traceback.format_exc()))
-                        log("FLEX moved {} of {} (tool={})".format(moved, len(plan), tool))
-                    return ok
+                    return apply_flex(mark, deps)
 
         return old_accept(mark)
 

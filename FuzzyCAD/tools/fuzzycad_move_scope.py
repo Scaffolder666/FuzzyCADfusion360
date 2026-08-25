@@ -253,6 +253,7 @@ def install(m):
             return None
         mark["related_bodies"] = list(m._pending.get("related_bodies", []))
         mark["related_tokens"] = list(m._pending.get("related_tokens", []))
+        mark["all_tokens_at_mark"] = list(m._pending.get("all_tokens", []))
         mark["move_scope"] = m._pending.get("move_scope") or scope_value() or "only"
         return mark
 
@@ -312,6 +313,8 @@ def install(m):
                         related = detect_related(primary)
                     m._pending["related_bodies"] = list(related)
                     m._pending["related_tokens"] = [body_token(b) for b in related]
+                    snap = getattr(m, "_follow_all_tokens", None)
+                    m._pending["all_tokens"] = list(snap()) if snap else []
                     m._pending["scope_asked_for"] = ptok
                     m._pending["scope_chosen"] = True
                     if related:

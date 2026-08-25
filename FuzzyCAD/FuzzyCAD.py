@@ -181,6 +181,13 @@ _dependency.install(_legacy)
 _follow = _load("fuzzycad_dependent_follow", "tools/fuzzycad_dependent_follow.py")
 _follow.install(_legacy)
 
+# Scale scope: mirror Move's selection-time question for the Scale command. Asks
+# once whether touching parts stay attached; the FLEX path in dependent_follow
+# then translates them at accept (position only, never resized). Loaded after
+# dependent_follow so m._follow_detect_dependents is available.
+_scale_scope = _load("fuzzycad_scale_scope", "tools/fuzzycad_scale_scope.py")
+_scale_scope.install(_legacy)
+
 # State reconciliation: outermost redraw wrapper. Reclaims ghost bodies left
 # semi-transparent after a rebuild invalidated their restore proxy, and clears
 # stray idle PREVIEW graphics, keeping the 3D view in sync with the open marks.
