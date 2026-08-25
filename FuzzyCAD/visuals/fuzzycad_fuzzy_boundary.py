@@ -29,10 +29,11 @@ BODY_OPACITY    = 0.5             # the real (clickable) body's fade, like the g
 GHOST_RGB       = (240, 195, 45)  # colour of the ghost lines (yellow)
 GHOST_ALPHA     = 110             # line faintness 0-255 (Fusion may clamp line alpha)
 LINE_WEIGHT     = 1.0             # line thickness
-COPIES_PER_BODY = 6               # how many offset wireframe copies = the ghosting
-SCATTER         = 0.03            # copy offset, as a fraction of body size
-JITTER          = 0.07            # per-point wobble, as a fraction of body size
-                                  #   (LOWER = calmer; this is the "too shaky" dial)
+COPIES_PER_BODY = 3               # how many offset wireframe copies = the ghosting
+SCATTER         = 0.015           # copy offset, as a fraction of body size (small!)
+JITTER          = 0.0             # per-point wobble; 0 = clean offset outlines.
+                                  #   Raise a LITTLE (0.01-0.02) for a hand feel;
+                                  #   high values turn edges into a scribble.
 MAX_LINES       = 1400            # cost guard across all questioned bodies
 # ============================================================================
 
@@ -115,8 +116,8 @@ def install(m):
                 _, size = m._bbox_center_size(b)
             except Exception:
                 size = 3.0
-            step = max(0.03, min(float(size) * SCATTER, 0.8))   # copy offset ~ body size
-            jit = max(0.01, min(float(size) * JITTER, 0.6))     # per-point wobble
+            step = max(0.02, min(float(size) * SCATTER, 0.30))  # copy offset ~ body size
+            jit = max(0.0, min(float(size) * JITTER, 0.30))     # per-point wobble (0 = clean)
             try:
                 loops = m._sample_edges(b.edges)
             except Exception:
