@@ -73,6 +73,7 @@ def install(m):
         if not (0 <= shown < len(alts)):
             return
         seed = mark["id"] * 700
+        size = mark.get("size", 3.0)
         idx = 0
         for tok in alts[shown].get("body_tokens", []):
             b = resolve_body(design, tok)
@@ -80,9 +81,17 @@ def install(m):
                 continue
             try:
                 for poly in m._sample_edges(b.edges):
-                    if len(poly) >= 2:
+                    if len(poly) < 2:
+                        continue
+                    # Use the same wobbly "proposal" stroke as Move/Extrude so the
+                    # unresolved option reads as a hand-drawn proposal. The compare
+                    # role itself has no wobble, which is why passing its amp drew
+                    # straight lines.
+                    if hasattr(m, "_visual_stroke"):
+                        m._visual_stroke(group, poly, "proposal_outer", seed + idx, size)
+                    else:
                         m._sketchy(group, poly, rgb, amp, seed + idx, weight=1, strokes=2)
-                        idx += 1
+                    idx += 1
             except Exception:
                 continue
 
