@@ -90,9 +90,20 @@ def install(m):
             return
         side = selected_side()
         m._pending["scale_side"] = side
+        # Gated: only the direction the reviewer picked gets a handle. Until an
+        # axis is chosen (dir_axis is None) every handle stays hidden, so the
+        # scale is a deliberate one-direction choice like Move's scope.
+        chosen = m._pending.get("dir_axis")
         for axis in ("X", "Y", "Z"):
             it = m._inputs.itemById("ds" + axis)
             if it is None:
+                continue
+            if chosen is None or axis != chosen:
+                try:
+                    it.isVisible = False
+                    it.isEnabled = False
+                except Exception:
+                    pass
                 continue
             try:
                 origin = active_handle_origin(axis, side)
@@ -105,7 +116,11 @@ def install(m):
                 it.isEnabled = True
             except Exception as exc:
                 log("handle {} placement failed: {}".format(axis, exc))
-        log("MODE={} handles repositioned".format(side))
+        log("MODE={} axis={} handles repositioned".format(side, chosen))
+
+    # Shared so the command owner (fuzzycad_direct_interactions) can re-place the
+    # single chosen-axis handle after the direction radio changes.
+    m._place_directional_handles = place_handles
 
     def annotate_mark(mark):
         if mark is None or mark.get("tool") != "scale_axis":

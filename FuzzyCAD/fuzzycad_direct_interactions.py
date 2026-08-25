@@ -132,25 +132,46 @@ def install(m):
             ),
         }
 
-    def show_directional_handles():
-        if not m._pending or m._inputs is None:
+    def hide_directional_handles():
+        if m._inputs is None:
             return
-        mn, mx = m._pending["bbox"]
-        a = m._pending["anchor"]
-        origins = {
-            "X": (mx[0], a[1], a[2]),
-            "Y": (a[0], mx[1], a[2]),
-            "Z": (a[0], a[1], mx[2]),
-        }
         for axis in ("X", "Y", "Z"):
             it = m._inputs.itemById("ds" + axis)
-            if it is None:
-                continue
-            p = adsk.core.Point3D.create(*origins[axis])
-            it.setManipulator(p, adsk.core.Vector3D.create(*m._axis_unit(axis)))
-            it.isVisible = True
-            it.isEnabled = True
-        log("DIRECTIONAL SCALE READY body selected -> X/Y/Z handles visible")
+            if it is not None:
+                try:
+                    it.isVisible = False
+                    it.isEnabled = False
+                except Exception:
+                    pass
+
+    def chosen_axis():
+        try:
+            it = m._inputs.itemById("dsAxis") if m._inputs else None
+            item = it.selectedItem if it else None
+            name = item.name if item else ""
+            if name in ("X", "Y", "Z"):
+                return name
+        except Exception:
+            pass
+        return None
+
+    def reset_axis_choice():
+        it = m._inputs.itemById("dsAxis") if m._inputs else None
+        if it is not None:
+            try:
+                it.listItems.item(0).isSelected = True   # back to "Choose…"
+                it.isVisible = True
+            except Exception:
+                pass
+
+    def place_chosen_axis():
+        # Delegate to the scope module's placement (it also honours the +/-/both
+        # side); it reads the picked axis from m._pending["dir_axis"].
+        place = getattr(m, "_place_directional_handles", None)
+        if place is not None:
+            place()
+        else:
+            hide_directional_handles()
 
     def directional_mark():
         mid = m._live.get("scale_axis")
@@ -202,13 +223,28 @@ def install(m):
                         return
                     body = sel.selection(0).entity
                     m._pending = build_body_pending(body)
-                    state["dir_axis"] = "X"
-                    show_directional_handles()
+                    # Force a direction choice first: no handle until X/Y/Z picked.
+                    state["dir_axis"] = None
+                    if m._pending is not None:
+                        m._pending["dir_axis"] = None
+                    hide_directional_handles()
+                    reset_axis_choice()
+                    return
+
+                if cid == "dsAxis" and m._pending:
+                    axis = chosen_axis()
+                    state["dir_axis"] = axis
+                    m._pending["dir_axis"] = axis
+                    if axis is None:
+                        hide_directional_handles()
+                    else:
+                        place_chosen_axis()
                     return
 
                 if cid in ("dsX", "dsY", "dsZ") and m._pending:
                     axis = cid[-1]
                     state["dir_axis"] = axis
+                    m._pending["dir_axis"] = axis
                     mark = sync_directional(axis)
                     draw_directional_preview(mark)
                     state["dir_seq"] += 1
@@ -221,8 +257,8 @@ def install(m):
     class DirectionalScalePreview(adsk.core.CommandEventHandler):
         def notify(self, args):
             try:
-                if m._pending:
-                    mark = sync_directional(state.get("dir_axis", "X"))
+                if m._pending and state.get("dir_axis"):
+                    mark = sync_directional(state["dir_axis"])
                     draw_directional_preview(mark)
                 args.isValidResult = True
             except Exception:
@@ -231,8 +267,8 @@ def install(m):
     class DirectionalScaleExecute(adsk.core.CommandEventHandler):
         def notify(self, args):
             try:
-                if m._pending:
-                    sync_directional(state.get("dir_axis", "X"))
+                if m._pending and state.get("dir_axis"):
+                    sync_directional(state["dir_axis"])
                 m._clear(m.GROUP_PREVIEW)
                 m._redraw_marks()
                 m._send_state()
@@ -507,6 +543,14 @@ def install(m):
                             adsk.core.ValueInput.createByReal(0.0))
                         it.isVisible = False
                         it.isEnabled = False
+
+                    axis_choice = inputs.addRadioButtonGroupCommandInput(
+                        "dsAxis", "Scale along — pick a direction")
+                    axis_choice.listItems.add("Choose…", True)
+                    axis_choice.listItems.add("X", False)
+                    axis_choice.listItems.add("Y", False)
+                    axis_choice.listItems.add("Z", False)
+                    axis_choice.isVisible = False
 
                     for handler, event in (
                         (DirectionalScaleInputChanged(), cmd.inputChanged),
