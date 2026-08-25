@@ -54,35 +54,59 @@ def install(m):
             pass
         return None
 
-    # ---- draw: tint each option so the choice reads in place ---------------
+    # Tokens currently hidden by an in-place comparison, so they can be restored.
+    hidden = set()
+
+    # ---- draw: nothing extra; the option is a real body toggled visible ----
     def draw_compare(group, mark, rgb, amp):
         if not mark.get("inplace"):
             if old_draw is not None:
                 return old_draw(group, mark, rgb, amp)
             return
-        design = m._design()
-        sel = mark.get("selected")
-        for i, alt in enumerate((mark.get("alternatives") or [])[:2]):
-            if sel is None:
-                col, op = CONF_RGB, 0.30
-            elif i == sel:
-                col, op = KEEP_RGB, 0.45      # kept option
-            else:
-                col, op = DROP_RGB, 0.20      # would be removed
-            for tok in alt.get("body_tokens", []):
-                b = resolve_body(design, tok)
-                if b is None:
-                    continue
-                try:
-                    cg = group.addBRepBody(b)
-                    cg.color = m._solid(col)
-                    cg.setOpacity(op, True)
-                except Exception:
-                    continue
-        # The conflict badge is drawn by _draw_one after this, so it is not
-        # repeated here.
+        # In-place uses the original Compare language: only one option is shown,
+        # the other is hidden. Visibility is toggled in reconcile_visibility on
+        # every redraw; here there is nothing to draw (the conflict badge is
+        # still added by _draw_one).
+        return
 
     m._DRAW["compare"] = draw_compare
+
+    def shown_index(mark):
+        sel = mark.get("selected")
+        return sel if sel in (0, 1) else 0     # default to Option 1 before a pick
+
+    def reconcile_visibility():
+        """Show only the chosen option of each open in-place comparison; hide the
+        other. Restore anything previously hidden that no longer should be."""
+        design = m._design()
+        if design is None:
+            return
+        want_hidden = set()
+        for mark in list(getattr(m, "_marks", []) or []):
+            if (mark.get("tool") == "compare" and mark.get("inplace")
+                    and mark.get("status", "open") == "open"):
+                alts = mark.get("alternatives") or []
+                loser = 1 - shown_index(mark)
+                if 0 <= loser < len(alts):
+                    for tok in alts[loser].get("body_tokens", []):
+                        want_hidden.add(tok)
+        for tok in want_hidden:
+            b = resolve_body(design, tok)
+            if b is not None:
+                try:
+                    b.isVisible = False
+                    hidden.add(tok)
+                except Exception:
+                    pass
+        for tok in list(hidden):
+            if tok not in want_hidden:
+                b = resolve_body(design, tok)
+                if b is not None:
+                    try:
+                        b.isVisible = True
+                    except Exception:
+                        pass
+                hidden.discard(tok)
 
     # ---- accept: keep the chosen option, delete the other ------------------
     def accept(mark):
@@ -114,6 +138,22 @@ def install(m):
 
     m._accept = accept
 
+    old_redraw = m._redraw_marks
+
+    def redraw(*a, **k):
+        r = old_redraw(*a, **k)
+        try:
+            reconcile_visibility()
+        except Exception:
+            log("visibility reconcile failed\n{}".format(m.traceback.format_exc()))
+        try:
+            m._app.activeViewport.refresh()
+        except Exception:
+            pass
+        return r
+
+    m._redraw_marks = redraw
+
     # ---- create the in-place conflict --------------------------------------
     def bodies_from(cid):
         out = []
@@ -128,6 +168,30 @@ def install(m):
         except Exception:
             pass
         return out
+
+    def count(cid):
+        try:
+            it = state["inputs"].itemById(cid) if state.get("inputs") else None
+            return it.selectionCount if it is not None else 0
+        except Exception:
+            return 0
+
+    def stage():
+        if not hasattr(m, "_set_tool_stage"):
+            return
+        a = count("chere_a") > 0
+        b = count("chere_b") > 0
+        active = 0 if not a else (1 if not b else 2)
+        try:
+            m._set_tool_stage("compare_here", [
+                {"label": "Select Option 1 bodies", "done": a,
+                 "hint": "every body of the first option"},
+                {"label": "Select Option 2 bodies", "done": b,
+                 "hint": "every body of the second option"},
+                {"label": "Create, then pick in the card", "done": False},
+            ], active, "Compare here")
+        except Exception:
+            pass
 
     def create_inplace_mark(a_bodies, b_bodies):
         a_toks = [token(b) for b in a_bodies if token(b)]
@@ -191,9 +255,22 @@ def install(m):
             except Exception:
                 args.areInputsValid = False
 
+    class InputChanged(adsk.core.InputChangedEventHandler):
+        def notify(self, args):
+            try:
+                state["inputs"] = args.inputs
+                stage()
+            except Exception:
+                pass
+
     class Destroy(adsk.core.CommandEventHandler):
         def notify(self, args):
             state["inputs"] = None
+            try:
+                if hasattr(m, "_set_tool_stage"):
+                    m._set_tool_stage(None, [], None, "")
+            except Exception:
+                pass
 
     class Created(adsk.core.CommandCreatedEventHandler):
         def notify(self, args):
@@ -219,12 +296,14 @@ def install(m):
                         pass
                 state["inputs"] = inputs
                 for handler, event in (
+                    (InputChanged(), cmd.inputChanged),
                     (Execute(), cmd.execute),
                     (Validate(), cmd.validateInputs),
                     (Destroy(), cmd.destroy),
                 ):
                     event.add(handler)
                     m._handlers.append(handler)
+                stage()
                 log("ACTIVE in-place Compare")
             except Exception:
                 log("setup failed\n{}".format(m.traceback.format_exc()))
@@ -262,4 +341,21 @@ def install(m):
         log("READY: in-place Compare")
         return result
 
+    def stop(context):
+        # Restore any option hidden by an in-place comparison before shutdown.
+        try:
+            design = m._design()
+            for tok in list(hidden):
+                b = resolve_body(design, tok)
+                if b is not None:
+                    try:
+                        b.isVisible = True
+                    except Exception:
+                        pass
+            hidden.clear()
+        except Exception:
+            pass
+        return old_stop(context)
+
     m.run = run
+    m.stop = stop
