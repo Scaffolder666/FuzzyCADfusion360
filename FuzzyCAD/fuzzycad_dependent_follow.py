@@ -72,12 +72,16 @@ def install(m):
             pass
         return out
 
-    def detect_dependents(primary):
+    def detect_dependents(primary, exclude=None):
         """Bodies that touch the marked body (bounding-box contact) -- the same
         proven proximity signal Move scope uses. Loose on purpose: the user
-        confirms the set, so a false positive just gets left unchecked."""
+        confirms the set, so a false positive just gets left unchecked.
+
+        `exclude` is a set of tokens already decided before the move (the pre-move
+        Only/Together set), so the same parts are never asked about twice."""
         if primary is None:
             return []
+        exclude = exclude or set()
         design = m._design()
         if design is None:
             return []
@@ -93,7 +97,7 @@ def install(m):
         for b in all_bodies(design):
             try:
                 tok = body_token(b)
-                if tok is None or tok == ptok or tok in seen:
+                if tok is None or tok == ptok or tok in seen or tok in exclude:
                     continue
                 seen.add(tok)
                 if hasattr(b, "isVisible") and not b.isVisible:
@@ -217,9 +221,16 @@ def install(m):
                     or (tool in ("move", "rotate") and mark.get("move_scope") != "together"))
         if eligible:
             primary = m._body.get(mark["id"])
+            # Parts already decided before the move (the pre-move Only/Together
+            # set) are not asked about again here.
+            exclude = set()
+            for b in mark.get("related_bodies") or []:
+                t = body_token(b)
+                if t:
+                    exclude.add(t)
             deps = []
             try:
-                deps = detect_dependents(primary)
+                deps = detect_dependents(primary, exclude)
             except Exception:
                 deps = []
             if deps:
