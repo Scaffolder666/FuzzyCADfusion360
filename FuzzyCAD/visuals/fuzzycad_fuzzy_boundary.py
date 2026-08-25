@@ -26,12 +26,13 @@ import random
 #  file; there is nothing to hunt for inside the functions below.)
 # ============================================================================
 FUZZY_ON        = True            # False -> fall straight back to the plain ghost
-BODY_OPACITY    = 0.5             # the real (clickable) body's fade, like the ghost
-COPIES_PER_BODY = 3               # how many offset wireframe copies = the ghosting
-SCATTER         = 0.015           # copy offset, as a fraction of body size (small!)
+BODY_OPACITY    = 0.2             # the real (clickable) body's fade, like the ghost
+COPIES_PER_BODY = 6               # how many offset wireframe copies = the ghosting
+SCATTER         = 0.03            # copy offset, as a fraction of body size (bigger = more spread)
+LINE_WEIGHT     = 1.0             # ghost line thickness (try 0.6 thin .. 2.5 bold)
 GRAY_LIGHT      = 165             # lightest ghost copy (0=black .. 255=white)
 GRAY_DARK       = 45              # darkest ghost copy — copies fade across this range
-MAX_LINES       = 1400            # cost guard across all questioned bodies
+MAX_LINES       = 2400            # cost guard across all questioned bodies
 # Each ghost line is drawn with the same hand-drawn "sketchy" wobble as the
 # proposals (the pulled-out preview), via _visual_stroke's proposal role.
 # ============================================================================
@@ -84,9 +85,11 @@ def install(m):
         """One hand-drawn ghost line: the proposals' sketchy wobble, our grey."""
         vs = getattr(m, "_visual_stroke", None)
         if vs is not None:
-            vs(grp, pts, "proposal_internal", seed, size=size, rgb=rgb, weight=1, strokes=1)
+            vs(grp, pts, "proposal_internal", seed, size=size, rgb=rgb,
+               weight=LINE_WEIGHT, strokes=1)
         else:
-            m._sketchy(grp, pts, rgb, max(0.01, size * 0.004), seed, weight=1, strokes=1)
+            m._sketchy(grp, pts, rgb, max(0.01, size * 0.004), seed,
+                       weight=LINE_WEIGHT, strokes=1)
 
     def draw_fuzzy():
         """Draw the questioned body's EDGES as a few offset copies, each a
@@ -111,7 +114,7 @@ def install(m):
                 _, size = m._bbox_center_size(b)
             except Exception:
                 size = 3.0
-            step = max(0.02, min(float(size) * SCATTER, 0.30))  # copy offset ~ body size
+            step = max(0.02, min(float(size) * SCATTER, 0.80))  # copy offset ~ body size
             try:
                 loops = m._sample_edges(b.edges)
             except Exception:
