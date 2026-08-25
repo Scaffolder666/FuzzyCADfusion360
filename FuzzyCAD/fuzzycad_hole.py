@@ -255,19 +255,36 @@ def install(m):
             except Exception:
                 pass
             super().notify(args)
-            if getattr(m, "_active_cmd", None) != "hole" or cid != "sel" or not m._pending:
+            if getattr(m, "_active_cmd", None) != "hole" or not m._pending:
                 return
             try:
-                seed_hole()
-                place_param_manipulators()
-                mid = m._live.get("hole")
-                if mid is not None:
-                    m._clear(m.GROUP_PREVIEW)
-                    m._draw_one(m._group(m.GROUP_PREVIEW), m._find(mid))
-                    m._refresh_ghost()
-                    m._app.activeViewport.refresh()
+                if cid == "sel":
+                    seed_hole()
+                    place_param_manipulators()
+                    mid = m._live.get("hole")
+                    if mid is not None:
+                        m._clear(m.GROUP_PREVIEW)
+                        m._draw_one(m._group(m.GROUP_PREVIEW), m._find(mid))
+                        m._refresh_ghost()
+                        m._app.activeViewport.refresh()
+                    return
+
+                if cid in ("hd", "hp"):
+                    # Manipulator drag is delivered as inputChanged in this build,
+                    # not executePreview — sync straight from the native distance
+                    # inputs so the cavity follows the handle live. No explicit
+                    # viewport refresh: that would release the manipulator mid-drag.
+                    mid = m._live.get("hole")
+                    mk = m._find(mid) if mid is not None else None
+                    if mk is not None:
+                        mk["diameter"] = max(m._val("hd"), 1e-4)
+                        mk["depth"] = max(m._val("hp"), 1e-4)
+                        m._clear(m.GROUP_PREVIEW)
+                        m._draw_one(m._group(m.GROUP_PREVIEW), mk)
+                        m._refresh_ghost()
+                        m._send_state()
             except Exception:
-                log("seed failed\n{}".format(m.traceback.format_exc()))
+                log("hole input failed\n{}".format(m.traceback.format_exc()))
 
     m.FuzzyInputChanged = FuzzyInputChanged
 
