@@ -37,6 +37,10 @@ GRAY_LIGHT      = 165             # lightest ghost copy (0=black .. 255=white)
 GRAY_DARK       = 45              # darkest ghost copy — copies fade across this range
 SHOW_THROUGH    = True            # ghost lines stay visible even behind the solid (X-ray)
 SHOW_THRU_OPACITY = 0.6           # how strongly they bleed through (0 hidden .. 1 full)
+FLAT_FILL       = True            # comic look: fill the body with a flat matte colour under
+                                  #   the sketchy lines (cel-shaded). False = lines only.
+FILL_RGB        = (222, 220, 214) # the flat fill colour (paper/putty)
+FILL_FLATTEN    = 0.55            # 0 = normal lit shading .. 1 = fully flat (unlit) fill
 MAX_LINES       = 2400            # cost guard across all questioned bodies
 # Each ghost line is drawn with the same hand-drawn "sketchy" wobble as the
 # proposals (the pulled-out preview), via _visual_stroke's proposal role.
@@ -110,6 +114,36 @@ def install(m):
             m._sketchy(grp, pts, rgb, max(0.01, size * 0.004), seed,
                        weight=LINE_WEIGHT, strokes=1)
 
+    def flat_material():
+        """A flat, matte, low-reflection fill (cel-shaded / comic look). Specular is
+        black (no shine); emissive lifts the colour toward unlit so lighting barely
+        shades it -- a flat colour block, not a rendered solid."""
+        def C(r, g, b):
+            return adsk.core.Color.create(int(max(0, min(255, r))),
+                                          int(max(0, min(255, g))),
+                                          int(max(0, min(255, b))), 255)
+        r, g, b = FILL_RGB
+        f = max(0.0, min(1.0, FILL_FLATTEN))
+        return adsk.fusion.CustomGraphicsBasicMaterialColorEffect.create(
+            C(r, g, b),                         # diffuse
+            C(r, g, b),                         # ambient
+            C(0, 0, 0),                         # specular -> no shine (matte)
+            C(r * f, g * f, b * f),             # emissive -> flatten the shading
+            0.0,                                # glossiness
+            1.0)                                # opacity (opaque flat block)
+
+    def draw_fill(grp, tmp, b):
+        if not FLAT_FILL or tmp is None:
+            return
+        try:
+            dup = tmp.copy(b)
+            if dup is None:
+                return
+            cg = grp.addBRepBody(dup)           # CustomGraphics = not selectable
+            cg.color = flat_material()
+        except Exception:
+            log("flat fill failed\n{}".format(m.traceback.format_exc()))
+
     def draw_fuzzy():
         """Draw the questioned body's EDGES as a few offset copies, each a
         hand-drawn (sketchy) line in a grey that fades from light to near-black
@@ -133,8 +167,13 @@ def install(m):
         grp = m._group(GID)
         if grp is None:
             return
+        try:
+            tmp = adsk.fusion.TemporaryBRepManager.get()
+        except Exception:
+            tmp = None
         drawn = 0
         for bi, b in enumerate(bodies):
+            draw_fill(grp, tmp, b)   # flat comic fill first, so the lines land on top
             try:
                 _, size = m._bbox_center_size(b)
             except Exception:
@@ -176,7 +215,10 @@ def install(m):
                     float(SHOW_THRU_OPACITY))
                 for i in range(grp.count):
                     try:
-                        grp.item(i).showThrough = eff
+                        ent = grp.item(i)
+                        # Only the ghost LINES bleed through; leave the flat fill solid.
+                        if "Line" in getattr(ent, "objectType", ""):
+                            ent.showThrough = eff
                     except Exception:
                         pass
             except Exception:
