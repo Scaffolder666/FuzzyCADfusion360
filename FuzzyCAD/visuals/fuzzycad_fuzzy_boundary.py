@@ -2,10 +2,11 @@
 
 The advisor's point: a half-transparent body is ambiguous -- transparency is
 everywhere in CAD, so it doesn't read as "there's an open question here." This
-moves the "unsettled" signal off transparency and onto the BOUNDARY: the
-questioned body stays clearly present (only a light fade, so the sketchy proposal
-still reads through it), and its edges are redrawn as an offset hand-drawn blur --
-"the true edge isn't pinned yet."
+moves the "unsettled" signal off transparency and onto a DOUBLE IMAGE: the
+questioned body stays clearly present and clickable, and a couple of faint,
+OFFSET copies of it are drawn as ghost doubles -- "not pinned yet." The copies
+are CustomGraphics, so they render but can never be selected or picked; only the
+real body underneath responds to clicks.
 
 Fully reversible:
   * set m._FUZZY_BOUNDARY = False  -> reverts to the classic 0.5 ghost, or
@@ -26,10 +27,14 @@ def install(m):
     m._FUZZY_BOUNDARY = True
 
     GID = "FuzzyCAD_FuzzyBoundary"
-    SOFT_OPACITY = 0.7           # present, but the proposal still reads through
-    EDGE_RGB = (118, 124, 132)   # cool graphite -- not the orange operation cue
-    PASSES = 2                   # overlapping jittered passes = the blur
-    MAX_EDGES = 220              # cost guard across all questioned bodies
+    SOFT_OPACITY = 0.85          # the real (clickable) body stays clearly present
+    GHOST_RGB = (96, 118, 156)   # cool blue-grey afterimage, distinct from the body
+    GHOST_OPACITY = 0.22         # each offset copy is faint; they layer into a blur
+    # Offset directions for the non-selectable ghost doubles, as fractions of the
+    # body size. A couple of opposed offsets read as "not pinned / double vision"
+    # rather than "moved one way".
+    OFFSETS = [(0.9, 0.35, 0.0), (-0.7, -0.3, 0.35)]
+    MAX_COPIES = 8               # cost guard across all questioned bodies
 
     def log(msg):
         try:
@@ -57,23 +62,10 @@ def install(m):
             out.append(b)
         return out
 
-    def sample_edge(edge, n=10):
-        try:
-            ev = edge.evaluator
-            ok, sp, ep = ev.getParameterExtents()
-            if not ok:
-                return []
-            pts = []
-            for i in range(n + 1):
-                t = sp + (ep - sp) * i / n
-                ok2, p = ev.getPointAtParameter(t)
-                if ok2:
-                    pts.append((p.x, p.y, p.z))
-            return pts
-        except Exception:
-            return []
-
     def draw_fuzzy():
+        """Draw non-selectable, offset copies of each questioned body -- 'ghost
+        doubles'. They live in a CustomGraphics group, so they render but can never
+        be clicked or picked; only the real body underneath is selectable."""
         try:
             m._clear(GID)
         except Exception:
@@ -86,34 +78,37 @@ def install(m):
         grp = m._group(GID)
         if grp is None:
             return
-        drawn = 0
+        try:
+            tmp = adsk.fusion.TemporaryBRepManager.get()
+        except Exception:
+            return
+        made = 0
         for b in bodies:
             try:
                 _, size = m._bbox_center_size(b)
             except Exception:
                 size = 3.0
-            amp = max(0.03, min(float(size) * 0.015, 0.20))   # blur scales with body
-            try:
-                edges = b.edges
-                count = edges.count
-            except Exception:
-                continue
-            for i in range(count):
-                if drawn >= MAX_EDGES:
-                    log("edge cap hit ({}) -- boundary drawn partially".format(MAX_EDGES))
+            step = max(0.05, min(float(size) * 0.03, 0.6))   # offset scales with body
+            for off in OFFSETS:
+                if made >= MAX_COPIES:
                     break
-                pts = sample_edge(edges.item(i))
-                if len(pts) < 2:
-                    continue
-                for s in range(PASSES):
-                    try:
-                        m._sketchy(grp, pts, EDGE_RGB, amp, (i * 7 + s * 131) & 0xffff,
-                                   weight=1, strokes=1)
-                    except Exception:
-                        pass
-                drawn += 1
-            if drawn >= MAX_EDGES:
+                try:
+                    dup = tmp.copy(b)                        # temp BRep copy
+                    if dup is None:
+                        continue
+                    mtx = adsk.core.Matrix3D.create()
+                    mtx.translation = adsk.core.Vector3D.create(
+                        off[0] * step, off[1] * step, off[2] * step)
+                    tmp.transform(dup, mtx)
+                    cg = grp.addBRepBody(dup)               # CustomGraphics = not selectable
+                    cg.color = m._solid(GHOST_RGB)
+                    cg.setOpacity(GHOST_OPACITY, True)
+                    made += 1
+                except Exception:
+                    pass
+            if made >= MAX_COPIES:
                 break
+        log("ghost doubles drawn={} for {} body(ies)".format(made, len(bodies)))
         try:
             m._app.activeViewport.refresh()
         except Exception:
@@ -147,8 +142,8 @@ def install(m):
 
     def run(context):
         result = old_run(context)
-        log("FUZZY BOUNDARY READY (experiment): soft {:.0%} body + offset hand-drawn edges".format(
-            SOFT_OPACITY))
+        log("FUZZY BOUNDARY READY (experiment): {:.0%} real body + non-selectable offset "
+            "ghost doubles".format(SOFT_OPACITY))
         return result
 
     m.run = run
