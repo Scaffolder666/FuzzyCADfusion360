@@ -1,27 +1,21 @@
-"""Soft dependency prompts for FuzzyCAD.
+"""Soft dependency prompts for FuzzyCAD, shown in the left tool rail.
 
-Design principle (from the project's collaboration model): the system makes a
-possible coupling *visible*, but never makes the decision for the user. So this
-module does NOT auto-change, auto-link, or auto-mark anything as uncertain. It
-only asks a soft question -- "you changed a fitting/reaching dimension; have you
-considered the neighbouring parts?" -- and tints those neighbours while that one
-question is still open. The reviewer answers or dismisses it; the tint clears.
+Design principle: the system makes a possible coupling *visible* but never makes
+the decision for the user. So this module does NOT auto-change, auto-link, or
+mark anything as uncertain. After a Scale or Extrude is accepted, it detects the
+nearby parts that might be affected and raises one soft nudge -- "you changed a
+fitting/reaching dimension; have you considered these parts?" -- as a compact
+banner at the top of the FuzzyCAD tool rail, and tints those parts orange while
+the nudge is open. The reviewer dismisses it (or acts on their own); nothing is
+applied automatically.
 
-Timing differs by relation type, matching how each operation actually couples:
+Timing matches how each operation couples: Move/Rotate ask *before* the motion
+(a real together/separate fork, handled in fuzzycad_move_scope). Scale (fit) and
+Extrude (reach) ask *afterward*, because scaling a bore or extending a boss does
+not imply the mating part should change too -- there is no fork, only a check.
 
-  * Move / Rotate (co-motion) -- handled elsewhere (fuzzycad_move_scope): the
-    question is asked *before* the motion as a forced together/separate choice,
-    because whether a neighbour travels along is a real fork.
-
-  * Scale / Scale X-Y-Z (fit) and Extrude (reach) -- handled here: scaling a bore
-    or extending a boss does not mean the mating part should change too, so there
-    is no "do it together" fork. Instead, *after* the change is accepted, a new
-    open follow-up card appears asking the reviewer to check fit / overlap. It
-    pre-fills no geometry and can simply be dismissed.
-
-Detection is geometry-first and conservative (bounding-box proximity within the
-same component), the same cheap signal Move uses, run once at accept time -- not
-per frame.
+The prompt is intentionally runtime-only: it is an ephemeral "did you consider"
+nudge, not a saved question, so it is never written to the document.
 """
 
 import math
@@ -31,26 +25,23 @@ def install(m):
     adsk = m.adsk
     old_accept = m._accept
     old_redraw = m._redraw_marks
+    CurrentPaletteHTMLHandler = m.PaletteHTMLHandler
 
     DEP_GID = "FuzzyCAD_DepColor"
-    # One consistent "relationship" colour across the app (same hue Move uses for
-    # its nearby set), so a tinted body always reads as "the system is pointing at
-    # this because of another change".
-    DEP_RGB = (225, 126, 38)
-    # Tools whose acceptance raises a *post-hoc* fit/reach question. Co-motion
-    # tools (move/rotate) ask before the motion and are intentionally excluded.
+    DEP_RGB = (225, 126, 38)          # same relationship hue Move uses
     FIT_TOOLS = ("scale", "scale_axis")
     REACH_TOOLS = ("extrude",)
     DEP_TOOLS = FIT_TOOLS + REACH_TOOLS
 
-    _followup_count = {"n": 0}
+    # Runtime-only list of active nudges: {id, kind, text, related_tokens, source_token}
+    PROMPTS = []
+    seq = {"n": 0}
 
     def log(msg):
         try:
             fn = getattr(m, "_debug", None)
             if fn:
-                fn(msg)
-                return
+                fn(msg); return
         except Exception:
             pass
         try:
@@ -58,6 +49,7 @@ def install(m):
         except Exception:
             pass
 
+    # ---- geometry-first relation detection --------------------------------
     def body_token(body):
         try:
             return body.entityToken
@@ -73,13 +65,6 @@ def install(m):
         return math.sqrt(dx * dx + dy * dy + dz * dz)
 
     def detect_related_tokens(primary):
-        """Nearby/touching bodies in the same component, by bbox proximity.
-
-        Deliberately the same cheap, conservative signal Move uses: a first-pass
-        relation hint for imported multi-body STEP models that usually carry no
-        joint metadata. Returns entityTokens (stable across the rebuild the
-        accepted feature triggers) rather than live body proxies.
-        """
         if primary is None:
             return []
         try:
@@ -91,8 +76,7 @@ def install(m):
             _, size = m._bbox_center_size(primary)
         except Exception:
             size = 3.0
-        # cm: 0.5 mm minimum, up to 2 mm on larger objects.
-        tol = max(0.05, min(float(size) * 0.02, 0.20))
+        tol = max(0.05, min(float(size) * 0.02, 0.20))  # 0.5mm .. 2mm
         try:
             pbb = primary.boundingBox
         except Exception:
@@ -107,7 +91,6 @@ def install(m):
                     continue
                 if hasattr(b, "isVisible") and not b.isVisible:
                     continue
-                # Do not couple a body that already carries its own open question.
                 try:
                     if m._body_locked(b):
                         continue
@@ -136,94 +119,47 @@ def install(m):
             pass
         return None
 
-    def followup_text(mark, n):
+    def followup_text(tool, n):
         parts = "part" if n == 1 else "parts"
-        if mark.get("tool") in REACH_TOOLS:
-            return ("This extrude now reaches {} nearby {}. "
-                    "Have you considered whether they overlap or interfere?").format(n, parts)
-        return ("This scale changed a fitting dimension. "
-                "Have you considered whether the {} highlighted {} still fit?").format(n, parts)
+        if tool in REACH_TOOLS:
+            return "Extrude reaches {} nearby {} — checked for overlap?".format(n, parts)
+        return "Scale changed a fit — do the {} highlighted {} still fit?".format(n, parts)
 
-    def has_open_followup_for(source_token):
-        for mk in m._marks:
-            if (mk.get("followup") and mk.get("status", "open") == "open"
-                    and mk.get("source_token") == source_token):
-                return True
-        return False
-
-    def spawn_followup(mark, tokens):
-        if not tokens:
-            return
-        primary = m._body.get(mark["id"])
-        source_token = body_token(primary)
-        if source_token and has_open_followup_for(source_token):
-            return
+    # ---- left-rail banner --------------------------------------------------
+    def toolbar():
         try:
-            center, _ = m._bbox_center_size(primary)
+            return m._ui.palettes.itemById(m.TOOLBAR_ID) if m._ui else None
         except Exception:
-            center = list(mark.get("anchor", [0.0, 0.0, 0.0]))
-        _followup_count["n"] += 1
-        mid = m._next_id
-        m._next_id = mid + 1
-        reach = mark.get("tool") in REACH_TOOLS
-        fmark = {
-            "id": mid,
-            "tool": "note",              # annotation-only: no geometry, no ghost
-            "mtype": "constraint",       # amber "consider this" card
-            "label": "Reach check" if reach else "Fit check",
-            "num": _followup_count["n"],
-            "status": "open",
-            "comments": [],
-            "anchor": list(center),
-            "size": mark.get("size", 3.0),
-            "text": followup_text(mark, len(tokens)),
-            "followup": True,
-            "source_token": source_token,
-            "related_tokens": list(tokens),
-        }
-        m._marks.append(fmark)
-        log("FOLLOWUP spawned id={} kind={} related={}".format(
-            mid, "reach" if reach else "fit", len(tokens)))
+            return None
 
-    def accept(mark):
-        # Detect BEFORE applying: the primary body proxy is still valid, and we
-        # capture the neighbours by stable token so the post-rebuild tint works.
-        tokens = []
+    def send_banner():
+        p = toolbar()
+        if p is None:
+            return
+        import json
+        payload = {"prompts": [
+            {"id": pr["id"], "text": pr["text"], "kind": pr["kind"]}
+            for pr in PROMPTS]}
         try:
-            if mark.get("tool") in DEP_TOOLS:
-                tokens = detect_related_tokens(m._body.get(mark["id"]))
+            p.sendInfoToHTML("depPrompt", json.dumps(payload))
         except Exception:
-            log("detect failed\n{}".format(m.traceback.format_exc()))
-        ok = old_accept(mark)
-        if ok and tokens:
-            try:
-                spawn_followup(mark, tokens)
-            except Exception:
-                log("spawn failed\n{}".format(m.traceback.format_exc()))
-        return ok
+            pass
 
-    m._accept = accept
-
+    # ---- related-body tint -------------------------------------------------
     def paint_dependencies():
         try:
             m._clear(DEP_GID)
         except Exception:
             return
-        open_followups = [mk for mk in m._marks
-                          if mk.get("followup") and mk.get("status", "open") == "open"]
-        if not open_followups:
-            try:
-                m._app.activeViewport.refresh()
-            except Exception:
-                pass
+        if not PROMPTS:
             return
         design = m._design()
         group = m._group(DEP_GID)
         if design is None or group is None:
             return
         seen = set()
-        for mk in open_followups:
-            for tok in mk.get("related_tokens", []):
+        for pr in PROMPTS:
+            for tok in pr.get("related_tokens", []):
                 if tok in seen:
                     continue
                 seen.add(tok)
@@ -236,19 +172,110 @@ def install(m):
                     cg.setOpacity(0.45, True)
                 except Exception:
                     continue
+
+    def refresh():
+        send_banner()
+        try:
+            paint_dependencies()
+        except Exception:
+            pass
         try:
             m._app.activeViewport.refresh()
         except Exception:
             pass
 
-    def redraw():
-        old_redraw()
+    def has_prompt_for(source_token):
+        return any(pr.get("source_token") == source_token for pr in PROMPTS)
+
+    def add_prompt(tool, tokens, source_token):
+        if not tokens:
+            return
+        if source_token and has_prompt_for(source_token):
+            return
+        seq["n"] += 1
+        kind = "reach" if tool in REACH_TOOLS else "fit"
+        PROMPTS.append({
+            "id": seq["n"],
+            "kind": kind,
+            "text": followup_text(tool, len(tokens)),
+            "related_tokens": list(tokens),
+            "source_token": source_token,
+        })
+        log("PROMPT+ id={} kind={} related={}".format(seq["n"], kind, len(tokens)))
+
+    def dismiss(pid):
+        n = len(PROMPTS)
+        if pid is None:
+            PROMPTS[:] = []
+        else:
+            PROMPTS[:] = [pr for pr in PROMPTS if pr.get("id") != pid]
+        if len(PROMPTS) != n:
+            refresh()
+
+    def reset():
+        if PROMPTS:
+            PROMPTS[:] = []
+        try:
+            m._clear(DEP_GID)
+        except Exception:
+            pass
+        send_banner()
+
+    m._reset_dependency_prompts = reset
+    m._dependency_prompts = PROMPTS
+
+    # ---- hooks -------------------------------------------------------------
+    def accept(mark):
+        tokens = []
+        try:
+            if mark.get("tool") in DEP_TOOLS:
+                primary = m._body.get(mark["id"])
+                tokens = detect_related_tokens(primary)
+                source_token = body_token(primary)
+        except Exception:
+            tokens = []
+            source_token = None
+        ok = old_accept(mark)
+        if ok and tokens:
+            try:
+                add_prompt(mark.get("tool"), tokens, source_token)
+                refresh()
+            except Exception:
+                log("add prompt failed\n{}".format(m.traceback.format_exc()))
+        return ok
+
+    m._accept = accept
+
+    def redraw(*args, **kwargs):
+        result = old_redraw(*args, **kwargs)
         try:
             paint_dependencies()
         except Exception:
             log("paint failed\n{}".format(m.traceback.format_exc()))
+        return result
 
     m._redraw_marks = redraw
 
-    log("DEPENDENCY PROMPTS READY: scale/extrude accept raises a soft fit/reach "
-        "question and tints the affected neighbours until it is resolved")
+    class PaletteHTMLHandler(adsk.core.HTMLEventHandler):
+        def __init__(self):
+            super().__init__()
+            self._delegate = CurrentPaletteHTMLHandler()
+
+        def notify(self, args):
+            try:
+                import json
+                e = adsk.core.HTMLEventArgs.cast(args)
+                if e is not None and e.action == "dismissDep":
+                    data = json.loads(e.data) if e.data else {}
+                    dismiss(data.get("id"))
+                    try: e.returnData = json.dumps({"ok": True})
+                    except Exception: pass
+                    return
+            except Exception:
+                log("dismissDep failed\n{}".format(m.traceback.format_exc()))
+            self._delegate.notify(args)
+
+    m.PaletteHTMLHandler = PaletteHTMLHandler
+
+    log("DEPENDENCY PROMPTS READY: scale/extrude accept raises a left-rail nudge "
+        "and tints the affected neighbours until dismissed")

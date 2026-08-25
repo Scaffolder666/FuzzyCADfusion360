@@ -106,6 +106,13 @@ def install(m):
         except Exception:
             pass
         delete_graphics(design)
+        # Drop any runtime dependency nudges (left-rail banner + tint).
+        try:
+            reset = getattr(m, "_reset_dependency_prompts", None)
+            if reset:
+                reset()
+        except Exception:
+            pass
         # Forget the in-memory collaboration state.
         try:
             m._marks[:] = []
