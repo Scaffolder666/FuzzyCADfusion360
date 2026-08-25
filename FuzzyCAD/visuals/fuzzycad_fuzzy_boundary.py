@@ -2,11 +2,11 @@
 
 The advisor's point: a half-transparent body is ambiguous -- transparency is
 everywhere in CAD, so it doesn't read as "there's an open question here." This
-moves the "unsettled" signal off transparency and onto a DOUBLE IMAGE: the
-questioned body stays clearly present and clickable, and a couple of faint,
-OFFSET copies of it are drawn as ghost doubles -- "not pinned yet." The copies
-are CustomGraphics, so they render but can never be selected or picked; only the
-real body underneath responds to clicks.
+moves the "unsettled" signal off transparency and onto a shaky LINE GHOST: the
+questioned body stays clearly present and clickable, and its EDGES are redrawn as
+several faint, offset, jittered yellow copies -- a hand-shaky double image, "not
+pinned yet." The copies are CustomGraphics lines, so they render but can never be
+selected or picked; only the real body underneath responds to clicks.
 
 Fully reversible:
   * set m._FUZZY_BOUNDARY = False  -> reverts to the classic 0.5 ghost, or
@@ -31,11 +31,11 @@ def install(m):
 
     GID = "FuzzyCAD_FuzzyBoundary"
     SOFT_OPACITY = 0.85          # the real (clickable) body stays clearly present
-    GHOST_RGB = (240, 195, 45)   # yellow afterimage
-    GHOST_OPACITY = 0.12         # each copy very faint; many of them layer up
-    COPIES_PER_BODY = 6          # more doubles, scattered
-    ROT_MAX_DEG = 2.5            # tiny random rotation per copy = the jitter
-    MAX_COPIES = 18              # cost guard across all questioned bodies
+    GHOST_RGB = (240, 195, 45)   # yellow
+    GHOST_ALPHA = 110            # faint lines (0-255; Fusion may clamp line alpha)
+    LINE_WEIGHT = 1.0            # thin
+    COPIES_PER_BODY = 6          # many overlapping offset wireframes = the ghosting
+    MAX_LINES = 1400             # cost guard across all questioned bodies
 
     def log(msg):
         try:
@@ -63,10 +63,31 @@ def install(m):
             out.append(b)
         return out
 
+    def faint_color():
+        return adsk.fusion.CustomGraphicsSolidColorEffect.create(
+            adsk.core.Color.create(GHOST_RGB[0], GHOST_RGB[1], GHOST_RGB[2], GHOST_ALPHA))
+
+    def add_polyline(grp, pts, color):
+        n = len(pts)
+        if n < 2:
+            return False
+        flat = []
+        for p in pts:
+            flat.append(p[0]); flat.append(p[1]); flat.append(p[2])
+        coords = adsk.fusion.CustomGraphicsCoordinates.create(flat)
+        line = grp.addLines(coords, list(range(n)), True)
+        line.color = color
+        try:
+            line.weight = LINE_WEIGHT
+        except Exception:
+            pass
+        return True
+
     def draw_fuzzy():
-        """Draw non-selectable, offset copies of each questioned body -- 'ghost
-        doubles'. They live in a CustomGraphics group, so they render but can never
-        be clicked or picked; only the real body underneath is selectable."""
+        """Draw the questioned body's EDGES as several offset, jittered copies --
+        a shaky yellow line-ghost, not a translucent solid. Lines live in a
+        CustomGraphics group, so they render but can never be clicked or picked;
+        only the real body underneath is selectable."""
         try:
             m._clear(GID)
         except Exception:
@@ -79,54 +100,44 @@ def install(m):
         grp = m._group(GID)
         if grp is None:
             return
-        try:
-            tmp = adsk.fusion.TemporaryBRepManager.get()
-        except Exception:
-            return
-        made = 0
+        col = faint_color()
+        drawn = 0
         for bi, b in enumerate(bodies):
             try:
-                center, size = m._bbox_center_size(b)
+                _, size = m._bbox_center_size(b)
             except Exception:
-                center, size = [0.0, 0.0, 0.0], 3.0
+                size = 3.0
             step = max(0.05, min(float(size) * 0.03, 0.6))   # scatter scales with body
-            ctr = adsk.core.Point3D.create(center[0], center[1], center[2])
-            # Seeded per body so the scatter is stable across redraws (no flicker),
-            # but random enough to read as jitter rather than a clean offset.
+            try:
+                loops = m._sample_edges(b.edges)
+            except Exception:
+                loops = []
+            if not loops:
+                continue
+            # Seeded per body so the scatter/jitter is stable across redraws
+            # (no flicker), but random enough to read as many shaky ghosts.
             rnd = random.Random(1234 + bi * 97)
             for _k in range(COPIES_PER_BODY):
-                if made >= MAX_COPIES:
+                if drawn >= MAX_LINES:
                     break
-                try:
-                    dup = tmp.copy(b)                        # temp BRep copy
-                    if dup is None:
-                        continue
-                    # random scatter direction + magnitude
-                    dirx = rnd.uniform(-1, 1); diry = rnd.uniform(-1, 1); dirz = rnd.uniform(-1, 1)
-                    dl = math.sqrt(dirx * dirx + diry * diry + dirz * dirz) or 1.0
-                    mag = step * rnd.uniform(0.35, 1.15)
-                    ox, oy, oz = dirx / dl * mag, diry / dl * mag, dirz / dl * mag
-                    # tiny random rotation about the body centre = the shimmer
-                    ang = math.radians(rnd.uniform(-ROT_MAX_DEG, ROT_MAX_DEG))
-                    ax = adsk.core.Vector3D.create(rnd.uniform(-1, 1), rnd.uniform(-1, 1), rnd.uniform(-1, 1))
-                    try:
-                        ax.normalize()
-                    except Exception:
-                        ax = adsk.core.Vector3D.create(0, 0, 1)
-                    mtx = adsk.core.Matrix3D.create()
-                    mtx.setToRotation(ang, ax, ctr)
-                    t = mtx.translation
-                    mtx.translation = adsk.core.Vector3D.create(t.x + ox, t.y + oy, t.z + oz)
-                    tmp.transform(dup, mtx)
-                    cg = grp.addBRepBody(dup)               # CustomGraphics = not selectable
-                    cg.color = m._solid(GHOST_RGB)
-                    cg.setOpacity(GHOST_OPACITY, True)
-                    made += 1
-                except Exception:
-                    pass
-            if made >= MAX_COPIES:
+                dx = rnd.uniform(-1, 1); dy = rnd.uniform(-1, 1); dz = rnd.uniform(-1, 1)
+                dl = math.sqrt(dx * dx + dy * dy + dz * dz) or 1.0
+                mag = step * rnd.uniform(0.35, 1.15)
+                ox, oy, oz = dx / dl * mag, dy / dl * mag, dz / dl * mag
+                jit = step * 0.28                            # per-point wobble
+                for poly in loops:
+                    if drawn >= MAX_LINES:
+                        break
+                    pts = []
+                    for q in poly:
+                        pts.append((q[0] + ox + rnd.uniform(-jit, jit),
+                                    q[1] + oy + rnd.uniform(-jit, jit),
+                                    q[2] + oz + rnd.uniform(-jit, jit)))
+                    if add_polyline(grp, pts, col):
+                        drawn += 1
+            if drawn >= MAX_LINES:
                 break
-        log("ghost doubles drawn={} for {} body(ies)".format(made, len(bodies)))
+        log("ghost lines drawn={} for {} body(ies)".format(drawn, len(bodies)))
         try:
             m._app.activeViewport.refresh()
         except Exception:
@@ -160,8 +171,8 @@ def install(m):
 
     def run(context):
         result = old_run(context)
-        log("FUZZY BOUNDARY READY (experiment): {:.0%} real body + non-selectable offset "
-            "ghost doubles".format(SOFT_OPACITY))
+        log("FUZZY BOUNDARY READY (experiment): {:.0%} real body + non-selectable shaky "
+            "yellow line-ghost".format(SOFT_OPACITY))
         return result
 
     m.run = run
