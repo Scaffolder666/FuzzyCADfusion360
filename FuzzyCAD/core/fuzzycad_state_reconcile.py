@@ -1,27 +1,32 @@
-"""Authoritative state reconciliation for FuzzyCAD 3D visuals.
+"""The single visual authority for FuzzyCAD: one reconcile pass that keeps the
+3D viewport in sync with the actual open questions.
 
-Two failure modes made the viewport drift out of sync with the actual open
-questions, especially after accepting/rejecting cards and after reopening a
-saved document:
+Appearance tokens (colours, stroke weights, wobble) live in
+fuzzycad_visual_system; per-body ghost opacity is recorded by
+fuzzycad_opacity_runtime. This module is the lifecycle authority that runs after
+every redraw and, from the single source of truth (the open marks + the live
+design), fixes the three ways the viewport used to drift:
 
-1) Stuck ghost bodies. Ghosting is applied by writing BRepBody.opacity and is
-   meant to be restored when a mark goes away. The restore path holds the body
-   proxy captured when the ghost was applied, but accepting a proposal rebuilds
-   the timeline, which invalidates those proxies (and reassigns entity tokens).
-   The restore is then silently skipped and the body stays semi-transparent for
-   the rest of the session even though no open question references it.
+1) Stuck ghost bodies. Ghosting writes BRepBody.opacity and is meant to be
+   restored when a mark goes away. A rebuild (or a reopen of a document saved
+   while a mark was open) can leave a body semi-transparent with no open question
+   referencing it. reclaim_orphan_ghosts restores any such body to full opacity,
+   using a window derived from the real ghost value.
 
-2) Orphan previews. The extrude/fillet/move manipulators draw into the PREVIEW
-   graphics group. Rejecting the card removes the mark but does not terminate an
-   already-idle preview, so a stray dimension ruler or badge sprite can linger.
+2) Orphan interaction graphics. Previews, hover tints, and highlights are drawn
+   into custom-graphics groups by many tools. When a command is interrupted the
+   group is not always cleared, so a stray badge / hover glow / highlight lingers.
+   Every such EPHEMERAL group is registered here and swept whenever no FuzzyCAD
+   command is running -- decided from Fusion's activeCommand (ground truth), not
+   our own flags, since a leaked flag is what used to strand the graphics.
 
-Both are fixed here by reconciling from the single source of truth -- the open
-marks -- against the *live* bodies in the design, rather than trusting captured
-proxies. This runs only on discrete redraws (never per animation frame), so the
-allComponents scan is not on any hot path.
+3) Persistent groups are deliberately left alone: GROUP_MARKS (badges + open-mark
+   proposals, redrawn from the marks), the silhouette overlay, and Compare's shown
+   option (redrawn while its mark is open).
 
-Loaded last so its redraw wrapper is outermost and reconciles after every other
-visual layer has drawn.
+Runs only on discrete redraws (never per animation frame), so the allComponents
+scan is not on any hot path. Loaded after the tool/visual layers so its redraw
+wrapper is outermost and reconciles once everything else has drawn.
 """
 
 
@@ -38,6 +43,50 @@ def install(m):
     ghost = float(getattr(m, "GHOST_OPACITY", 0.5))
     LO = 0.03
     HI = min(0.70, ghost + 0.10)
+
+    # ---- ephemeral graphics registry --------------------------------------
+    # Every FuzzyCAD custom-graphics group that is an interaction/preview overlay
+    # and MUST be empty whenever no FuzzyCAD command is running. Persistent groups
+    # are deliberately excluded: GROUP_MARKS (badges + open-mark proposals, kept in
+    # sync by _redraw_marks), "FuzzyCAD_Silhouette" (a standing overlay owned by the
+    # silhouette layer), and Compare's shown option (drawn on every _redraw_marks
+    # while its mark is open). Listing the ephemeral groups here in one place lets
+    # any tool draw into one without owning its cleanup -- the authority sweeps them.
+    EPHEMERAL_GROUPS = [
+        getattr(m, "GROUP_PREVIEW", "FuzzyCAD_Preview"),
+        "FuzzyCAD_DepCheck",              # scale/extrude dependency check tint
+        "FuzzyCAD_FollowHighlight",       # dependent-follow highlight
+        "FuzzyCAD_HoverAnimation",        # move hover
+        "FuzzyCAD_HoverDirectionArrow",   # move hover arrow
+        "FuzzyCAD_OperationHover",        # operation hover
+        "FuzzyCAD_CompareConnectorPreview",  # compare pick preview
+    ]
+    # Exposed so a new tool can register its own ephemeral group without editing
+    # this module: m._EPHEMERAL_GROUPS.append("FuzzyCAD_MyPreview").
+    m._EPHEMERAL_GROUPS = EPHEMERAL_GROUPS
+
+    def fuzzy_command_running():
+        """Ground truth from Fusion: is a FuzzyCAD command the active command?
+
+        Preferred over our own _active_cmd / _pending flags because a leaked flag
+        is exactly what used to strand preview graphics on screen. Every FuzzyCAD
+        command id starts with 'FuzzyCAD_'; anything else (SelectCommand, a native
+        Fusion tool, nothing) means no FuzzyCAD preview legitimately owns the
+        ephemeral groups."""
+        try:
+            active = m._ui.activeCommand or ""
+        except Exception:
+            active = ""
+        return isinstance(active, str) and active.startswith("FuzzyCAD_")
+
+    def sweep_ephemeral():
+        for gid in EPHEMERAL_GROUPS:
+            try:
+                m._clear(gid)
+            except Exception:
+                pass
+
+    m._sweep_ephemeral = sweep_ephemeral
 
     def tok(body):
         try:
@@ -93,21 +142,15 @@ def install(m):
                 except Exception:
                     pass
 
-    def is_idle():
-        # No FuzzyCAD command or pending selection/drag is in flight, so nothing
-        # legitimately owns the PREVIEW group.
-        return (getattr(m, "_active_cmd", None) is None
-                and not getattr(m, "_pending", None))
-
     def reconcile():
         design = m._design()
         if design is None:
             return
-        if is_idle():
-            try:
-                m._clear(m.GROUP_PREVIEW)
-            except Exception:
-                pass
+        # When no FuzzyCAD command is running, no interaction/preview overlay is
+        # legitimate -- sweep every ephemeral group so a stray badge, hover tint,
+        # or highlight from an interrupted command cannot linger.
+        if not fuzzy_command_running():
+            sweep_ephemeral()
         try:
             reclaim_orphan_ghosts(design)
         except Exception:
