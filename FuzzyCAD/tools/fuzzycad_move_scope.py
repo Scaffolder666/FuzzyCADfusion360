@@ -235,9 +235,7 @@ def install(m):
         try:
             res = m._ui.messageBox(
                 "{} adjacent part{} touching this one (highlighted in orange).\n\n"
-                "Move or rotate them together with this part?\n\n"
-                "Yes  —  keep them together\n"
-                "No   —  affect only this part".format(
+                "Move or rotate them together with this part?".format(
                     count, " is" if count == 1 else "s are"),
                 "FuzzyCAD — move scope",
                 adsk.core.MessageBoxButtonTypes.YesNoButtonType,
