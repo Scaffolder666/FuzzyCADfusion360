@@ -305,18 +305,11 @@ def install(m):
             coll = adsk.core.ObjectCollection.create()
             coll.add(body)
             base_xyz = mark.get("base_anchor") or mark.get("anchor")
-            cpi = comp.constructionPoints.createInput()
-            cpi.setByPoint(adsk.core.Point3D.create(*base_xyz))
-            base = comp.constructionPoints.add(cpi)
-            scales = comp.features.scaleFeatures
-            si = scales.createInput(coll, base, adsk.core.ValueInput.createByReal(1.0))
             fx, fy, fz = axis_factors(mark)
-            if not si.setToNonUniform(
-                    adsk.core.ValueInput.createByReal(fx),
-                    adsk.core.ValueInput.createByReal(fy),
-                    adsk.core.ValueInput.createByReal(fz)):
-                return False
-            scales.add(si)
+            # Shared helper: uses a construction point in parametric designs and
+            # falls back to origin-scale + compensating translate in imported/
+            # direct-modeling designs where construction geometry is unavailable.
+            m._scale_about_center(comp, coll, base_xyz, 1.0, axis_factors=(fx, fy, fz))
             return True
         except Exception:
             m._ui.messageBox("FuzzyCAD couldn't apply directional scale:\n{}".format(

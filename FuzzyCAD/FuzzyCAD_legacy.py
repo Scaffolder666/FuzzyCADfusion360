@@ -1149,6 +1149,51 @@ class FuzzyCommandCreated(adsk.core.CommandCreatedEventHandler):
 
 
 # --- accept: real geometry --------------------------------------------------
+def _scale_about_center(comp, coll, center, factor, axis_factors=None):
+    """Scale the bodies in `coll` about `center` (uniform, or per-axis when
+    `axis_factors=(fx, fy, fz)` is given).
+
+    ScaleFeatures needs a point entity as the scale base. A construction point at
+    the centre is ideal, but construction geometry requires the parametric
+    environment -- imported/direct-modeling designs raise "Environment is not
+    supported". In that case scale about the always-present component origin and
+    translate by center*(1 - f) per axis, which is algebraically the same as
+    scaling about the centre (c + f*(p - c) == f*p + c*(1 - f)).
+    """
+    vi = adsk.core.ValueInput.createByReal
+    sf = comp.features.scaleFeatures
+
+    def make_input(base):
+        si = sf.createInput(coll, base, vi(1.0 if axis_factors else factor))
+        if axis_factors:
+            fx, fy, fz = axis_factors
+            if not si.setToNonUniform(vi(fx), vi(fy), vi(fz)):
+                raise RuntimeError("setToNonUniform rejected the scale input")
+        return si
+
+    try:
+        cpi = comp.constructionPoints.createInput()
+        cpi.setByPoint(adsk.core.Point3D.create(*center))
+        base = comp.constructionPoints.add(cpi)
+        sf.add(make_input(base))
+        return
+    except RuntimeError:
+        raise
+    except Exception:
+        pass
+    # Direct-modeling fallback: no construction geometry available.
+    sf.add(make_input(comp.originConstructionPoint))
+    kx = 1.0 - (axis_factors[0] if axis_factors else float(factor))
+    ky = 1.0 - (axis_factors[1] if axis_factors else float(factor))
+    kz = 1.0 - (axis_factors[2] if axis_factors else float(factor))
+    if abs(kx) > 1e-12 or abs(ky) > 1e-12 or abs(kz) > 1e-12:
+        mv = comp.features.moveFeatures
+        mtx = adsk.core.Matrix3D.create()
+        mtx.translation = adsk.core.Vector3D.create(
+            center[0] * kx, center[1] * ky, center[2] * kz)
+        mv.add(mv.createInput(coll, mtx))
+
+
 def _accept(mark):
     design = _design()
     if design is None:
@@ -1173,11 +1218,7 @@ def _accept(mark):
         elif tool == "scale":
             comp = body.parentComponent
             coll = adsk.core.ObjectCollection.create(); coll.add(body)
-            cpi = comp.constructionPoints.createInput()
-            cpi.setByPoint(adsk.core.Point3D.create(*mark["anchor"]))
-            base = comp.constructionPoints.add(cpi)
-            sf = comp.features.scaleFeatures
-            sf.add(sf.createInput(coll, base, adsk.core.ValueInput.createByReal(mark["factor"])))
+            _scale_about_center(comp, coll, mark["anchor"], mark["factor"])
         elif tool == "extrude":
             comp = ent.body.parentComponent
             ext = comp.features.extrudeFeatures
