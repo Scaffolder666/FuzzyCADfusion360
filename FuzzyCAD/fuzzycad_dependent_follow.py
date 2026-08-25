@@ -140,9 +140,11 @@ def install(m):
     def confirm(count):
         try:
             res = m._ui.messageBox(
-                "{} part{} built on this were found.\n\n"
-                "Carry them along with this change so they stay attached?".format(
-                    count, " is" if count == 1 else "s are"),
+                "Found {} part{} built on this (highlighted).\n\n"
+                "Carry {} along with this change so {} stay attached?".format(
+                    count, "" if count == 1 else "s",
+                    "it" if count == 1 else "them",
+                    "it does" if count == 1 else "they do"),
                 "FuzzyCAD — dependent parts",
                 adsk.core.MessageBoxButtonTypes.YesNoButtonType,
                 adsk.core.MessageBoxIconTypes.QuestionIconType)
