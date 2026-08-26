@@ -1,83 +1,114 @@
-"""Preserve original Fusion body opacity for uncertainty visuals.
+"""Apply source-body opacity from the central visual authority.
 
-This module is runtime bookkeeping only; it no longer decides which marks should
-look uncertain. The central visual authority supplies the body-level comic state.
-That keeps opacity synchronized with the same Proposed/Editing/Resolved policy as
-fill and sketch boundary while preserving exact original opacity for restoration.
+This module owns only Fusion body opacity bookkeeping. It does not decide which
+state a tool is in. `fuzzycad_uncertainty_visual.py` supplies body-level targets:
+
+- comic baseline -> source body almost hidden (paper fill is rendered above it)
+- Fillet/Hole Editing -> source body at 0.50
+- normal Editing / Resolved -> original Fusion opacity
+
+Only entity tokens + original numeric opacity are retained long-term; BRepBody
+wrappers are resolved fresh when a restore is required.
 """
 
 
 def install(m):
     old_run = m.run
     old_stop = m.stop
-    records = {}  # token -> (body, original opacity)
+    records = {}  # entity token -> original numeric opacity
 
     def body_token(body):
         try:
-            return body.entityToken
+            return str(body.entityToken)
         except Exception:
             return None
 
-    def desired_bodies():
-        wanted = {}
-
-        # Central authority: only inactive Proposed geometry receives the comic
-        # body treatment. Editing bodies are restored to their original opacity.
+    def resolve_body(tok):
+        if not tok:
+            return None
         try:
-            rows, _retained = m._visual_comic_subject_rows()
-            for tok, body in rows:
-                if body is not None and tok:
-                    wanted[str(tok)] = body
+            design = m._design()
+            if design is None:
+                return None
+            for ent in design.findEntityByToken(str(tok)):
+                if isinstance(ent, m.adsk.fusion.BRepBody):
+                    return ent
+        except Exception:
+            pass
+        return None
+
+    def desired_targets():
+        wanted = {}
+        try:
+            for tok, body, opacity in m._visual_opacity_subject_rows():
+                if body is not None and tok and opacity is not None:
+                    wanted[str(tok)] = (body, float(opacity))
             return wanted
         except Exception:
             pass
 
-        # Install-time/backward-compatible fallback.
+        # Install-time/backward fallback: old proposed-body ghost behavior.
+        ghost_v = float(getattr(m, "GHOST_OPACITY", 0.5))
         for mark in list(getattr(m, "_marks", []) or []):
             if mark.get("status", "open") != "open" or mark.get("tool") == "note":
                 continue
             body = m._body.get(mark.get("id"))
             tok = body_token(body)
             if body is not None and tok:
-                wanted[str(tok)] = body
+                wanted[tok] = (body, ghost_v)
         return wanted
 
     def restore_token(tok):
-        row = records.pop(tok, None)
-        if row is None:
+        original = records.pop(tok, None)
+        if original is None:
             return
-        body, opacity = row
+        body = resolve_body(tok)
+        if body is None:
+            return
         try:
-            valid = body.isValid
+            if body.isValid:
+                body.opacity = float(original)
         except Exception:
-            valid = True
-        if valid:
             try:
-                body.opacity = float(opacity)
+                body.opacity = float(original)
             except Exception:
                 pass
 
+    def capture_original(body, target):
+        try:
+            cur = float(body.opacity)
+        except Exception:
+            cur = 1.0
+
+        # A document can be saved/reopened while an unresolved visual opacity is
+        # applied. Do not capture that display-only value as the user's original.
+        known_visual = [
+            float(target),
+            float(getattr(m, "GHOST_OPACITY", 0.5)),
+            float(getattr(m, "_VISUAL_COMIC_SOURCE_OPACITY", 0.02)),
+            float(getattr(m, "_VISUAL_SEMITRANSPARENT_SOURCE_OPACITY", 0.50)),
+        ]
+        if any(abs(cur - v) < 0.02 for v in known_visual):
+            cur = 1.0
+        return cur
+
     def refresh_ghost():
-        wanted = desired_bodies()
-        ghost_v = float(getattr(m, "GHOST_OPACITY", 0.5))
-        for tok, body in wanted.items():
+        wanted = desired_targets()
+
+        for tok, (body, target) in wanted.items():
             if tok not in records:
-                try:
-                    cur = float(body.opacity)
-                except Exception:
-                    cur = 1.0
-                if abs(cur - ghost_v) < 0.02:
-                    cur = 1.0
-                records[tok] = (body, cur)
+                records[tok] = capture_original(body, target)
             try:
-                body.opacity = ghost_v
+                body.opacity = float(target)
             except Exception:
                 pass
+
         for tok in list(records.keys()):
             if tok not in wanted:
                 restore_token(tok)
+
         try:
-            m._ghosted = dict(wanted)
+            m._ghosted = {tok: body for tok, (body, _target) in wanted.items()}
         except Exception:
             pass
 
@@ -90,6 +121,7 @@ def install(m):
             m._ghosted = {}
 
     m._refresh_ghost = refresh_ghost
+    m._sync_visual_opacity = refresh_ghost
     m._restore_all_bodies = restore_all_bodies
     m._ghost_opacity_records = records
 
