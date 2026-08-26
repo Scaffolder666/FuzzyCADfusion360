@@ -34,6 +34,30 @@ This file is the design contract for viewport uncertainty. `fuzzycad_uncertainty
 | Rough Shape | comic-owned | **ON** | comic body remains visible while the rough mark is active | comic baseline | **same as default; no extra detail** |
 | Compare / Conflict | original | OFF while editing an alternative | active alternative editing presentation | comic baseline + Conflict badge | baseline remains + alternatives, only on explicit compare/focus (not hover) |
 
+## Animation ownership
+
+`fuzzycad_animation_controller.py` is the single authority for proposal replay animation. Tool-specific animation files only provide geometry/transform rendering.
+
+- **At most one animation may be active in the viewport.**
+- Starting an animation for another card or another tool **immediately stops and clears the previous animation first**.
+- A stale hover-end/frame event may only affect the animation owner + mark that created it; it must never stop a newer animation.
+- Focus, editing, Confirm, Accept, Reject, Compare choice, or switching tools cancels the active replay.
+- The controller owns start/frame/stop, active owner, active mark, timing, frame throttling, easing, and supersession.
+- Animation state stores only pure Python data. Renderer files resolve CustomGraphics groups fresh and never retain Fusion wrappers across events.
+
+| Tool | Proposed replay animation |
+| --- | --- |
+| Move | translation replay + movement arrow |
+| Rotate | rotation replay |
+| Scale | uniform scale replay |
+| Directional Scale (`scale_axis`) | axis-scale replay |
+| Axis Rotate | arbitrary-axis rotation replay |
+| Extrude | face/depth translation replay |
+| Fillet | none |
+| Hole | none |
+| Rough Shape | none |
+| Compare / Conflict | none; explicit compare/focus only |
+
 ## Body-level precedence
 
 A body can be referenced by more than one unresolved mark. Body presentation is aggregated centrally:
