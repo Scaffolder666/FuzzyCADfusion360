@@ -202,7 +202,30 @@ def install(m):
             add_dim_text(group, mid, "{} {:.1f} mm".format(label, length * 10.0), seed + 3)
 
     # ---- rough-shape L/W/H: automatic, oriented, always on -----------------
-    def oriented_box(body):
+    # getOrientedBoundingBox (plus the largest-planar-face scan) is expensive, so
+    # it must NOT run on every redraw -- that was the lag. Cache the result per
+    # mark and only recompute when the body's cheap axis-aligned box changes.
+    obb_cache = {}   # mark id -> (signature, obb)
+
+    def bbox_sig(body):
+        try:
+            bb = body.boundingBox
+            mn, mx = bb.minPoint, bb.maxPoint
+            return (round(mn.x, 4), round(mn.y, 4), round(mn.z, 4),
+                    round(mx.x, 4), round(mx.y, 4), round(mx.z, 4))
+        except Exception:
+            return None
+
+    def oriented_box(body, mid):
+        sig = bbox_sig(body)
+        hit = obb_cache.get(mid)
+        if hit is not None and sig is not None and hit[0] == sig:
+            return hit[1]
+        obb = compute_oriented_box(body)
+        obb_cache[mid] = (sig, obb)
+        return obb
+
+    def compute_oriented_box(body):
         """Oriented bounding box aligned to the body's own axes.
 
         getOrientedBoundingBox fits the box to the orientation we hand it, so we
@@ -240,7 +263,11 @@ def install(m):
             if l_dir is None:
                 l_dir = adsk.core.Vector3D.create(1.0, 0.0, 0.0)
                 w_dir = adsk.core.Vector3D.create(0.0, 1.0, 0.0)
-            return mgr.getOrientedBoundingBox(body, l_dir, w_dir)
+            obb = mgr.getOrientedBoundingBox(body, l_dir, w_dir)
+            if obb is not None:
+                log("oriented box recomputed L/W/H = {:.2f}/{:.2f}/{:.2f} cm".format(
+                    obb.length, obb.width, obb.height))
+            return obb
         except Exception as exc:
             log("oriented bbox failed: {}".format(exc))
             return None
@@ -253,12 +280,9 @@ def install(m):
         body = m._body.get(mark["id"])
         if body is None:
             return
-        obb = oriented_box(body)
+        obb = oriented_box(body, mark["id"])
         if obb is None:
-            log("rough dims: no oriented box for mark {}".format(mark.get("id")))
             return
-        log("rough dims mark {} L/W/H = {:.2f}/{:.2f}/{:.2f} cm".format(
-            mark.get("id"), obb.length, obb.width, obb.height))
 
         c = obb.centerPoint
         L, W, H = obb.lengthDirection, obb.widthDirection, obb.heightDirection
