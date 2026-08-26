@@ -23,6 +23,24 @@ THUMB_MAX = 220     # longest side of the floating thumbnail, in pixels
 _thumb_seq = [0]
 
 
+def _corrected(path):
+    """A copy of the image rotated 180 so it appears right-side up on a face --
+    Canvas maps the image the other way round on a front face. Full resolution."""
+    try:
+        from PIL import Image
+    except Exception:
+        return None
+    try:
+        img = Image.open(path).convert("RGBA").transpose(Image.ROTATE_180)
+        _thumb_seq[0] += 1
+        out = os.path.join(tempfile.gettempdir(),
+                           "fuzzycad_face_{}.png".format(_thumb_seq[0]))
+        img.save(out, "PNG")
+        return out
+    except Exception:
+        return None
+
+
 def _make_thumb(path):
     try:
         from PIL import Image
@@ -138,12 +156,15 @@ def install(m):
                 return
             try:
                 comp = face.body.parentComponent
-                ci = comp.canvases.createInput(path, face)
-                # The image came in upside-down relative to the face; flip it back.
-                try:
-                    ci.flipVertical()
-                except Exception:
-                    log("flipVertical unavailable\n{}".format(m.traceback.format_exc()))
+                # Pre-rotate with PIL so it lands right-side up; if PIL is missing
+                # fall back to the Canvas API flip.
+                src = _corrected(path)
+                ci = comp.canvases.createInput(src or path, face)
+                if not src:
+                    try:
+                        ci.flipVertical()
+                    except Exception:
+                        log("flipVertical unavailable\n{}".format(m.traceback.format_exc()))
                 canvas = comp.canvases.add(ci)
                 # remember it so accept/reject can delete it (it's a native doc
                 # entity, not tied to the mark on its own).
