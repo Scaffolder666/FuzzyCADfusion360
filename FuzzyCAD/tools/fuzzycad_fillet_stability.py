@@ -26,14 +26,7 @@ def install(m):
     LegacyPreview = getattr(m, "_fuzzycad_legacy_preview", None)
     LegacyDrawFillet = getattr(m, "_fuzzycad_legacy_draw_fillet", None)
     old_run = m.run
-    state = {"last_exact": 0.0, "busy_exact": False, "last_amount": None,
-             "diag_t": 0.0, "diag_n": 0, "diag_ms": 0.0}
-
-    def diaglog(msg):
-        try:
-            (m._app or adsk.core.Application.get()).log("[FuzzyCAD FILLET PERF] " + msg)
-        except Exception:
-            pass
+    state = {"last_exact": 0.0, "busy_exact": False, "last_amount": None}
 
     if LegacyPreview is not None:
         m.FuzzyPreview = LegacyPreview
@@ -140,29 +133,24 @@ def install(m):
             exact_fresh = (candidate is not None and candidate_radius is not None and
                            abs(float(candidate_radius) - amount) <= 1e-7)
 
+            # The translucent exact volume is expensive: addBRepBody re-tessellates
+            # it on every redraw. Only worth it while this fillet is being edited
+            # (live). Once confirmed, the lightweight sketch + dimension annotation
+            # stands in for it, so we stop re-tessellating and the lag goes away.
+            is_live = False
+            try:
+                is_live = (m._live.get("fillet") == mark.get("id"))
+            except Exception:
+                pass
+
             if candidate is not None:
-                # Keep the last exact volume visible between kernel refreshes. A
-                # stale candidate is deliberately quieter; the hand-drawn overlay
-                # carries the live current radius until the next exact update.
-                try:
-                    _t0 = time.perf_counter()
-                    cg = group.addBRepBody(candidate)
-                    cg.color = m._solid((190, 190, 186))
-                    cg.setOpacity(0.26 if exact_fresh else 0.14, True)
-                    # DIAG: count how often / how long the fillet BRep is
-                    # re-tessellated into custom graphics (the lag suspect).
-                    state["diag_n"] += 1
-                    state["diag_ms"] += (time.perf_counter() - _t0) * 1000.0
-                    _now = time.perf_counter()
-                    if _now - state["diag_t"] >= 1.0:
-                        if state["diag_n"]:
-                            diaglog("addBRepBody x{} = {:.0f} ms in last {:.1f}s".format(
-                                state["diag_n"], state["diag_ms"], _now - state["diag_t"]))
-                        state["diag_t"] = _now
-                        state["diag_n"] = 0
-                        state["diag_ms"] = 0.0
-                except Exception:
-                    pass
+                if is_live:
+                    try:
+                        cg = group.addBRepBody(candidate)
+                        cg.color = m._solid((190, 190, 186))
+                        cg.setOpacity(0.26 if exact_fresh else 0.14, True)
+                    except Exception:
+                        pass
                 for i, poly in enumerate(g.get("candidate_edges", []) or []):
                     try:
                         m._sketchy(group, poly, rgb, amp,

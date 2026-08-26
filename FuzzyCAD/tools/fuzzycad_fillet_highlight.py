@@ -128,20 +128,29 @@ def install(m):
         # representation. Draw it only for a current exact candidate.
         if not exact_is_current(mark):
             return
-        face_style = vstyle("affected_surface", {"rgb": (235, 132, 42), "opacity": 0.46})
-        face_rgb = tuple(face_style.get("rgb", (235, 132, 42)))
-        face_opacity = float(face_style.get("opacity", 0.46))
-        for body in find_fillet_face_bodies(mark):
-            try:
-                cg = group.addBRepBody(body)
-                cg.color = m._solid(face_rgb)
-                cg.setOpacity(face_opacity, True)
+        # The coloured surface is also an addBRepBody (re-tessellated each redraw),
+        # so restrict it to the live edit -- confirmed marks keep only the cheap
+        # boundary line below and the dimension annotation.
+        is_live = False
+        try:
+            is_live = (m._live.get("fillet") == mark.get("id"))
+        except Exception:
+            pass
+        if is_live:
+            face_style = vstyle("affected_surface", {"rgb": (235, 132, 42), "opacity": 0.46})
+            face_rgb = tuple(face_style.get("rgb", (235, 132, 42)))
+            face_opacity = float(face_style.get("opacity", 0.46))
+            for body in find_fillet_face_bodies(mark):
                 try:
-                    cg.depthPriority = 5
+                    cg = group.addBRepBody(body)
+                    cg.color = m._solid(face_rgb)
+                    cg.setOpacity(face_opacity, True)
+                    try:
+                        cg.depthPriority = 5
+                    except Exception:
+                        pass
                 except Exception:
                     pass
-            except Exception:
-                pass
 
         size = float(mark.get("size", 3.0))
         g = m._geom.get(mark.get("id"), {})
