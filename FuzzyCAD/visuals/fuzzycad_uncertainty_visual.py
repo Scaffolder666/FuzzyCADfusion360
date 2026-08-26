@@ -116,9 +116,6 @@ def install(m):
         if mark is None:
             return False
         v = variation(mark)
-        ph = phase(mark)
-        if ph == "editing":
-            return True
         if v.get("detail_always"):
             return True
         try:
@@ -149,8 +146,10 @@ def install(m):
             # Collaboration-state marker.
             "show_badge": bool(is_open and ph != "resolved"),
 
-            # Proposal-detail layer is orthogonal to baseline uncertainty style.
-            "show_detail": bool(is_open and detail_revealed(mark)),
+            # Persistent proposal-detail layer is only a Proposed-state concern.
+            # Editing has its own live-preview channel and must not duplicate the
+            # same proposal into GROUP_MARKS simply because a command is active.
+            "show_detail": bool(is_open and ph == "proposed" and detail_revealed(mark)),
 
             # Interactive layer.
             "show_live_preview": bool(is_open and ph == "editing"),
