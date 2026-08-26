@@ -63,11 +63,23 @@ def install(m):
             pass
 
     def questioned_bodies():
-        """Bodies of open, non-note marks -- the same set opacity_runtime ghosts."""
+        """Bodies of open, non-note marks -- minus any that are being edited.
+
+        While a mark is in the "editing" phase, its clean tool preview (e.g. the
+        fillet's translucent solid) stands in for the fuzzy look, so the comic
+        fill + sketchy edges are suppressed for that body. The fuzzy look returns
+        the moment the edit closes (proposed), or when another tool takes over,
+        and stays until Accept/Reject.
+        """
         out, seen = [], set()
         for mark in list(getattr(m, "_marks", None) or []):
             if mark.get("status", "open") != "open" or mark.get("tool") == "note":
                 continue
+            try:
+                if m._mark_phase(mark) == "editing":
+                    continue
+            except Exception:
+                pass
             b = m._body.get(mark.get("id"))
             if b is None:
                 continue
