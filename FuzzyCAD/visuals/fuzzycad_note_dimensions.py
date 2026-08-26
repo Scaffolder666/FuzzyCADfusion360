@@ -286,35 +286,80 @@ def install(m):
         sx, sy, sz = best_sgn
 
         size = max(mark.get("size", 3.0), 0.1)
-        off = max(0.15, min(size * 0.06, 0.8))
+        gap = max(0.30, min(size * 0.12, 1.6))   # edge -> dimension line
+        ext = gap * 0.35                          # witness overshoot past dim line
+        ah = max(0.15, min(size * 0.05, 0.6))     # arrowhead length
+        tsz = max(1.0, min(size * 0.22, 3.0))     # text height (cm) -- readable
 
-        def place(mid, out, value_cm, seed):
+        def draw_dim(mid, d, out, value_cm, seed):
+            """A full CAD-style dimension: two witness lines, an offset dimension
+            line with arrowheads at both ends, and the value beside it."""
+            dl = (d[0] ** 2 + d[1] ** 2 + d[2] ** 2) ** 0.5 or 1.0
+            d = (d[0] / dl, d[1] / dl, d[2] / dl)
             ol = (out[0] ** 2 + out[1] ** 2 + out[2] ** 2) ** 0.5 or 1.0
-            p = (mid[0] + out[0] / ol * off,
-                 mid[1] + out[1] / ol * off,
-                 mid[2] + out[2] / ol * off)
-            add_dim_text(group, p, "{:.1f} mm".format(value_cm * 10.0), seed)
+            o = (out[0] / ol, out[1] / ol, out[2] / ol)
+            half = value_cm * 0.5
+
+            def add(p, s):
+                return (p[0] + o[0] * s, p[1] + o[1] * s, p[2] + o[2] * s)
+
+            p0 = (mid[0] - d[0] * half, mid[1] - d[1] * half, mid[2] - d[2] * half)
+            p1 = (mid[0] + d[0] * half, mid[1] + d[1] * half, mid[2] + d[2] * half)
+            a, b = add(p0, gap), add(p1, gap)
+
+            # witness lines (leave a small gap off the surface, run just past the line)
+            m._sketchy(group, [add(p0, gap * 0.15), add(p0, gap + ext)],
+                       DIM_RGB, 0.0, seed + 1, weight=1, strokes=1)
+            m._sketchy(group, [add(p1, gap * 0.15), add(p1, gap + ext)],
+                       DIM_RGB, 0.0, seed + 2, weight=1, strokes=1)
+            # dimension line
+            m._sketchy(group, [a, b], DIM_RGB, 0.0, seed + 3, weight=1, strokes=1)
+
+            # arrowheads: tip at each end, barbs splayed back inward
+            ca, sa = 0.94, 0.34   # ~20 deg
+            def arrow(tip, indir, s):
+                b1 = (tip[0] + (indir[0] * ca + o[0] * sa) * ah,
+                      tip[1] + (indir[1] * ca + o[1] * sa) * ah,
+                      tip[2] + (indir[2] * ca + o[2] * sa) * ah)
+                b2 = (tip[0] + (indir[0] * ca - o[0] * sa) * ah,
+                      tip[1] + (indir[1] * ca - o[1] * sa) * ah,
+                      tip[2] + (indir[2] * ca - o[2] * sa) * ah)
+                m._sketchy(group, [tip, b1], DIM_RGB, 0.0, s, weight=1, strokes=1)
+                m._sketchy(group, [tip, b2], DIM_RGB, 0.0, s + 1, weight=1, strokes=1)
+            arrow(a, d, seed + 4)
+            arrow(b, (-d[0], -d[1], -d[2]), seed + 6)
+
+            # value, sitting just outside the dimension line
+            tp = add(mid, gap + ext + tsz * 0.35)
+            cp = adsk.core.Point3D.create(*tp)
+            t = group.addText("{:.1f} mm".format(value_cm * 10.0),
+                              "Arial", tsz, m._label_transform(cp))
+            t.color = m._solid(DIM_RGB)
+            screen_billboard(t, cp)
 
         base = mark["id"] * 4700
-        # length edge: runs along L, fixed at the near-corner's W/H side
+        # each axis: edge direction d, midpoint on the near corner, outward normal
         if obb.length > 1e-4:
             mid = (c.x + sy * hw * W.x + sz * hh * H.x,
                    c.y + sy * hw * W.y + sz * hh * H.y,
                    c.z + sy * hw * W.z + sz * hh * H.z)
-            out = (sy * W.x + sz * H.x, sy * W.y + sz * H.y, sy * W.z + sz * H.z)
-            place(mid, out, obb.length, base + 1)
+            draw_dim(mid, (L.x, L.y, L.z),
+                     (sy * W.x + sz * H.x, sy * W.y + sz * H.y, sy * W.z + sz * H.z),
+                     obb.length, base + 1)
         if obb.width > 1e-4:
             mid = (c.x + sx * hl * L.x + sz * hh * H.x,
                    c.y + sx * hl * L.y + sz * hh * H.y,
                    c.z + sx * hl * L.z + sz * hh * H.z)
-            out = (sx * L.x + sz * H.x, sx * L.y + sz * H.y, sx * L.z + sz * H.z)
-            place(mid, out, obb.width, base + 2)
+            draw_dim(mid, (W.x, W.y, W.z),
+                     (sx * L.x + sz * H.x, sx * L.y + sz * H.y, sx * L.z + sz * H.z),
+                     obb.width, base + 10)
         if obb.height > 1e-4:
             mid = (c.x + sx * hl * L.x + sy * hw * W.x,
                    c.y + sx * hl * L.y + sy * hw * W.y,
                    c.z + sx * hl * L.z + sy * hw * W.z)
-            out = (sx * L.x + sy * W.x, sx * L.y + sy * W.y, sx * L.z + sy * W.z)
-            place(mid, out, obb.height, base + 3)
+            draw_dim(mid, (H.x, H.y, H.z),
+                     (sx * L.x + sy * W.x, sx * L.y + sy * W.y, sx * L.z + sy * W.z),
+                     obb.height, base + 20)
 
     def draw_one(group, mark):
         old_draw_one(group, mark)
