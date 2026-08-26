@@ -116,6 +116,34 @@ Fusion 从这里加载 add-in,manifest 指向 `FuzzyCAD.py`。
 半径真变时重建——不随每帧重绘 / 转相机重算(见 `tools/fuzzycad_fillet_stability.py`
 的 `sync_fillet_solids`)。
 
+### 计算与可视化约定(生成类工具必读)
+
+工具分两族:**变换类**(Move/Rotate/Scale/Axis Rotate,对同一 body 套矩阵)和
+**生成类**(Fillet/Extrude/Hole,用 kernel 生成新几何)。生成类容易把机器拖崩,
+必须守两条铁律:
+
+**铁律 1 —— 拖动时(每帧)绝不做 kernel 计算。**
+`FuzzyPreview.executePreview` 与 `_redraw_marks` 每秒跑几十次。这两处只许:矩阵变换、
+偏移算点、画 `_sketchy` 线、从已知点建 CustomGraphics 三角面。**禁止**:加/删 Feature、
+fillet/extrude/布尔、`addBRepBody`(会重新三角化)。
+
+**铁律 2 —— kernel 计算只在"落定点"发生,且必须缓存。**
+落定点 = 松手 / 改数字 / Accept。算完按参数值缓存;值没变则重绘**永不重算、永不重新
+三角化**(见 fillet 的 `sync_fillet_solids`:候选体放独立持久图层,只在半径变时重建)。
+
+**两级可视化**:近似(剪影 / 线框 / 偏移线,便宜、跟手,拖动时用)vs 精确(kernel 算的
+半透明实心体,贵,只在落定后缓存着显示)。变换类的"精确"就是 body 套矩阵,零 kernel,
+所以能全程实时;生成类拖动只能给近似。
+
+**各工具现状**:
+- Move/Rotate/Scale/Axis Rotate — 剪影即精确,合规。
+- Fillet — 拖动画弧线 ghost;落定后 `temporary_fillet` 算一次、缓存半透明实心体(独立图层)。
+- Extrude — **就是把一个面沿法向平移**,预览是"平移的面 + 侧壁"(对平面几何精确),用
+  CustomGraphics 三角面填充,**全程零 kernel**;真布尔只在 `_accept` 发生。切勿再用真
+  Feature 当预览(那正是它崩过的原因)。
+- Hole — 预览用 `TemporaryBRepManager.createCylinderOrCone`(临时体,不建 Feature、不布尔);
+  accept 走 BaseFeature + 临时体。安全。
+
 ### 约定
 
 - **不要**在补丁里 `import` 另一个补丁;所有共享状态都放到 `m` 上。
