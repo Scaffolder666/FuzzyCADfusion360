@@ -99,6 +99,23 @@ Fusion 从这里加载 add-in,manifest 指向 `FuzzyCAD.py`。
    `m._sketchy` / `m._group` / `m._solid`;几何辅助 `m._bbox_center_size` /
    `m._op_matrix` / `m._design` / `m._body`。
 
+### 可视化状态机(单一真相源)
+
+一个 mark 的"该画什么"统一由 `m._mark_phase(mark)`(`core/fuzzycad_mark_phase.py`)
+决定,返回三个相之一:
+
+| 相 | 何时 | 表现 |
+|---|---|---|
+| `editing` | 正在调(新命令,或点卡片经 `m._active_edit_id` 重开编辑) | 干净的实时预览;漫画/幽灵外观被抑制 |
+| `proposed` | 已提交、open、等 Accept/Reject | 各工具的漫画 / cel-shaded 不确定外观 |
+| `resolved` | 已 Accept / Reject | 清空,不画 |
+
+各可视化层(如 `visuals/fuzzycad_fuzzy_boundary.py`)应**读这个相**来开关图层,
+而不是各自散落地判断 `is_live`。**fillet 特殊**:它生成新几何,带自己的半透明实体
+预览,从 editing 一直显示到 Accept(永不进入漫画外观),并缓存在独立图层里,只在
+半径真变时重建——不随每帧重绘 / 转相机重算(见 `tools/fuzzycad_fillet_stability.py`
+的 `sync_fillet_solids`)。
+
 ### 约定
 
 - **不要**在补丁里 `import` 另一个补丁;所有共享状态都放到 `m` 上。
