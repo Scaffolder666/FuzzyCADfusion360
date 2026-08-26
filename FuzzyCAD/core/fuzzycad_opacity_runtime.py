@@ -16,6 +16,7 @@ def install(m):
     old_run = m.run
     old_stop = m.stop
     records = {}  # entity token -> original numeric opacity
+    last_targets = [None]  # pure-Python phase signature; avoids per-drag comic sync
 
     def body_token(body):
         try:
@@ -58,6 +59,20 @@ def install(m):
                 wanted[tok] = (body, ghost_v)
         return wanted
 
+    def target_signature(wanted):
+        """Pure-data signature for transitions that can change comic visibility.
+
+        Reopened Fillet/Hole changes a body from comic opacity (0.02) to editing
+        opacity (0.50). Normal tools change from comic opacity to no override.
+        Rough stays comic, so its signature intentionally does not change.
+        """
+        try:
+            return tuple(sorted(
+                (str(tok), round(float(target), 4))
+                for tok, (_body, target) in wanted.items()))
+        except Exception:
+            return ()
+
     def restore_token(tok):
         original = records.pop(tok, None)
         if original is None:
@@ -94,6 +109,8 @@ def install(m):
 
     def refresh_ghost():
         wanted = desired_targets()
+        signature = target_signature(wanted)
+        phase_changed = signature != last_targets[0]
 
         for tok, (body, target) in wanted.items():
             if tok not in records:
@@ -112,9 +129,25 @@ def install(m):
         except Exception:
             pass
 
+        last_targets[0] = signature
+
+        # Comic CustomGraphics are persistent per body. A card reopen changes the
+        # central phase immediately, but the lightweight edit path does not call a
+        # full _redraw_marks(). Synchronize those groups only when the body-level
+        # visual target actually changes, so Fillet/Hole Editing hides the comic
+        # fill/boundary at once without paying this cost on every manipulator frame.
+        if phase_changed:
+            try:
+                sync = getattr(m, "_sync_comic_uncertainty", None)
+                if sync is not None:
+                    sync()
+            except Exception:
+                pass
+
     def restore_all_bodies():
         for tok in list(records.keys()):
             restore_token(tok)
+        last_targets[0] = None
         try:
             m._ghosted.clear()
         except Exception:
