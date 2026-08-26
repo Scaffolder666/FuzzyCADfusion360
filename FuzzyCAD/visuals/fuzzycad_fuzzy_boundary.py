@@ -14,8 +14,9 @@ Fully reversible:
   * don't load this module in FuzzyCAD.py (one line).
 
 Nothing else changes -- sketchy proposals, badges, colours all stay. This only
-softens the ghost fade and adds one overlay group (FuzzyCAD_FuzzyBoundary), which
-is redrawn from the open marks each _redraw_marks (mark-owned, not ephemeral).
+softens the ghost fade and adds one mark-owned overlay group
+(FuzzyCAD_FuzzyBoundary). The exact same graphics are now retained between
+redraws and rebuilt only when the questioned-body set or body geometry changes.
 """
 
 import math
@@ -28,10 +29,10 @@ import random
 FUZZY_ON        = True            # False -> fall straight back to the plain ghost
 HIDE_BODY       = False           # True -> hide the questioned body entirely, show only
                                   #         its sketchy ghost (drops the crisp CAD edges)
-BODY_OPACITY    = 0.00             # the real body's fade when HIDE_BODY is False
+BODY_OPACITY    = 0.00            # the real body's fade when HIDE_BODY is False
 COPIES_PER_BODY = 4               # how many offset wireframe copies = the ghosting
 SCATTER         = 0.01            # copy offset, as a fraction of body size (bigger = more spread)
-OVERSHOOT       = 0.0001            # how far lines run PAST each corner (loosens sharp corners)
+OVERSHOOT       = 0.0001          # how far lines run PAST each corner (loosens sharp corners)
 LINE_WEIGHT     = 2.0             # ghost line thickness (try 0.6 thin .. 2.5 bold)
 GRAY_LIGHT      = 165             # lightest ghost copy (0=black .. 255=white)
 GRAY_DARK       = 45              # darkest ghost copy — copies fade across this range
@@ -56,6 +57,7 @@ def install(m):
     m._FUZZY_BOUNDARY = FUZZY_ON
     GID = "FuzzyCAD_FuzzyBoundary"
     hidden = {}          # token -> body we set invisible, so we can restore it
+    cache = {"signature": None, "group": None, "count": 0}
 
     def log(msg):
         try:
@@ -161,26 +163,111 @@ def install(m):
         except Exception:
             log("flat fill failed\n{}".format(m.traceback.format_exc()))
 
-    def draw_fuzzy():
-        """Draw the questioned body's EDGES as a few offset copies, each a
-        hand-drawn (sketchy) line in a grey that fades from light to near-black
-        across the copies. Lines live in a CustomGraphics group, so they render
-        but can never be clicked or picked; only the real body is selectable."""
+    # ---- persistent fuzzy-graphics cache ----------------------------------
+    # Rebuilding the comic body is expensive: it copies/tessellates the BRep,
+    # samples every edge, and creates up to thousands of CustomGraphics lines.
+    # None of that output changes when a user merely hovers, switches cards, or
+    # opens/closes an editor on some OTHER mark. Keep the exact graphics alive in
+    # those cases; rebuild only when their visual input changes.
+    def style_signature():
+        return (
+            bool(getattr(m, "_FUZZY_BOUNDARY", True)), HIDE_BODY, BODY_OPACITY,
+            COPIES_PER_BODY, SCATTER, OVERSHOOT, LINE_WEIGHT,
+            GRAY_LIGHT, GRAY_DARK, SHOW_THROUGH, SHOW_THRU_OPACITY,
+            FLAT_FILL, tuple(FILL_RGB), FILL_FLATTEN, MAX_LINES,
+        )
+
+    def body_signature(b):
+        try:
+            tok = b.entityToken
+        except Exception:
+            tok = "id:{}".format(id(b))
+        try:
+            rev = str(getattr(b, "revisionId", "") or "")
+        except Exception:
+            rev = ""
+        try:
+            edges = int(b.edges.count)
+        except Exception:
+            edges = -1
+        try:
+            faces = int(b.faces.count)
+        except Exception:
+            faces = -1
+        try:
+            bb = b.boundingBox
+            bbox = tuple(round(float(v), 9) for v in (
+                bb.minPoint.x, bb.minPoint.y, bb.minPoint.z,
+                bb.maxPoint.x, bb.maxPoint.y, bb.maxPoint.z))
+        except Exception:
+            bbox = ()
+        return (tok, rev, edges, faces, bbox)
+
+    def fuzzy_signature(bodies):
+        return (style_signature(), tuple(body_signature(b) for b in bodies))
+
+    def graphics_alive():
+        grp = cache.get("group")
+        if grp is None:
+            return False
+        try:
+            if hasattr(grp, "isValid") and not grp.isValid:
+                return False
+            return int(grp.count) == int(cache.get("count", 0))
+        except Exception:
+            return False
+
+    def clear_cached_graphics():
         try:
             m._clear(GID)
         except Exception:
             pass
+        cache["signature"] = None
+        cache["group"] = None
+        cache["count"] = 0
+
+    def invalidate_fuzzy_boundary():
+        """Force the next redraw to rebuild without changing the current screen."""
+        cache["signature"] = None
+
+    m._invalidate_fuzzy_boundary = invalidate_fuzzy_boundary
+
+    def draw_fuzzy():
+        """Draw the questioned body's EDGES as a few offset copies, each a
+        hand-drawn (sketchy) line in a grey that fades from light to near-black
+        across the copies. Lines live in a CustomGraphics group, so they render
+        but can never be clicked or picked; only the real body is selectable.
+
+        Appearance is identical to the previous renderer. The only difference is
+        lifecycle: unchanged CustomGraphics are retained instead of deleted and
+        recreated on every unrelated redraw.
+        """
         if not getattr(m, "_FUZZY_BOUNDARY", True):
+            if cache.get("signature") is not None or graphics_alive():
+                clear_cached_graphics()
             return
+
         # Reconcile hide/fade here too, so a resolved body is restored on any redraw
         # (accept/reject, Inspector Repair) even if refresh_ghost didn't fire.
         try:
             apply_body_state()
         except Exception:
             pass
+
         bodies = questioned_bodies()
         if not bodies:
+            if cache.get("signature") is not None or graphics_alive():
+                clear_cached_graphics()
             return
+
+        signature = fuzzy_signature(bodies)
+        if cache.get("signature") == signature and graphics_alive():
+            # old_redraw already refreshed the viewport. The persistent fuzzy group
+            # is still present, so there is nothing to resample, retessellate, or
+            # refresh a second time.
+            return
+
+        clear_cached_graphics()
         grp = m._group(GID)
         if grp is None:
             return
@@ -188,6 +275,7 @@ def install(m):
             tmp = adsk.fusion.TemporaryBRepManager.get()
         except Exception:
             tmp = None
+
         drawn = 0
         for bi, b in enumerate(bodies):
             draw_fill(grp, tmp, b)   # flat comic fill first, so the lines land on top
@@ -204,6 +292,7 @@ def install(m):
             if not loops:
                 continue
             # Seeded per body so the scatter is stable across redraws (no flicker).
+            # The seed formula is unchanged, preserving the exact line placement.
             rnd = random.Random(1234 + bi * 97)
             for k in range(COPIES_PER_BODY):
                 if drawn >= MAX_LINES:
@@ -224,6 +313,7 @@ def install(m):
                         pass
             if drawn >= MAX_LINES:
                 break
+
         # X-ray: let the ghost lines bleed through the solid so the back edges show.
         if SHOW_THROUGH:
             try:
@@ -240,7 +330,17 @@ def install(m):
                         pass
             except Exception:
                 log("showThrough not applied\n{}".format(m.traceback.format_exc()))
+
+        cache["signature"] = signature
+        cache["group"] = grp
+        try:
+            cache["count"] = int(grp.count)
+        except Exception:
+            cache["count"] = 0
+
         log("ghost lines drawn={} for {} body(ies)".format(drawn, len(bodies)))
+        # A rebuild happens after old_redraw's refresh, so keep the existing final
+        # refresh here. Cache hits skip this redundant refresh.
         try:
             m._app.activeViewport.refresh()
         except Exception:
@@ -315,7 +415,7 @@ def install(m):
 
     def run(context):
         result = old_run(context)
-        log("FUZZY BOUNDARY READY: {:.0%} real body + non-selectable sketchy "
+        log("FUZZY BOUNDARY READY: {:.0%} real body + cached non-selectable sketchy "
             "grey line-ghost".format(BODY_OPACITY))
         return result
 
