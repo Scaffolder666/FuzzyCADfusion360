@@ -1,63 +1,72 @@
 """Ghost replacement: a fuzzy, comic-style boundary (the default 'unsettled' look).
 
-The advisor's point: a half-transparent body is ambiguous -- transparency is
-everywhere in CAD, so it doesn't read as "there's an open question here." This
-moves the "unsettled" signal off transparency and onto a LINE GHOST: the
-translucent, still-clickable body keeps a light fade, and its EDGES are redrawn as
-a few offset copies -- each a hand-drawn (sketchy) line, like the pulled-out
-proposal, in a grey that fades from light to near-black across the copies -- a
-soft double image, "not pinned yet." The copies are CustomGraphics lines, so they
-render but can never be selected or picked; only the real body responds to clicks.
+Appearance is intentionally unchanged: the same flat paper/putty fill, four
+seeded offset sketch copies, line weights, grey range, overshoot and occlusion
+rules are used. The lifecycle is different: each questioned body owns a stable
+runtime graphics group. Card/tool switching toggles that group's visibility;
+geometry is sampled into a pure-Python cache and rebuilt only when the body or
+visual inputs actually change.
 
-Fully reversible:
-  * set m._FUZZY_BOUNDARY = False  -> reverts to the classic 0.5 ghost, or
-  * don't load this module in FuzzyCAD.py (one line).
-
-Nothing else changes -- sketchy proposals, badges, colours all stay. This only
-softens the ghost fade and adds one mark-owned overlay group
-(FuzzyCAD_FuzzyBoundary). The exact same graphics are now retained between
-redraws and rebuilt only when the questioned-body set or body geometry changes.
+No Fusion CustomGraphics/BRep wrapper is retained in Python state. Runtime data
+stores only entity tokens, XYZ arrays, group-id strings, signatures and flags;
+Fusion groups are resolved fresh by id whenever they must be touched.
 """
 
+import importlib.util
 import math
+import os
 import random
+import sys
 
 # ============================================================================
-#  TUNABLE KNOBS  — edit these, then reload the add-in. (This is the top of the
-#  file; there is nothing to hunt for inside the functions below.)
+#  TUNABLE KNOBS -- unchanged from the previous renderer.
 # ============================================================================
-FUZZY_ON        = True            # False -> fall straight back to the plain ghost
-HIDE_BODY       = False           # True -> hide the questioned body entirely, show only
-                                  #         its sketchy ghost (drops the crisp CAD edges)
-BODY_OPACITY    = 0.00            # the real body's fade when HIDE_BODY is False
-COPIES_PER_BODY = 4               # how many offset wireframe copies = the ghosting
-SCATTER         = 0.01            # copy offset, as a fraction of body size (bigger = more spread)
-OVERSHOOT       = 0.0001          # how far lines run PAST each corner (loosens sharp corners)
-LINE_WEIGHT     = 2.0             # ghost line thickness (try 0.6 thin .. 2.5 bold)
-GRAY_LIGHT      = 165             # lightest ghost copy (0=black .. 255=white)
-GRAY_DARK       = 45              # darkest ghost copy — copies fade across this range
-SHOW_THROUGH    = False           # X-ray removed: ghost lines are occluded by solids like
-                                  #   normal geometry (no see-through bleed-through material)
-SHOW_THRU_OPACITY = 0.6           # how strongly they bleed through (0 hidden .. 1 full)
-FLAT_FILL       = True            # comic look: fill the body with a flat matte colour under
-                                  #   the sketchy lines (cel-shaded). False = lines only.
-FILL_RGB        = (222, 220, 214) # the flat fill colour (paper/putty)
-FILL_FLATTEN    = 0.55            # 0 = normal lit shading .. 1 = fully flat (unlit) fill
-MAX_LINES       = 2400            # cost guard across all questioned bodies
-# Each ghost line is drawn with the same hand-drawn "sketchy" wobble as the
-# proposals (the pulled-out preview), via _visual_stroke's proposal role.
+FUZZY_ON        = True
+HIDE_BODY       = False
+BODY_OPACITY    = 0.00
+COPIES_PER_BODY = 4
+SCATTER         = 0.01
+OVERSHOOT       = 0.0001
+LINE_WEIGHT     = 2.0
+GRAY_LIGHT      = 165
+GRAY_DARK       = 45
+SHOW_THROUGH    = False
+SHOW_THRU_OPACITY = 0.6
+FLAT_FILL       = True
+FILL_RGB        = (222, 220, 214)
+FILL_FLATTEN    = 0.55
+MAX_LINES       = 2400
 # ============================================================================
+
+
+def _ensure_runtime_store(m):
+    if getattr(m, "_runtime_store", None) is not None:
+        return
+    root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    path = os.path.join(root, "core", "fuzzycad_runtime_store.py")
+    name = "fuzzycad_runtime_store"
+    mod = sys.modules.get(name)
+    if mod is None:
+        spec = importlib.util.spec_from_file_location(name, path)
+        mod = importlib.util.module_from_spec(spec)
+        sys.modules[name] = mod
+        spec.loader.exec_module(mod)
+    mod.install(m)
 
 
 def install(m):
+    _ensure_runtime_store(m)
+
     adsk = m.adsk
     old_redraw = m._redraw_marks
     old_refresh_ghost = m._refresh_ghost
+    old_run = m.run
+    old_stop = m.stop
 
     m._FUZZY_BOUNDARY = FUZZY_ON
-    GID = "FuzzyCAD_FuzzyBoundary"
-    hidden = {}          # token -> body we set invisible, so we can restore it
-    cache = {"signature": None, "group": None, "count": 0}
+    LEGACY_GID = "FuzzyCAD_FuzzyBoundary"
+    hidden_tokens = set()
+    lifecycle = {"legacy_cleaned": False}
 
     def log(msg):
         try:
@@ -65,40 +74,74 @@ def install(m):
         except Exception:
             pass
 
-    def questioned_bodies():
-        """Bodies of open, non-note marks -- minus any that are being edited.
+    def body_tok(body):
+        try:
+            return m._runtime_entity_token(body) or "id:{}".format(id(body))
+        except Exception:
+            try:
+                return str(body.entityToken)
+            except Exception:
+                return "id:{}".format(id(body))
 
-        While a mark is in the "editing" phase, its clean tool preview (e.g. the
-        fillet's translucent solid) stands in for the fuzzy look, so the comic
-        fill + sketchy edges are suppressed for that body. The fuzzy look returns
-        the moment the edit closes (proposed), or when another tool takes over,
-        and stays until Accept/Reject.
+    def resolve_body(tok):
+        try:
+            design = m._design()
+            if design is None or not tok or str(tok).startswith("id:"):
+                return None
+            for ent in design.findEntityByToken(tok):
+                if isinstance(ent, adsk.fusion.BRepBody):
+                    return ent
+        except Exception:
+            pass
+        return None
+
+    def cleanup_legacy_group():
+        if lifecycle["legacy_cleaned"]:
+            return False
+        lifecycle["legacy_cleaned"] = True
+        try:
+            before = m._runtime_group_exists(LEGACY_GID)
+            m._clear(LEGACY_GID)
+            return bool(before)
+        except Exception:
+            return False
+
+    def open_fuzzy_tokens():
+        """Bodies whose fuzzy graphics should be retained in runtime memory.
+
+        Editing hides a fuzzy group but does not destroy it. Fillet never uses the
+        comic body, matching the previous policy.
         """
+        out = set()
+        for mark in list(getattr(m, "_marks", None) or []):
+            if mark.get("status", "open") != "open":
+                continue
+            if mark.get("tool") in ("note", "fillet"):
+                continue
+            body = m._body.get(mark.get("id"))
+            if body is not None:
+                out.add(body_tok(body))
+        return out
+
+    def questioned_rows():
+        """Exact previous visibility rule, deduplicated by body token."""
         out, seen = [], set()
         for mark in list(getattr(m, "_marks", None) or []):
             if mark.get("status", "open") != "open" or mark.get("tool") == "note":
                 continue
-            # Fillet never takes the comic look: it carries its own translucent
-            # preview from editing right through to Accept, so its appearance is
-            # constant and only the interactivity (the radius arrow) changes. Any
-            # other tool just drops the comic while it is actively being edited.
             try:
                 if mark.get("tool") == "fillet" or m._mark_phase(mark) == "editing":
                     continue
             except Exception:
                 pass
-            b = m._body.get(mark.get("id"))
-            if b is None:
+            body = m._body.get(mark.get("id"))
+            if body is None:
                 continue
-            try:
-                tok = b.entityToken
-            except Exception:
-                tok = None
-            key = tok or id(b)
-            if key in seen:
+            tok = body_tok(body)
+            if tok in seen:
                 continue
-            seen.add(key)
-            out.append(b)
+            seen.add(tok)
+            out.append((tok, body))
         return out
 
     def gray_for(k):
@@ -111,32 +154,26 @@ def install(m):
         return (g, g, g)
 
     def overshoot(poly, ext):
-        """Run each edge a little PAST its two endpoints so corners cross/overshoot
-        like a hand sketch instead of meeting at a precise point."""
         if ext <= 0 or len(poly) < 2:
             return poly
 
-        def past(a, b):     # a point ext beyond a, along the direction away from b
+        def past(a, b):
             dx, dy, dz = a[0] - b[0], a[1] - b[1], a[2] - b[2]
             d = math.sqrt(dx * dx + dy * dy + dz * dz) or 1.0
             return (a[0] + dx / d * ext, a[1] + dy / d * ext, a[2] + dz / d * ext)
 
         return [past(poly[0], poly[1])] + list(poly) + [past(poly[-1], poly[-2])]
 
-    def stroke(grp, pts, rgb, seed, size):
-        """One hand-drawn ghost line: the proposals' sketchy wobble, our grey."""
+    def stroke(group, pts, rgb, seed, size):
         vs = getattr(m, "_visual_stroke", None)
         if vs is not None:
-            vs(grp, pts, "proposal_internal", seed, size=size, rgb=rgb,
+            vs(group, pts, "proposal_internal", seed, size=size, rgb=rgb,
                weight=LINE_WEIGHT, strokes=1)
         else:
-            m._sketchy(grp, pts, rgb, max(0.01, size * 0.004), seed,
+            m._sketchy(group, pts, rgb, max(0.01, size * 0.004), seed,
                        weight=LINE_WEIGHT, strokes=1)
 
     def flat_material():
-        """A flat, matte, low-reflection fill (cel-shaded / comic look). Specular is
-        black (no shine); emissive lifts the colour toward unlit so lighting barely
-        shades it -- a flat colour block, not a rendered solid."""
         def C(r, g, b):
             return adsk.core.Color.create(int(max(0, min(255, r))),
                                           int(max(0, min(255, g))),
@@ -144,31 +181,20 @@ def install(m):
         r, g, b = FILL_RGB
         f = max(0.0, min(1.0, FILL_FLATTEN))
         return adsk.fusion.CustomGraphicsBasicMaterialColorEffect.create(
-            C(r, g, b),                         # diffuse
-            C(r, g, b),                         # ambient
-            C(0, 0, 0),                         # specular -> no shine (matte)
-            C(r * f, g * f, b * f),             # emissive -> flatten the shading
-            0.0,                                # glossiness
-            1.0)                                # opacity (opaque flat block)
+            C(r, g, b), C(r, g, b), C(0, 0, 0), C(r * f, g * f, b * f), 0.0, 1.0)
 
-    def draw_fill(grp, tmp, b):
+    def draw_fill(group, tmp, body):
         if not FLAT_FILL or tmp is None:
             return
         try:
-            dup = tmp.copy(b)
+            dup = tmp.copy(body)
             if dup is None:
                 return
-            cg = grp.addBRepBody(dup)           # CustomGraphics = not selectable
+            cg = group.addBRepBody(dup)
             cg.color = flat_material()
         except Exception:
             log("flat fill failed\n{}".format(m.traceback.format_exc()))
 
-    # ---- persistent fuzzy-graphics cache ----------------------------------
-    # Rebuilding the comic body is expensive: it copies/tessellates the BRep,
-    # samples every edge, and creates up to thousands of CustomGraphics lines.
-    # None of that output changes when a user merely hovers, switches cards, or
-    # opens/closes an editor on some OTHER mark. Keep the exact graphics alive in
-    # those cases; rebuild only when their visual input changes.
     def style_signature():
         return (
             bool(getattr(m, "_FUZZY_BOUNDARY", True)), HIDE_BODY, BODY_OPACITY,
@@ -177,153 +203,54 @@ def install(m):
             FLAT_FILL, tuple(FILL_RGB), FILL_FLATTEN, MAX_LINES,
         )
 
-    def body_signature(b):
-        try:
-            tok = b.entityToken
-        except Exception:
-            tok = "id:{}".format(id(b))
-        try:
-            rev = str(getattr(b, "revisionId", "") or "")
-        except Exception:
-            rev = ""
-        try:
-            edges = int(b.edges.count)
-        except Exception:
-            edges = -1
-        try:
-            faces = int(b.faces.count)
-        except Exception:
-            faces = -1
-        try:
-            bb = b.boundingBox
-            bbox = tuple(round(float(v), 9) for v in (
-                bb.minPoint.x, bb.minPoint.y, bb.minPoint.z,
-                bb.maxPoint.x, bb.maxPoint.y, bb.maxPoint.z))
-        except Exception:
-            bbox = ()
-        return (tok, rev, edges, faces, bbox)
-
-    def fuzzy_signature(bodies):
-        return (style_signature(), tuple(body_signature(b) for b in bodies))
-
-    def graphics_alive():
-        grp = cache.get("group")
-        if grp is None:
-            return False
-        try:
-            if hasattr(grp, "isValid") and not grp.isValid:
-                return False
-            return int(grp.count) == int(cache.get("count", 0))
-        except Exception:
+    def draw_body_group(tok, body, bi, geometry, line_budget):
+        """Build one body's group once, using the exact previous drawing formula."""
+        entry = m._runtime_render_entry(tok, "fuzzy", True)
+        gid = entry["gid"]
+        m._runtime_delete_group(gid)
+        group = m._runtime_find_group(gid, True)
+        if group is None:
             return False
 
-    def clear_cached_graphics():
-        try:
-            m._clear(GID)
-        except Exception:
-            pass
-        cache["signature"] = None
-        cache["group"] = None
-        cache["count"] = 0
-
-    def invalidate_fuzzy_boundary():
-        """Force the next redraw to rebuild without changing the current screen."""
-        cache["signature"] = None
-
-    m._invalidate_fuzzy_boundary = invalidate_fuzzy_boundary
-
-    def draw_fuzzy():
-        """Draw the questioned body's EDGES as a few offset copies, each a
-        hand-drawn (sketchy) line in a grey that fades from light to near-black
-        across the copies. Lines live in a CustomGraphics group, so they render
-        but can never be clicked or picked; only the real body is selectable.
-
-        Appearance is identical to the previous renderer. The only difference is
-        lifecycle: unchanged CustomGraphics are retained instead of deleted and
-        recreated on every unrelated redraw.
-        """
-        if not getattr(m, "_FUZZY_BOUNDARY", True):
-            if cache.get("signature") is not None or graphics_alive():
-                clear_cached_graphics()
-            return
-
-        # Reconcile hide/fade here too, so a resolved body is restored on any redraw
-        # (accept/reject, Inspector Repair) even if refresh_ghost didn't fire.
-        try:
-            apply_body_state()
-        except Exception:
-            pass
-
-        bodies = questioned_bodies()
-        if not bodies:
-            if cache.get("signature") is not None or graphics_alive():
-                clear_cached_graphics()
-            return
-
-        signature = fuzzy_signature(bodies)
-        if cache.get("signature") == signature and graphics_alive():
-            # old_redraw already refreshed the viewport. The persistent fuzzy group
-            # is still present, so there is nothing to resample, retessellate, or
-            # refresh a second time.
-            return
-
-        clear_cached_graphics()
-        grp = m._group(GID)
-        if grp is None:
-            return
         try:
             tmp = adsk.fusion.TemporaryBRepManager.get()
         except Exception:
             tmp = None
+        draw_fill(group, tmp, body)
 
+        size = float(geometry.get("size", 3.0))
+        loops = geometry.get("edges") or []
+        step = max(0.02, min(size * SCATTER, 0.80))
+        ext = max(0.0, min(size * OVERSHOOT, 0.8))
+        rnd = random.Random(1234 + bi * 97)
         drawn = 0
-        for bi, b in enumerate(bodies):
-            draw_fill(grp, tmp, b)   # flat comic fill first, so the lines land on top
-            try:
-                _, size = m._bbox_center_size(b)
-            except Exception:
-                size = 3.0
-            step = max(0.02, min(float(size) * SCATTER, 0.80))  # copy offset ~ body size
-            ext = max(0.0, min(float(size) * OVERSHOOT, 0.8))   # corner overshoot
-            try:
-                loops = m._sample_edges(b.edges)
-            except Exception:
-                loops = []
-            if not loops:
-                continue
-            # Seeded per body so the scatter is stable across redraws (no flicker).
-            # The seed formula is unchanged, preserving the exact line placement.
-            rnd = random.Random(1234 + bi * 97)
-            for k in range(COPIES_PER_BODY):
-                if drawn >= MAX_LINES:
-                    break
-                rgb = gray_for(k)
-                dx = rnd.uniform(-1, 1); dy = rnd.uniform(-1, 1); dz = rnd.uniform(-1, 1)
-                dl = math.sqrt(dx * dx + dy * dy + dz * dz) or 1.0
-                mag = step * rnd.uniform(0.4, 1.1)
-                ox, oy, oz = dx / dl * mag, dy / dl * mag, dz / dl * mag
-                for j, poly in enumerate(loops):
-                    if drawn >= MAX_LINES:
-                        break
-                    pts = overshoot([(q[0] + ox, q[1] + oy, q[2] + oz) for q in poly], ext)
-                    try:
-                        stroke(grp, pts, rgb, (bi * 911 + k * 131 + j) & 0xffff, size)
-                        drawn += 1
-                    except Exception:
-                        pass
-            if drawn >= MAX_LINES:
-                break
 
-        # X-ray: let the ghost lines bleed through the solid so the back edges show.
+        for k in range(COPIES_PER_BODY):
+            if drawn >= line_budget:
+                break
+            rgb = gray_for(k)
+            dx = rnd.uniform(-1, 1); dy = rnd.uniform(-1, 1); dz = rnd.uniform(-1, 1)
+            dl = math.sqrt(dx * dx + dy * dy + dz * dz) or 1.0
+            mag = step * rnd.uniform(0.4, 1.1)
+            ox, oy, oz = dx / dl * mag, dy / dl * mag, dz / dl * mag
+            for j, poly in enumerate(loops):
+                if drawn >= line_budget:
+                    break
+                pts = overshoot([(q[0] + ox, q[1] + oy, q[2] + oz) for q in poly], ext)
+                try:
+                    stroke(group, pts, rgb, (bi * 911 + k * 131 + j) & 0xffff, size)
+                    drawn += 1
+                except Exception:
+                    pass
+
         if SHOW_THROUGH:
             try:
                 eff = adsk.fusion.CustomGraphicsShowThroughColorEffect.create(
                     adsk.core.Color.create(GRAY_DARK, GRAY_DARK, GRAY_DARK, 255),
                     float(SHOW_THRU_OPACITY))
-                for i in range(grp.count):
+                for i in range(group.count):
                     try:
-                        ent = grp.item(i)
-                        # Only the ghost LINES bleed through; leave the flat fill solid.
+                        ent = group.item(i)
                         if "Line" in getattr(ent, "objectType", ""):
                             ent.showThrough = eff
                     except Exception:
@@ -331,92 +258,172 @@ def install(m):
             except Exception:
                 log("showThrough not applied\n{}".format(m.traceback.format_exc()))
 
-        cache["signature"] = signature
-        cache["group"] = grp
-        try:
-            cache["count"] = int(grp.count)
-        except Exception:
-            cache["count"] = 0
+        # Store only JSON-safe/pure-Python metadata; never `group` itself.
+        entry["signature"] = (
+            style_signature(), geometry.get("signature"), int(bi), int(line_budget))
+        entry["visible"] = True
+        entry["dirty"] = False
+        log("ghost lines drawn={} body={} group={}".format(drawn, tok, gid))
+        return True
 
-        log("ghost lines drawn={} for {} body(ies)".format(drawn, len(bodies)))
-        # A rebuild happens after old_redraw's refresh, so keep the existing final
-        # refresh here. Cache hits skip this redundant refresh.
-        try:
-            m._app.activeViewport.refresh()
-        except Exception:
-            pass
-
-    def body_tok(b):
-        try:
-            return b.entityToken
-        except Exception:
-            return id(b)
-
-    def apply_body_state():
-        """Hide the questioned bodies (so only the sketchy ghost shows, without the
-        real body's crisp CAD edges) or fade them, and restore any body that is no
-        longer questioned. Runs on every ghost refresh and every redraw, so a
-        resolved body always comes back."""
+    def apply_body_state(rows=None):
         if not getattr(m, "_FUZZY_BOUNDARY", True):
             return
-        want = questioned_bodies()
-        want_keys = set()
-        for b in want:
-            tok = body_tok(b)
-            want_keys.add(tok)
+        rows = questioned_rows() if rows is None else rows
+        want = set(tok for tok, _ in rows)
+        for tok, body in rows:
             try:
                 if HIDE_BODY:
-                    hidden[tok] = b
-                    b.isVisible = False
+                    hidden_tokens.add(tok)
+                    body.isVisible = False
                 else:
-                    # Fusion ignores opacity == 0 (it reverts to the previous value,
-                    # so the face looked "unchanged" at 0). Clamp to a tiny minimum
-                    # so 0 reads as nearly-invisible instead of snapping back to 0.5.
-                    b.opacity = max(0.02, float(BODY_OPACITY))
+                    body.opacity = max(0.02, float(BODY_OPACITY))
             except Exception:
                 pass
-        for tok in list(hidden.keys()):
-            if tok not in want_keys:
-                b = hidden.pop(tok)
+        for tok in list(hidden_tokens):
+            if tok not in want:
+                hidden_tokens.discard(tok)
+                body = resolve_body(tok)
                 try:
-                    if b.isValid:
-                        b.isVisible = True
+                    if body is not None and body.isValid:
+                        body.isVisible = True
                 except Exception:
                     pass
 
     def restore_all_visibility():
-        for tok in list(hidden.keys()):
-            b = hidden.pop(tok)
+        for tok in list(hidden_tokens):
+            hidden_tokens.discard(tok)
+            body = resolve_body(tok)
             try:
-                if b.isValid:
-                    b.isVisible = True
+                if body is not None and body.isValid:
+                    body.isVisible = True
             except Exception:
                 pass
 
     m._fuzzy_restore_visibility = restore_all_visibility
 
+    def sync_fuzzy():
+        """Incrementally synchronize per-body fuzzy groups; returns screen-changed."""
+        changed = cleanup_legacy_group()
+        try:
+            m._runtime_sync_proposals()
+        except Exception:
+            pass
+
+        if not getattr(m, "_FUZZY_BOUNDARY", True):
+            for tok in list(m._runtime_render_tokens("fuzzy")):
+                changed = m._runtime_drop_render(tok, "fuzzy", True) or changed
+            return changed
+
+        rows = questioned_rows()
+        apply_body_state(rows)
+        retained = open_fuzzy_tokens()
+        visible = set(tok for tok, _ in rows)
+
+        # Resolved/deleted subjects are the only ones whose persistent group is
+        # destroyed. Editing merely hides its group, which makes card switching O(1).
+        for tok in list(m._runtime_render_tokens("fuzzy")):
+            if tok not in retained:
+                changed = m._runtime_drop_render(tok, "fuzzy", True) or changed
+
+        # Hide retained-but-editing groups without rebuilding anything.
+        for tok in retained - visible:
+            entry = m._runtime_render_entry(tok, "fuzzy", False)
+            if entry is not None and m._runtime_group_exists(entry.get("gid")):
+                if entry.get("visible", False):
+                    if m._runtime_set_group_visible(entry["gid"], False):
+                        entry["visible"] = False
+                        changed = True
+
+        # Preserve the old renderer's *global* MAX_LINES and body-index seed.
+        remaining = int(MAX_LINES)
+        for bi, (tok, body) in enumerate(rows):
+            if remaining <= 0:
+                entry = m._runtime_render_entry(tok, "fuzzy", False)
+                if entry is not None and entry.get("visible", False):
+                    if m._runtime_set_group_visible(entry["gid"], False):
+                        entry["visible"] = False
+                        changed = True
+                continue
+
+            geometry = m._runtime_body_geometry(body)
+            loops = geometry.get("edges") or []
+            possible = max(0, int(COPIES_PER_BODY) * len(loops))
+            budget = min(remaining, possible)
+            remaining -= budget
+
+            entry = m._runtime_render_entry(tok, "fuzzy", True)
+            signature = (style_signature(), geometry.get("signature"), int(bi), int(budget))
+            gid = entry["gid"]
+            exists = m._runtime_group_exists(gid)
+
+            if budget <= 0:
+                if exists and entry.get("visible", False):
+                    if m._runtime_set_group_visible(gid, False):
+                        entry["visible"] = False
+                        changed = True
+                continue
+
+            if (not exists) or entry.get("signature") != signature or entry.get("dirty", True):
+                if draw_body_group(tok, body, bi, geometry, budget):
+                    changed = True
+                continue
+
+            if not entry.get("visible", False):
+                if m._runtime_set_group_visible(gid, True):
+                    entry["visible"] = True
+                    changed = True
+
+        return changed
+
     def refresh_ghost():
         old_refresh_ghost()
-        apply_body_state()
+        try:
+            apply_body_state()
+        except Exception:
+            pass
 
     m._refresh_ghost = refresh_ghost
 
     def redraw(*args, **kwargs):
         result = old_redraw(*args, **kwargs)
         try:
-            draw_fuzzy()
+            changed = sync_fuzzy()
+            # old_redraw refreshes before this outer layer runs. Refresh once more
+            # only if this layer actually changed graphics/visibility.
+            if changed:
+                m._app.activeViewport.refresh()
         except Exception:
-            log("fuzzy draw failed\n{}".format(m.traceback.format_exc()))
+            log("fuzzy sync failed\n{}".format(m.traceback.format_exc()))
         return result
 
     m._redraw_marks = redraw
 
-    old_run = m.run
-
     def run(context):
         result = old_run(context)
-        log("FUZZY BOUNDARY READY: {:.0%} real body + cached non-selectable sketchy "
-            "grey line-ghost".format(BODY_OPACITY))
+        try:
+            # A crash/reload may leave runtime groups in the document. Sweep once;
+            # there are no cached native wrappers to invalidate, then recreate only
+            # the groups required by the hydrated proposal data.
+            m._runtime_reset_graphics("FuzzyCAD_Runtime_fuzzy_")
+            lifecycle["legacy_cleaned"] = False
+            if sync_fuzzy():
+                m._app.activeViewport.refresh()
+        except Exception:
+            log("startup fuzzy sync failed\n{}".format(m.traceback.format_exc()))
+        log("FUZZY BOUNDARY READY: {:.0%} real body + persistent per-body sketchy grey line-ghost".format(
+            BODY_OPACITY))
         return result
 
     m.run = run
+
+    def stop(context):
+        try:
+            restore_all_visibility()
+            m._runtime_reset_graphics("FuzzyCAD_Runtime_fuzzy_")
+            m._clear(LEGACY_GID)
+        except Exception:
+            pass
+        return old_stop(context)
+
+    m.stop = stop
