@@ -12,6 +12,7 @@ the first consumer; other visuals can migrate later without changing appearance.
 """
 
 import hashlib
+import time
 
 
 def install(m):
@@ -108,19 +109,12 @@ def install(m):
             bbox = ()
         return (tok, rev, edge_count, face_count, bbox)
 
-    def body_geometry(body):
-        """Return a pure-Python sampled geometry snapshot for a live body."""
-        tok = entity_token(body) or "id:{}".format(id(body))
-        sig = (int(state.get("geometry_epoch", 0)), body_signature(body))
-        cached = state["geometry"].get(tok)
-        if cached is not None and cached.get("signature") == sig:
-            return cached
-
+    def _pure_edges(body):
         try:
             edges = m._sample_edges(body.edges)
         except Exception:
             edges = []
-        pure_edges = []
+        pure = []
         for poly in edges or []:
             out = []
             for q in poly or []:
@@ -129,7 +123,44 @@ def install(m):
                 except Exception:
                     pass
             if len(out) >= 2:
-                pure_edges.append(out)
+                pure.append(out)
+        return pure
+
+    def body_geometry(body):
+        """Return a pure-Python sampled geometry snapshot for a live body.
+
+        An empty/very incomplete sample can occur transiently while Fusion is
+        handing a command from one editor to another. Do not freeze that transient
+        failure into the long-lived cache: incomplete snapshots are retried at a
+        throttled cadence until their edge polylines recover. This keeps the
+        persistent fuzzy fill from becoming permanently outline-less.
+        """
+        tok = entity_token(body) or "id:{}".format(id(body))
+        body_sig = (int(state.get("geometry_epoch", 0)), body_signature(body))
+        now = time.monotonic()
+        cached = state["geometry"].get(tok)
+        if cached is not None and cached.get("body_signature") == body_sig:
+            if cached.get("sample_complete", True):
+                return cached
+            if now < float(cached.get("retry_after", 0.0) or 0.0):
+                return cached
+
+        pure_edges = _pure_edges(body)
+        try:
+            expected_edges = int(body.edges.count)
+        except Exception:
+            expected_edges = -1
+
+        # _sample_edge already has a vertex-endpoint fallback, so a healthy body
+        # normally produces almost one polyline per BRep edge. Treat a completely
+        # empty result (or a severely partial one) as transient instead of valid.
+        if expected_edges <= 0:
+            sample_complete = True
+        elif not pure_edges:
+            sample_complete = False
+        else:
+            sample_complete = len(pure_edges) >= max(1, int(expected_edges * 0.60))
+
         try:
             center, size = m._bbox_center_size(body)
             center = tuple(float(x) for x in center)
@@ -137,10 +168,17 @@ def install(m):
         except Exception:
             center, size = (0.0, 0.0, 0.0), 3.0
 
+        # Include sample health/count in the renderer signature. When a cached
+        # transient empty sample later recovers, only that body's group is rebuilt.
+        render_sig = (body_sig, len(pure_edges), bool(sample_complete))
         cached = {
             "token": tok,
-            "signature": sig,
+            "body_signature": body_sig,
+            "signature": render_sig,
             "edges": pure_edges,
+            "edge_count": expected_edges,
+            "sample_complete": bool(sample_complete),
+            "retry_after": 0.0 if sample_complete else now + 0.35,
             "center": center,
             "size": size,
         }
