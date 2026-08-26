@@ -5,16 +5,18 @@ actual design decisions continue to use the separate FuzzyCAD decision popup.
 This keeps Axis Rotate and other staged tools legible without adding more Fusion
 command-panel UI.
 
-The stage card also exposes an optional Confirm action. Confirm simply ends the
-currently active FuzzyCAD/Fusion command through the same deferred main-thread
-termination path used when switching tools. Switching directly to another tool
-still works exactly as before and remains the fastest path.
+The stage card also exposes an optional Confirm action. Confirm ends the current
+FuzzyCAD/Fusion command through the deferred main-thread termination path. When
+Confirm closes a reopened card edit, this layer first forces the mark back into
+the shared Proposed visual state so every tool returns to the same comic
+baseline before Fusion delivers its later Destroy event.
 
 This layer also owns toolbar-command lifecycle guards that do not change any
 visual styling or geometry. Each input/preview/execute handler captures the
 command session that created it and ignores late events after a newer command has
-taken ownership. The existing Execute/Destroy rendering path is intentionally
-left untouched so normal-state appearance remains byte-for-byte policy-equivalent.
+taken ownership. The existing Execute/Destroy rendering path remains intact; the
+reopen finalizer below is an idempotent transition guard for the explicit Confirm
+button only.
 """
 
 import json
@@ -265,6 +267,104 @@ def install(m):
 
     m.FuzzyCommandCreated = FuzzyCommandCreated
 
+    def force_reopened_proposed():
+        """Make explicit Confirm an immediate Editing -> Proposed transition.
+
+        The left-rail Confirm terminates Fusion's active command asynchronously.
+        During a reopened card edit, waiting for that later Destroy left a race in
+        which the badge survived but the source opacity/comic group could remain
+        in the Editing presentation. Resolve the visual phase synchronously first.
+
+        This is intentionally idempotent: the reopen command's normal Destroy will
+        run afterward and perform its regular cleanup/redraw again.
+        """
+        if getattr(m, "_active_cmd", None) != "edit_existing":
+            return False
+        mid = getattr(m, "_active_edit_id", None)
+        if mid is None:
+            return False
+        try:
+            mid = int(mid)
+        except Exception:
+            pass
+
+        mark = None
+        try:
+            mark = m._find(mid)
+        except Exception:
+            pass
+        if mark is None or mark.get("status", "open") != "open":
+            return False
+
+        # _mark_phase() must see Proposed before any renderer is synchronized.
+        # Clear a stale live owner too; reopened edits should normally use only
+        # _active_edit_id, but this makes Confirm invariant across all tools.
+        try:
+            live = getattr(m, "_live", None)
+            if isinstance(live, dict):
+                for key, value in list(live.items()):
+                    if value == mid:
+                        live.pop(key, None)
+        except Exception:
+            pass
+        m._active_edit_id = None
+
+        try:
+            cancel = getattr(m, "_animation_cancel", None)
+            if cancel is not None:
+                cancel("confirm", refresh=False)
+        except Exception:
+            pass
+        try:
+            clear_reveal = getattr(m, "_visual_clear_revealed", None)
+            if clear_reveal is not None:
+                clear_reveal(mid, hover_only=False)
+        except Exception:
+            pass
+        try:
+            m._clear(m.GROUP_PREVIEW)
+        except Exception:
+            pass
+
+        # Redraw the card/badge/detail layer, then explicitly reconcile opacity
+        # and comic graphics. Confirm is infrequent, so the small duplicate guard
+        # cost is preferable to allowing a half-Editing/half-Proposed viewport.
+        try:
+            m._redraw_marks()
+        except Exception:
+            pass
+        try:
+            sync_opacity = getattr(m, "_sync_visual_opacity", None)
+            if sync_opacity is not None:
+                sync_opacity()
+        except Exception:
+            pass
+        try:
+            sync_comic = getattr(m, "_sync_comic_uncertainty", None)
+            if sync_comic is not None:
+                sync_comic()
+        except Exception:
+            pass
+        try:
+            m._send_state()
+        except Exception:
+            pass
+        try:
+            persist = getattr(m, "_persist_state", None)
+            if persist is not None:
+                persist("confirm-reopen-proposed")
+        except Exception:
+            pass
+        try:
+            if m._app and m._app.activeViewport:
+                m._app.activeViewport.refresh()
+        except Exception:
+            pass
+        log("CONFIRM REOPEN -> PROPOSED mark={}".format(mid))
+        return True
+
+    m._force_reopened_proposed = force_reopened_proposed
+
     class StagePaletteHTMLHandler(adsk.core.HTMLEventHandler):
         """Adds a lightweight explicit finish path without changing tool switching.
 
@@ -285,6 +385,10 @@ def install(m):
                 pass
 
             if action == "confirm":
+                try:
+                    force_reopened_proposed()
+                except Exception:
+                    pass
                 try:
                     m._app.fireCustomEvent(m.LAUNCH_EVENT_ID, "")
                 except Exception:
