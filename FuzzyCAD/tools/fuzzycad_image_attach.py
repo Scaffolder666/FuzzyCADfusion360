@@ -139,21 +139,6 @@ def install(m):
             try:
                 comp = face.body.parentComponent
                 ci = comp.canvases.createInput(path, face)
-                # Stretch the image to fill the face (ignore aspect): set the canvas
-                # transform's scale to the face's in-plane extents. Best-effort --
-                # guarded so a wrong assumption just falls back to the default size.
-                try:
-                    bb = face.boundingBox
-                    ex = sorted([bb.maxPoint.x - bb.minPoint.x,
-                                 bb.maxPoint.y - bb.minPoint.y,
-                                 bb.maxPoint.z - bb.minPoint.z], reverse=True)
-                    fw, fh = max(ex[0], 0.1), max(ex[1], 0.1)
-                    mtx = adsk.core.Matrix2D.create()
-                    mtx.setCell(0, 0, fw)
-                    mtx.setCell(1, 1, fh)
-                    ci.transform = mtx
-                except Exception:
-                    log("fill-scale skipped\n{}".format(m.traceback.format_exc()))
                 canvas = comp.canvases.add(ci)
                 # remember it so accept/reject can delete it (it's a native doc
                 # entity, not tied to the mark on its own).
