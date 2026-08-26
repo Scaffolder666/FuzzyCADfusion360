@@ -48,109 +48,103 @@
   </style>
 </head>
 <body>
-  <!-- Icon sprite: an isometric cube base (CAD look) + a blue accent per tool. -->
+  <!-- Icon sprite: two-tone line style (navy outline + bright-blue accent). -->
   <svg width="0" height="0" style="position:absolute" aria-hidden="true" focusable="false">
-    <defs>
-      <g id="cube" stroke="#5b6b7b" stroke-width="1.1" stroke-linejoin="round">
-        <polygon points="14,3 24,8.5 14,14 4,8.5" fill="#e9edf2"/>
-        <polygon points="4,8.5 14,14 14,25 4,19.5" fill="#c3cad3"/>
-        <polygon points="24,8.5 14,14 14,25 24,19.5" fill="#aab2bd"/>
-      </g>
-    </defs>
 
     <symbol id="ic-transform" viewBox="0 0 28 28">
-      <use href="#cube"/>
-      <!-- a move gizmo growing out of the cube's own three edges (14,14) -->
-      <g fill="none" stroke="#2f6fed" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
-        <line x1="14" y1="14" x2="2.8" y2="7.8"/>
-        <line x1="14" y1="14" x2="25.2" y2="7.8"/>
-        <line x1="14" y1="14" x2="14" y2="26.8"/>
-        <path d="M2.8 7.8 l3.2 0 M2.8 7.8 l.7 3.1"/>
-        <path d="M25.2 7.8 l-3.2 0 M25.2 7.8 l-.7 3.1"/>
-        <path d="M14 26.8 l-2.3 -2.5 M14 26.8 l2.3 -2.5"/>
+      <rect x="10.3" y="10.3" width="7.4" height="7.4" rx="1.6" fill="#3f8ae0" fill-opacity=".16"
+            stroke="#3f8ae0" stroke-width="2.1"/>
+      <g fill="none" stroke="#33527e" stroke-width="2.1" stroke-linecap="round" stroke-linejoin="round">
+        <path d="M14 8.4 V3.8 M14 3.8 l-2 2.1 M14 3.8 l2 2.1"/>
+        <path d="M14 19.6 V24.2 M14 24.2 l-2 -2.1 M14 24.2 l2 -2.1"/>
+        <path d="M8.4 14 H3.8 M3.8 14 l2.1 -2 M3.8 14 l2.1 2"/>
+        <path d="M19.6 14 H24.2 M24.2 14 l-2.1 -2 M24.2 14 l-2.1 2"/>
       </g>
     </symbol>
 
     <symbol id="ic-scale" viewBox="0 0 28 28">
-      <use href="#cube"/>
-      <!-- small arrows shooting out of the three outer corners = grow uniformly -->
-      <g fill="none" stroke="#2f6fed" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round">
-        <path d="M24 8.5 l3.4 -1.9"/><path d="M27.4 6.6 l-2.5 .2 M27.4 6.6 l.2 2.5"/>
-        <path d="M4 8.5 l-3.4 -1.9"/><path d="M.6 6.6 l2.5 .2 M.6 6.6 l-.2 2.5"/>
-        <path d="M14 25 l0 3.2"/><path d="M14 28.2 l-1.9 -2 M14 28.2 l1.9 -2"/>
+      <rect x="5.4" y="5.4" width="17.2" height="17.2" rx="2.3" fill="none"
+            stroke="#33527e" stroke-width="2.1"/>
+      <g fill="none" stroke="#3f8ae0" stroke-width="2.1" stroke-linecap="round" stroke-linejoin="round">
+        <line x1="10" y1="18" x2="18" y2="10"/>
+        <path d="M18 10 l-3.5 .1 M18 10 l-.1 3.5"/>
+        <path d="M10 18 l3.5 -.1 M10 18 l.1 -3.5"/>
       </g>
     </symbol>
 
     <symbol id="ic-dscale" viewBox="0 0 28 28">
-      <use href="#cube"/>
-      <!-- double arrow along the top face's long axis = resize one axis -->
-      <g fill="none" stroke="#2f6fed" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
-        <line x1="6.2" y1="8.5" x2="21.8" y2="8.5"/>
-        <path d="M6.2 8.5 l2.6 -1.8 M6.2 8.5 l2.6 1.8"/>
-        <path d="M21.8 8.5 l-2.6 -1.8 M21.8 8.5 l-2.6 1.8"/>
+      <rect x="5.4" y="7.4" width="17.2" height="13.2" rx="2.3" fill="none"
+            stroke="#33527e" stroke-width="2.1"/>
+      <g fill="none" stroke="#3f8ae0" stroke-width="2.1" stroke-linecap="round" stroke-linejoin="round">
+        <line x1="9.5" y1="14" x2="18.5" y2="14"/>
+        <path d="M9.5 14 l2.4 -2.1 M9.5 14 l2.4 2.1"/>
+        <path d="M18.5 14 l-2.4 -2.1 M18.5 14 l-2.4 2.1"/>
       </g>
     </symbol>
 
     <symbol id="ic-axisrot" viewBox="0 0 28 28">
-      <use href="#cube"/>
-      <g fill="none" stroke="#2f6fed" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round">
-        <path d="M6.4 10.6 a7.8 3.4 0 1 0 8.6 -3.2"/>
-        <path d="M15 4.6 l.9 3 l-3 .6"/>
+      <line x1="14" y1="5.5" x2="14" y2="20" fill="none" stroke="#33527e"
+            stroke-width="2.1" stroke-linecap="round"/>
+      <ellipse cx="14" cy="19" rx="7.5" ry="3.2" fill="none" stroke="#33527e" stroke-width="2.1"/>
+      <g fill="none" stroke="#3f8ae0" stroke-width="2.1" stroke-linecap="round" stroke-linejoin="round">
+        <path d="M20.5 9.2 a7.5 7.5 0 1 0 1.4 4.6"/>
+        <path d="M21.4 8.2 l.7 4 l-4 -.4"/>
       </g>
     </symbol>
 
     <symbol id="ic-extrude" viewBox="0 0 28 28">
-      <use href="#cube"/>
-      <!-- top face lifted, arrow pushing it up along the height axis -->
-      <polygon points="14,7 22,11 14,15 6,11" fill="#dbe6ff" stroke="#2f6fed"
-               stroke-width="1.2" stroke-linejoin="round"/>
-      <g fill="none" stroke="#2f6fed" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
-        <line x1="14" y1="10.5" x2="14" y2="2.2"/>
-        <path d="M14 1.6 l-2.5 2.8 M14 1.6 l2.5 2.8"/>
+      <rect x="11.5" y="5.5" width="10" height="10" rx="1.4" fill="none"
+            stroke="#33527e" stroke-width="2.1"/>
+      <g fill="none" stroke="#33527e" stroke-width="2.1" stroke-linecap="round" stroke-linejoin="round">
+        <line x1="6.5" y1="12.5" x2="11.5" y2="7.5"/>
+        <line x1="6.5" y1="22.5" x2="11.5" y2="17.5"/>
+        <line x1="16.5" y1="22.5" x2="21.5" y2="17.5"/>
       </g>
+      <rect x="6.5" y="12.5" width="10" height="10" rx="1.4" fill="#3f8ae0" fill-opacity=".16"
+            stroke="#3f8ae0" stroke-width="2.1"/>
     </symbol>
 
     <symbol id="ic-fillet" viewBox="0 0 28 28">
-      <use href="#cube"/>
-      <!-- the top-right silhouette corner rounded off in blue -->
-      <path d="M18.5 5.6 a8.5 8.5 0 0 1 5.6 6.4" fill="none" stroke="#2f6fed"
-            stroke-width="2.1" stroke-linecap="round"/>
+      <path d="M6 23 V15" fill="none" stroke="#33527e" stroke-width="2.1" stroke-linecap="round"/>
+      <path d="M15 6 H23" fill="none" stroke="#33527e" stroke-width="2.1" stroke-linecap="round"/>
+      <path d="M6 15 A9 9 0 0 1 15 6" fill="none" stroke="#3f8ae0" stroke-width="2.3" stroke-linecap="round"/>
+      <circle cx="6" cy="6" r="1.3" fill="#33527e"/>
+      <path d="M7 7 L12.2 12.2" fill="none" stroke="#33527e" stroke-width="1.6"
+            stroke-linecap="round" stroke-dasharray="1.6 2"/>
     </symbol>
 
     <symbol id="ic-hole" viewBox="0 0 28 28">
-      <use href="#cube"/>
-      <ellipse cx="14" cy="8.5" rx="3.5" ry="1.8" fill="#2f6fed" fill-opacity=".2"
-               stroke="#2f6fed" stroke-width="1.5"/>
+      <rect x="5.4" y="5.4" width="17.2" height="17.2" rx="2.6" fill="none"
+            stroke="#33527e" stroke-width="2.1"/>
+      <circle cx="14" cy="14" r="4.3" fill="#3f8ae0" fill-opacity=".16" stroke="#3f8ae0" stroke-width="2.1"/>
+      <circle cx="14" cy="14" r="1.05" fill="#33527e"/>
     </symbol>
 
     <symbol id="ic-rough" viewBox="0 0 28 28">
-      <g fill="none" stroke="#2f6fed" stroke-width="1.4" stroke-linejoin="round"
-         stroke-linecap="round" stroke-dasharray="2.5 2.2">
-        <polygon points="14,3 24,8.5 14,14 4,8.5"/>
-        <path d="M4 8.5 V19.5 L14 25 M14 14 V25 M24 8.5 V19.5 L14 25"/>
+      <polygon points="6,11 11,6 22,6 17,11" fill="#3f8ae0" fill-opacity=".16"/>
+      <g fill="none" stroke="#33527e" stroke-width="2.1" stroke-linecap="round" stroke-linejoin="round">
+        <path d="M6 11 L11 6 L22 6 L17 11 Z"/>
+        <path d="M6 11 V22 L17 22 V11"/>
+        <path d="M17 11 L22 6 M17 22 L22 17 L22 6"/>
+      </g>
+      <g fill="none" stroke="#3f8ae0" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"
+         stroke-dasharray="2.2 2.3">
+        <path d="M11 6 L11 17 L6 22 M11 17 L22 17"/>
       </g>
     </symbol>
 
     <symbol id="ic-compare" viewBox="0 0 28 28">
-      <g stroke="#2f6fed" stroke-width="1.1" stroke-linejoin="round">
-        <polygon points="17,4 25,8 17,12 9,8" fill="#dbe6ff"/>
-        <polygon points="9,8 17,12 17,20 9,16" fill="#c9dbff"/>
-        <polygon points="25,8 17,12 17,20 25,16" fill="#b7ccff"/>
-      </g>
-      <g stroke="#5b6b7b" stroke-width="1.1" stroke-linejoin="round">
-        <polygon points="11,10 19,14 11,18 3,14" fill="#e9edf2"/>
-        <polygon points="3,14 11,18 11,26 3,22" fill="#c3cad3"/>
-        <polygon points="19,14 11,18 11,26 19,22" fill="#aab2bd"/>
-      </g>
+      <rect x="11" y="5.5" width="11.5" height="11.5" rx="2" fill="#3f8ae0" fill-opacity=".16"
+            stroke="#3f8ae0" stroke-width="2.1"/>
+      <rect x="5.5" y="11" width="11.5" height="11.5" rx="2" fill="#ffffff"
+            stroke="#33527e" stroke-width="2.1"/>
     </symbol>
 
     <symbol id="ic-comparehere" viewBox="0 0 28 28">
-      <g stroke="#5b6b7b" stroke-width="1.1" stroke-linejoin="round">
-        <polygon points="10,7 18,11 10,15 2,11" fill="#c3cad3"/>
-        <polygon points="18,7 26,11 18,15 10,11" fill="#e9edf2"/>
-      </g>
-      <line x1="14" y1="17.5" x2="14" y2="24.5" stroke="#2f6fed" stroke-width="1.7"
-            stroke-linecap="round"/>
+      <rect x="5.5" y="5.5" width="17" height="17" rx="2.3" fill="none"
+            stroke="#33527e" stroke-width="2.1"/>
+      <path d="M14 5.5 V22.5" fill="none" stroke="#33527e" stroke-width="2.1"/>
+      <path d="M5.5 8 h8.5 v12 h-8.5 z" fill="#3f8ae0" fill-opacity=".18" stroke="none"/>
     </symbol>
   </svg>
 
