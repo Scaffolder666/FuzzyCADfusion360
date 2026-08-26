@@ -1,15 +1,13 @@
-"""Keep Fillet uncertainty visible continuously while throttling exact kernel work.
+"""Fillet-specific uncertainty variation.
 
-The research interaction needs both layers:
-- a continuously visible hand-drawn/provisional rounding representation;
-- periodically refreshed exact Fusion geometry so collaborators can still inspect
-  the true rounded volume while dragging.
+Fillet keeps its cheap local rounding scaffold/callout and throttled exact kernel
+preview, but lifecycle policy comes from the central uncertainty visual authority:
+- Editing: clean/live Fillet detail + exact translucent candidate.
+- Proposed: common comic fill + sketch boundary, plus cheap Fillet detail.
+- Resolved: no Fillet overlay.
 
-The expensive exact candidate is therefore recomputed at a coarse interval, not
-on every inputChanged event. Between exact refreshes the last exact candidate
-remains faintly visible while the hand-drawn scaffold follows the manipulator
-immediately. This preserves the original visual effect without running the
-modeling kernel at pointer frequency.
+The exact solid uses the runtime render registry and stores no long-lived Fusion
+CustomGraphics wrapper objects.
 """
 
 import time
@@ -26,10 +24,28 @@ def install(m):
     LegacyPreview = getattr(m, "_fuzzycad_legacy_preview", None)
     LegacyDrawFillet = getattr(m, "_fuzzycad_legacy_draw_fillet", None)
     old_run = m.run
-    state = {"last_exact": 0.0, "busy_exact": False, "last_amount": None}
+    old_stop = m.stop
+    state = {"last_exact": 0.0, "busy_exact": False, "last_amount": None,
+             "candidate_epoch": {}}
 
     if LegacyPreview is not None:
         m.FuzzyPreview = LegacyPreview
+
+    def visual_state(mark):
+        try:
+            return m._visual_state(mark)
+        except Exception:
+            ph = "resolved"
+            try:
+                ph = m._mark_phase(mark)
+            except Exception:
+                if mark is not None and mark.get("status", "open") == "open":
+                    ph = "proposed"
+            return {
+                "phase": ph,
+                "show_detail": ph != "resolved",
+                "show_exact_fillet": ph == "editing",
+            }
 
     def stroke(group, pts, role, seed, size):
         if not pts or len(pts) < 2:
@@ -87,6 +103,8 @@ def install(m):
             pass
 
     def draw_uncertainty(group, mark):
+        if not visual_state(mark).get("show_detail", True):
+            return
         mid = mark.get("id")
         g = m._geom.get(mid, {}) or {}
         size = float(mark.get("size", 3.0))
@@ -126,6 +144,8 @@ def install(m):
 
     if LegacyDrawFillet is not None:
         def draw_fillet(group, mark, rgb, amp):
+            if not visual_state(mark).get("show_detail", True):
+                return
             g = m._geom.get(mark.get("id"), {}) or {}
             candidate = g.get("candidate_body")
             candidate_radius = g.get("candidate_radius")
@@ -133,12 +153,8 @@ def install(m):
             exact_fresh = (candidate is not None and candidate_radius is not None and
                            abs(float(candidate_radius) - amount) <= 1e-7)
 
-            # The translucent exact volume is expensive (addBRepBody re-tessellates
-            # it). It is NOT drawn here any more -- it lives in a cached persistent
-            # group (sync_fillet_solids) that is rebuilt only when the candidate
-            # actually changes, so it can stay visible from editing right through
-            # to Accept without re-tessellating on every redraw. Here we only draw
-            # the cheap sketch outline.
+            # Exact BRep volume is owned by the editing-only persistent visual
+            # below. This GROUP_MARKS/PREVIEW renderer draws cheap line detail only.
             if candidate is not None:
                 for i, poly in enumerate(g.get("candidate_edges", []) or []):
                     try:
@@ -158,94 +174,116 @@ def install(m):
             else:
                 LegacyDrawFillet(group, mark, rgb, amp)
 
-            # Live provisional geometry never disappears.
             draw_uncertainty(group, mark)
 
         m._DRAW["fillet"] = draw_fillet
         m._draw_fillet = draw_fillet
 
-    # ---- cached translucent solid, off the per-redraw hot path -------------
-    # The exact fillet volume is shown from editing right up to Accept (per the
-    # simplified fillet policy: no x-ray, the "editing look" persists). To keep it
-    # cheap it lives in its own persistent graphics group and is (re)tessellated
-    # PER MARK only when that mark's radius changes -- never on a plain redraw, and
-    # never for marks whose radius didn't move.
-    FILLET_SOLID_GID = "FuzzyCAD_FilletSolid"
-    solids = {}   # mark id -> {"sig": radius_cm, "ents": [CustomGraphicsBRepBody]}
+    # ---- editing-only exact Fillet visual ---------------------------------
+    # Runtime registry stores mark-key/group-id/signature/visibility only. Fusion
+    # CustomGraphics objects are resolved fresh and never retained in Python.
+    ROLE = "fillet_exact"
 
-    def _ents_alive(ents):
-        if not ents:
+    def render_key(mid):
+        return "mark:{}".format(int(mid))
+
+    def mark_from_key(key):
+        try:
+            return m._find(int(str(key).split(":", 1)[1]))
+        except Exception:
+            return None
+
+    def bump_candidate(mid):
+        try:
+            mid = int(mid)
+            state["candidate_epoch"][mid] = int(state["candidate_epoch"].get(mid, 0)) + 1
+        except Exception:
+            pass
+
+    def build_exact_group(mark, cand, sig):
+        mid = mark.get("id")
+        key = render_key(mid)
+        entry = m._runtime_render_entry(key, ROLE, True)
+        gid = entry["gid"]
+        m._runtime_delete_group(gid)
+        group = m._runtime_find_group(gid, True)
+        if group is None:
             return False
-        for e in ents:
-            try:
-                if not e.isValid:
-                    return False
-            except Exception:
-                return False
+        try:
+            cg = group.addBRepBody(cand)
+            cg.color = m._solid((190, 190, 186))
+            cg.setOpacity(0.26, True)
+        except Exception:
+            return False
+        entry["signature"] = sig
+        entry["visible"] = True
+        entry["dirty"] = False
         return True
 
-    def _drop(mid):
-        for e in solids.get(mid, {}).get("ents", []):
-            try:
-                e.deleteMe()
-            except Exception:
-                pass
-        solids.pop(mid, None)
-
     def sync_fillet_solids():
-        try:
-            group = m._group(FILLET_SOLID_GID)
-        except Exception:
+        # runtime store is installed by the final visual layer before commands run
+        if not hasattr(m, "_runtime_render_entry"):
             return
-        if group is None:
-            return
-        # open fillet marks that carry an exact candidate volume
+
+        marks = {}
+        retained = set()
         current = {}
         for mark in list(getattr(m, "_marks", None) or []):
             try:
-                if mark.get("tool") != "fillet":
+                if mark.get("tool") != "fillet" or mark.get("status", "open") != "open":
                     continue
-                if m._mark_phase(mark) == "resolved":
+                mid = int(mark.get("id"))
+                key = render_key(mid)
+                retained.add(key)
+                marks[key] = mark
+                if not visual_state(mark).get("show_exact_fillet", False):
                     continue
-                g = m._geom.get(mark.get("id"), {}) or {}
+                g = m._geom.get(mid, {}) or {}
                 cand = g.get("candidate_body")
                 if cand is None:
                     continue
-                sig = float(g.get("candidate_radius") or mark.get("amount", 0.0))
-                current[mark.get("id")] = (cand, sig)
+                radius = float(g.get("candidate_radius") or mark.get("amount", 0.0))
+                epoch = int(state["candidate_epoch"].get(mid, 0))
+                sig = (radius, epoch, len(g.get("candidate_edges", []) or []))
+                current[key] = (mark, cand, sig)
             except Exception:
                 continue
-        for mid in list(solids.keys()):
-            if mid not in current:
-                _drop(mid)
-        for mid, (cand, sig) in current.items():
-            cached = solids.get(mid)
-            if (cached is not None and abs(cached["sig"] - sig) <= 1e-9
-                    and _ents_alive(cached["ents"])):
+
+        # Resolved/deleted marks drop exact groups. Proposed marks retain them
+        # hidden so reopening is a visibility toggle when the candidate is valid.
+        for key in list(m._runtime_render_tokens(ROLE)):
+            if key not in retained:
+                m._runtime_drop_render(key, ROLE, True)
                 continue
-            _drop(mid)
-            ents = []
-            try:
-                cg = group.addBRepBody(cand)
-                cg.color = m._solid((190, 190, 186))
-                cg.setOpacity(0.26, True)
-                ents.append(cg)
-            except Exception:
-                pass
-            solids[mid] = {"sig": sig, "ents": ents}
+            if key not in current:
+                entry = m._runtime_render_entry(key, ROLE, False)
+                if entry is not None and m._runtime_group_exists(entry.get("gid")):
+                    actual = m._runtime_group_visible(entry["gid"])
+                    if entry.get("visible", False) or actual is True:
+                        if m._runtime_set_group_visible(entry["gid"], False):
+                            entry["visible"] = False
+
+        for key, (mark, cand, sig) in current.items():
+            entry = m._runtime_render_entry(key, ROLE, True)
+            gid = entry["gid"]
+            exists = m._runtime_group_exists(gid)
+            if (not exists) or entry.get("signature") != sig or entry.get("dirty", True):
+                build_exact_group(mark, cand, sig)
+                continue
+            actual = m._runtime_group_visible(gid)
+            if not entry.get("visible", False) or actual is False:
+                if m._runtime_set_group_visible(gid, True):
+                    entry["visible"] = True
 
     m._sync_fillet_solids = sync_fillet_solids
 
-    # Rebuild the cached solid whenever a fillet candidate is (re)computed -- this
-    # covers both the initial command and a reopened edit, which both go through
-    # _compute_real. A plain redraw also calls sync (cheap: it only re-tessellates
-    # a mark whose radius actually changed).
     old_compute_real = getattr(m, "_compute_real", None)
     if old_compute_real is not None:
         def compute_real_synced(mark):
             ok = old_compute_real(mark)
             try:
                 if mark is not None and mark.get("tool") == "fillet":
+                    bump_candidate(mark.get("id"))
                     sync_fillet_solids()
             except Exception:
                 pass
@@ -334,8 +372,6 @@ def install(m):
                     return
                 amount = max(float(m._val("d")), FILLET_MIN_CM)
                 mark["amount"] = amount
-                # Do not throw away the previous exact BRep. It remains as a faint
-                # lagging reference until this throttled pass computes the new one.
                 m._geom.get(mark.get("id"), {}).pop("real", None)
                 maybe_refresh_exact(mark, force=False)
                 draw_live(mark)
@@ -345,6 +381,23 @@ def install(m):
     m.FuzzyInputChanged = FuzzyInputChanged
 
     def run(context):
-        return old_run(context)
+        result = old_run(context)
+        try:
+            if hasattr(m, "_runtime_reset_graphics"):
+                m._runtime_reset_graphics("FuzzyCAD_Runtime_fillet_exact_")
+            sync_fillet_solids()
+        except Exception:
+            pass
+        return result
 
     m.run = run
+
+    def stop(context):
+        try:
+            if hasattr(m, "_runtime_reset_graphics"):
+                m._runtime_reset_graphics("FuzzyCAD_Runtime_fillet_exact_")
+        except Exception:
+            pass
+        return old_stop(context)
+
+    m.stop = stop
