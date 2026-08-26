@@ -96,6 +96,9 @@ _active_cmd = None
 _inputs = None
 _pending = None
 _live = {}          # category -> live mark id for the current drag session
+_switching = False  # a command switch is in flight (terminate old -> execute new)
+_cmd_session = None  # the toolbar command session that currently owns the globals
+_cmd_gen = [0]      # monotonic toolbar command generation
 _ghosted = {}       # token -> body (faded originals to restore)
 _easy_mode = True   # FuzzyCAD is always continuous; use native Fusion for non-easy
 _note_inputs = None
@@ -958,28 +961,60 @@ class FuzzyExecute(adsk.core.CommandEventHandler):
 
 
 class FuzzyDestroy(adsk.core.CommandEventHandler):
+    def __init__(self, session):
+        super().__init__()
+        self.session = session
+
     def notify(self, args):
-        global _pending, _inputs, _active_cmd, _live
+        global _pending, _inputs, _active_cmd, _live, _cmd_session
+        sess = self.session
+        my_live = sess.get("live") or {}
+        current = (_cmd_session is sess)
+        # Remove THIS command's own orphan / default seed marks. Iterate the
+        # session's own live dict, never the module global -- a successor command
+        # replaces `_live` with a fresh dict, and clobbering that would delete the
+        # new command's live mark.
         try:
-            _clear(GROUP_PREVIEW)
-            for cat, mid in list(_live.items()):
-                m = _find(mid)
-                if m is None or _is_default(cat, m):
+            for cat, mid in list(my_live.items()):
+                mk = _find(mid)
+                if mk is None or _is_default(cat, mk):
                     _remove_mark(mid)
-            # Clear _live BEFORE redrawing: the surviving mark just left the
-            # command, so it must read as "proposed" (comic look), not "editing"
-            # (clean preview). Redrawing while _live still held it left it stuck in
-            # the editing look until the next redraw (e.g. clicking its card).
-            _live = {}
-            _active_cmd = None
-            _redraw_marks()
-            _send_state()
         except Exception:
             pass
+        if not current:
+            # A newer command already owns the globals (a tool/card switch: Fusion
+            # fires the new command's Created before this stale Destroy). Touch no
+            # shared state -- doing so is exactly the race that crashed / janked.
+            return
+        switching = _switching
+        # Genuine current owner tearing down. Ownership-guarded clears: only release
+        # a global if it still holds THIS command's value -- a card re-edit
+        # (`edit_existing`) or another tool may have grabbed _active_cmd / _inputs
+        # in the meantime, and we must never stomp their runtime state.
+        try:
+            if not switching:
+                _clear(GROUP_PREVIEW)
+        except Exception:
+            pass
+        if _active_cmd == sess.get("cmd"):
+            _active_cmd = None
+        if _inputs is sess.get("inputs"):
+            _inputs = None
+        if _live is my_live:
+            # Cleared BEFORE redrawing: the surviving mark just left the command, so
+            # it must read as "proposed" (comic look), not "editing" (clean preview).
+            _live = {}
         _pending = None
-        _inputs = None
-        _active_cmd = None
-        _live = {}
+        if _cmd_session is sess:
+            _cmd_session = None
+        # Restore the proposed UI only on a genuine close. During a switch the
+        # incoming command owns the viewport; a redraw here would just flash.
+        if not switching:
+            try:
+                _redraw_marks()
+                _send_state()
+            except Exception:
+                pass
 
 
 class LaunchHandler(adsk.core.CustomEventHandler):
@@ -989,7 +1024,13 @@ class LaunchHandler(adsk.core.CustomEventHandler):
     command while one is running, which was why the *next* tool wouldn't open
     unless you closed the previous one via its OK button."""
     def notify(self, args):
+        global _switching
         try:
+            # Mark the window where the old command is being torn down and the new
+            # one started. A Destroy that fires in here (the outgoing tool) skips its
+            # heavy redraw/state-restore -- the incoming tool owns the viewport, so a
+            # restore would only flash and fight it (the jank).
+            _switching = True
             try:
                 _ui.terminateActiveCommand()
             except Exception:
@@ -1000,6 +1041,8 @@ class LaunchHandler(adsk.core.CustomEventHandler):
                 cd.execute()
         except Exception:
             pass
+        finally:
+            _switching = False
 
 
 # --- Note tool (Tinkercad-style callout -> a Constraint mark) ---------------
@@ -1107,15 +1150,22 @@ class FuzzyCommandCreated(adsk.core.CommandCreatedEventHandler):
         self.cmd = cmd
 
     def notify(self, args):
-        global _active_cmd, _inputs, _pending, _live
+        global _active_cmd, _inputs, _pending, _live, _cmd_session
         try:
             _active_cmd = self.cmd
             _pending = None
             _live = {}
+            # This command's ownership token. A stale Destroy from a prior command
+            # (Fusion fires the new Created before the old Destroy) will see it is
+            # no longer the owner and leave these globals alone.
+            _cmd_gen[0] += 1
+            session = {"gen": _cmd_gen[0], "cmd": self.cmd, "inputs": None, "live": _live}
+            _cmd_session = session
             command = args.command
             command.isRepeatable = False
             command.okButtonText = "Add to panel"
             _inputs = command.commandInputs
+            session["inputs"] = _inputs
 
             sel = _inputs.addSelectionInput("sel", "Geometry", CMD_HINT[self.cmd])
             sel.addSelectionFilter(CMD_FILTER[self.cmd])
@@ -1145,7 +1195,7 @@ class FuzzyCommandCreated(adsk.core.CommandCreatedEventHandler):
             for handler, event in ((FuzzyInputChanged(), command.inputChanged),
                                    (FuzzyPreview(), command.executePreview),
                                    (FuzzyExecute(), command.execute),
-                                   (FuzzyDestroy(), command.destroy)):
+                                   (FuzzyDestroy(session), command.destroy)):
                 event.add(handler)
                 _handlers.append(handler)
         except Exception:

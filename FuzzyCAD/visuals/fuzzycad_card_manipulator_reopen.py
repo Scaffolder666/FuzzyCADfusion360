@@ -430,9 +430,10 @@ def install(m):
             if getattr(m, "_active_cmd", None) == "edit_existing":
                 m._active_cmd = None
             # Restore the proposed UI only on a genuine close -- if a toolbar command
-            # took over (owned_cmd False), let IT own the viewport; a full redraw
-            # here would just flash and fight it.
-            if owned_cmd:
+            # took over (owned_cmd False), or we're mid-switch (a toolbar Launch set
+            # _switching while terminating us), let the incoming command own the
+            # viewport; a full redraw here would just flash and fight it.
+            if owned_cmd and not getattr(m, "_switching", False):
                 try:
                     m._redraw_marks()
                     m._send_state()
@@ -546,7 +547,14 @@ def install(m):
                 log("LAUNCH pre_execute")
                 cd = m._ui.commandDefinitions.itemById(EDIT_CMD_ID)
                 if cd is not None:
-                    cd.execute()
+                    # Mark the switch window so an outgoing toolbar command's Destroy
+                    # (Move/Scale/...) skips its heavy redraw -- this card edit owns
+                    # the viewport now, so that restore would only flash and fight it.
+                    m._switching = True
+                    try:
+                        cd.execute()
+                    finally:
+                        m._switching = False
                 log("LAUNCH post_execute")
             except Exception:
                 log("edit launch failed\n{}".format(m.traceback.format_exc()))
