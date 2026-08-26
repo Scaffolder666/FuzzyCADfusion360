@@ -36,6 +36,8 @@ def install(m):
         "command": None,
         "meta": {},
         "updating": False,
+        "launching": False,   # a cd.execute() is in flight, awaiting its CommandCreated
+        "pending": None,      # newest card requested while launching -- fired once settled
     }
 
     def log(msg):
@@ -396,6 +398,18 @@ def install(m):
                 pass
             log("EDIT CLOSED: proposal remains unresolved")
 
+    def fire_pending():
+        # The command from the current launch now exists; release the gate and, if
+        # a newer card was clicked meanwhile, launch that one (latest wins).
+        state["launching"] = False
+        p = state.get("pending")
+        state["pending"] = None
+        if p is not None and p != state.get("active_id"):
+            try:
+                m._app.fireCustomEvent(EDIT_EVENT_ID, str(int(p)))
+            except Exception:
+                pass
+
     class EditCommandCreated(adsk.core.CommandCreatedEventHandler):
         def notify(self, args):
             try:
@@ -404,6 +418,7 @@ def install(m):
                 state["requested_id"] = None
                 log("CREATE start tool={}".format(mark.get("tool") if mark else None))
                 if not is_editable(mark):
+                    fire_pending()
                     return
                 state["active_id"] = mark["id"]
                 # Expose which mark is being re-edited so other layers (e.g. the
@@ -429,7 +444,9 @@ def install(m):
                     m._handlers.append(handler)
                 log("EDIT OPEN mark={} tool={} native manipulator restored".format(
                     mark["id"], mark.get("tool")))
+                fire_pending()
             except Exception:
+                fire_pending()
                 if m._ui:
                     m._ui.messageBox("FuzzyCAD couldn't reopen this manipulator:\n{}".format(
                         m.traceback.format_exc()))
@@ -448,6 +465,16 @@ def install(m):
                 if mid == state.get("active_id"):
                     log("LAUNCH ignored: mark {} is already the active edit".format(mid))
                     return
+                # Serialize: one execute() in flight at a time. A click while a
+                # launch is pending just records the newest request; it fires once
+                # the current command has been created. Without this, rapid clicks
+                # queued several execute()s, spawning empty tool=None commands and
+                # create/destroy churn -- the jank.
+                if state.get("launching"):
+                    state["pending"] = mid
+                    log("LAUNCH queued mid={}".format(mid))
+                    return
+                state["launching"] = True
                 log("LAUNCH start mid={} tool={}".format(mid, mark.get("tool")))
                 # Do NOT call terminateActiveCommand() ourselves. Terminating the
                 # active edit command explicitly from inside this custom event
