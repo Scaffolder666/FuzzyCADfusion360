@@ -449,11 +449,10 @@ def install(m):
                     log("LAUNCH ignored: mark {} is already the active edit".format(mid))
                     return
                 log("LAUNCH start mid={} tool={}".format(mid, mark.get("tool")))
-                try:
-                    m._ui.terminateActiveCommand()
-                except Exception:
-                    pass
-                log("LAUNCH post_terminate")
+                # Do NOT call terminateActiveCommand() ourselves. Terminating the
+                # active edit command explicitly from inside this custom event
+                # hard-crashed Fusion (the log ended right here). Executing the new
+                # command lets Fusion end the current one through its own safe path.
                 state["requested_id"] = mid
                 try:
                     m._focus_camera(mark.get("anchor") or [0, 0, 0])
