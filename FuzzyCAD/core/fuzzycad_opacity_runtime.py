@@ -1,8 +1,9 @@
-"""Preserve original Fusion body opacity without mutating the design during previews.
+"""Preserve original Fusion body opacity for uncertainty visuals.
 
-This deliberately keeps the opacity bookkeeping in Python memory only.  Writing
-Design attributes from inputChanged/preview paths is avoided because those paths
-run inside Fusion commands and should stay display-only.
+This module is runtime bookkeeping only; it no longer decides which marks should
+look uncertain. The central visual authority supplies the body-level comic state.
+That keeps opacity synchronized with the same Proposed/Editing/Resolved policy as
+fill and sketch boundary while preserving exact original opacity for restoration.
 """
 
 
@@ -19,15 +20,26 @@ def install(m):
 
     def desired_bodies():
         wanted = {}
+
+        # Central authority: only inactive Proposed geometry receives the comic
+        # body treatment. Editing bodies are restored to their original opacity.
+        try:
+            rows, _retained = m._visual_comic_subject_rows()
+            for tok, body in rows:
+                if body is not None and tok:
+                    wanted[str(tok)] = body
+            return wanted
+        except Exception:
+            pass
+
+        # Install-time/backward-compatible fallback.
         for mark in list(getattr(m, "_marks", []) or []):
             if mark.get("status", "open") != "open" or mark.get("tool") == "note":
                 continue
             body = m._body.get(mark.get("id"))
             tok = body_token(body)
             if body is not None and tok:
-                wanted[tok] = body
-            # Followers are NOT faded: only the questioned (primary) body dims.
-            # A follower stays a solid, real part -- it isn't itself uncertain.
+                wanted[str(tok)] = body
         return wanted
 
     def restore_token(tok):
@@ -54,16 +66,11 @@ def install(m):
                     cur = float(body.opacity)
                 except Exception:
                     cur = 1.0
-                # A document reopened after being saved with an open question comes
-                # back with the body already at the ghost opacity. Capturing that as
-                # the "original" would make every later restore return to a ghost
-                # (the reported stuck-transparent-after-reject bug). Treat a body
-                # already sitting at the ghost value as originally fully visible.
                 if abs(cur - ghost_v) < 0.02:
                     cur = 1.0
                 records[tok] = (body, cur)
             try:
-                body.opacity = float(getattr(m, "GHOST_OPACITY", 0.5))
+                body.opacity = ghost_v
             except Exception:
                 pass
         for tok in list(records.keys()):
@@ -82,9 +89,6 @@ def install(m):
         except Exception:
             m._ghosted = {}
 
-    # Reassert after all older ghost wrappers.  No attributes, no feature/model
-    # mutation: only BRepBody.opacity is touched and always restored to its exact
-    # original runtime value.
     m._refresh_ghost = refresh_ghost
     m._restore_all_bodies = restore_all_bodies
     m._ghost_opacity_records = records
