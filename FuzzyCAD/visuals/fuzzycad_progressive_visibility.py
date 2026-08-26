@@ -1,9 +1,16 @@
 """Progressive proposal-detail visibility.
 
-This file owns one visualization layer: extra proposal detail (wireframe, operation
-cues, replay destination) shown on hover/focus. It no longer decides the baseline
-uncertainty state. The central uncertainty visual authority decides whether a mark
-is Proposed/Editing/Resolved and which variations are always detailed.
+This file owns one visualization layer: optional proposal detail (wireframe,
+operation cue, replay destination). Baseline comic uncertainty is independent and
+comes from the central visual authority.
+
+The authority also decides the reveal mode:
+- `reveal`: hover or focus may expand detail (transforms / Extrude)
+- `focus`: explicit focus may expand, hover must not (Compare)
+- `none`: Proposed never expands (Fillet / Hole / Rough)
+
+Ignoring unsupported reveal events here avoids needless whole-view redraws for
+baseline-only tools.
 """
 
 
@@ -16,6 +23,12 @@ def install(m):
 
     def shared_state():
         return getattr(m, "_uncertainty_visual_state", None) or fallback
+
+    def detail_mode(mark):
+        try:
+            return str(m._visual_variation(mark).get("proposed_detail", "reveal"))
+        except Exception:
+            return "reveal"
 
     def is_revealed(mark):
         if mark is None:
@@ -32,9 +45,8 @@ def install(m):
             return False
 
     def draw_one(group, mark):
-        # This layer only controls proposal DETAIL inside GROUP_MARKS. The comic
-        # baseline (paper fill + sketch boundary) remains independently visible
-        # for every inactive proposed geometry mark.
+        # This layer only gates DETAIL inside GROUP_MARKS. The comic paper fill and
+        # sketch boundary are persistent groups owned by the comic renderer.
         if not is_persistent_group(group) or is_revealed(mark):
             return old_draw_one(group, mark)
         if mark.get("status", "open") == "open":
@@ -93,6 +105,12 @@ def install(m):
         mark = m._find(mid)
         if mark is None:
             return False
+
+        mode = detail_mode(mark)
+        if mode == "none" or (hover and mode != "reveal"):
+            # Fillet/Hole/Rough remain baseline-only. Compare is click-to-expand.
+            return False
+
         old = shared_state().get("revealed_id")
         set_revealed(mid, hover=hover)
         if redraw and old != mid:
@@ -117,6 +135,9 @@ def install(m):
         try:
             mid = int(mid)
         except Exception:
+            return
+        mark = m._find(mid)
+        if mark is None or detail_mode(mark) != "reveal":
             return
         s = shared_state()
         if s.get("revealed_id") != mid:
