@@ -29,6 +29,23 @@ def install(m):
         except Exception:
             pass
 
+    # ---- left-rail guidance ----------------------------------------------
+    def stage(steps, active, title):
+        fn = getattr(m, "_set_tool_stage", None)
+        if fn:
+            try:
+                fn("image", steps, active, title)
+            except Exception:
+                pass
+
+    def clear_stage():
+        fn = getattr(m, "_set_tool_stage", None)
+        if fn:
+            try:
+                fn(None, [], None, "")
+            except Exception:
+                pass
+
     # ---- file dialog ------------------------------------------------------
     def pick_image():
         try:
@@ -47,45 +64,58 @@ def install(m):
     def attach_node(mark):
         if mark is None:
             return
-        path = pick_image()
-        if not path:
-            return
-        mark.setdefault("images", []).append({"mode": "node", "path": path})
-        log("attached node image to mark {}".format(mark.get("id")))
+        stage([{"label": "Choose the image", "done": False, "hint": "any picture file"}],
+              0, "Floating image")
         try:
-            m._redraw_marks()
-        except Exception:
-            pass
-        m._send_state()
+            path = pick_image()
+            if not path:
+                return
+            mark.setdefault("images", []).append({"mode": "node", "path": path})
+            log("attached node image to mark {}".format(mark.get("id")))
+            try:
+                m._redraw_marks()
+            except Exception:
+                pass
+            m._send_state()
+        finally:
+            clear_stage()
 
     # ---- attach: native Canvas on a picked face ("face") ------------------
     def attach_face(mark):
         if mark is None:
             return
+        steps = [{"label": "Select a planar face", "done": False, "hint": "where the image goes"},
+                 {"label": "Choose the image", "done": False}]
+        stage(steps, 0, "Image on face")
         try:
-            sel = m._ui.selectEntity("Select a planar face for the image", "PlanarFaces")
-        except Exception:
-            sel = None
-            log("selectEntity failed\n{}".format(m.traceback.format_exc()))
-        if not sel:
-            return
-        try:
-            face = sel.entity
-        except Exception:
-            return
-        path = pick_image()
-        if not path:
-            return
-        try:
-            comp = face.body.parentComponent
-            ci = comp.canvases.createInput(path, face)
-            comp.canvases.add(ci)
-            mark.setdefault("images", []).append({"mode": "face", "path": path})
-            log("placed canvas on face for mark {}".format(mark.get("id")))
-            m._send_state()
-        except Exception:
-            m._ui.messageBox("FuzzyCAD couldn't place the image on that face:\n{}".format(
-                m.traceback.format_exc()))
+            try:
+                sel = m._ui.selectEntity("Select a planar face for the image", "PlanarFaces")
+            except Exception:
+                sel = None
+                log("selectEntity failed\n{}".format(m.traceback.format_exc()))
+            if not sel:
+                return
+            try:
+                face = sel.entity
+            except Exception:
+                return
+            steps[0]["done"] = True
+            stage(steps, 1, "Image on face")
+            path = pick_image()
+            if not path:
+                return
+            try:
+                comp = face.body.parentComponent
+                ci = comp.canvases.createInput(path, face)
+                comp.canvases.add(ci)
+                mark.setdefault("images", []).append({"mode": "face", "path": path})
+                log("placed canvas on face for mark {}".format(mark.get("id")))
+                m._send_state()
+            except Exception:
+                m._ui.messageBox("FuzzyCAD couldn't place the image on that face:\n{}".format(
+                    m.traceback.format_exc()))
+        finally:
+            clear_stage()
 
     # ---- render the floating "node" images --------------------------------
     def node_end(mark):
