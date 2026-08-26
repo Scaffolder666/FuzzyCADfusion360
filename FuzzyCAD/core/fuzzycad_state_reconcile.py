@@ -1,8 +1,8 @@
 """Single viewport reconciliation pass for FuzzyCAD.
 
-Lifecycle policy is not defined here. The central uncertainty visual authority
-provides the body-level comic state; this module only repairs drift: orphan body
-opacity and stale ephemeral interaction graphics.
+Lifecycle policy is not defined here. The central visual authority supplies both
+comic visibility and source-body opacity targets. This module only repairs drift
+and clears stale ephemeral interaction graphics.
 """
 
 
@@ -11,7 +11,7 @@ def install(m):
     old_run = m.run
 
     ghost = float(getattr(m, "GHOST_OPACITY", 0.5))
-    LO = 0.03
+    LO = 0.015
     HI = min(0.70, ghost + 0.10)
 
     EPHEMERAL_GROUPS = [
@@ -47,23 +47,17 @@ def install(m):
         except Exception:
             return None
 
-    def desired_ghost_tokens():
-        """Bodies that the central visual policy says are currently comic/proposed."""
+    def desired_visual_tokens():
+        """Bodies intentionally using a display-only non-original opacity."""
+        try:
+            return set(str(t) for t, _b, _op in m._visual_opacity_subject_rows() if t)
+        except Exception:
+            pass
         try:
             rows, _retained = m._visual_comic_subject_rows()
             return set(str(t) for t, _b in rows if t)
         except Exception:
-            pass
-
-        # Backward/install fallback.
-        want = set()
-        for mark in list(getattr(m, "_marks", None) or []):
-            if mark.get("status", "open") != "open" or mark.get("tool") == "note":
-                continue
-            t = tok(m._body.get(mark.get("id")))
-            if t:
-                want.add(t)
-        return want
+            return set()
 
     def iter_live_bodies(design):
         try:
@@ -81,8 +75,13 @@ def install(m):
                 except Exception:
                     continue
 
-    def reclaim_orphan_ghosts(design):
-        want = desired_ghost_tokens()
+    def reclaim_orphan_visual_opacity(design):
+        """Repair stale display opacity left by a dead/rebuilt graphics session.
+
+        Fillet/Hole Editing are included in desired_visual_tokens, so their 0.50
+        source body is never mistaken for an orphan ghost.
+        """
+        want = desired_visual_tokens()
         for body in iter_live_bodies(design):
             try:
                 op = float(body.opacity)
@@ -98,10 +97,20 @@ def install(m):
         design = m._design()
         if design is None:
             return
+
+        # Apply the authoritative target first. This makes Confirm -> Proposed an
+        # immediate presentation switch on the same redraw that changes phase.
+        try:
+            sync = getattr(m, "_sync_visual_opacity", None)
+            if sync is not None:
+                sync()
+        except Exception:
+            pass
+
         if not fuzzy_command_running():
             sweep_ephemeral()
         try:
-            reclaim_orphan_ghosts(design)
+            reclaim_orphan_visual_opacity(design)
         except Exception:
             pass
 
