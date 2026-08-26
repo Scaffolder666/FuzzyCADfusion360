@@ -14,7 +14,7 @@ preferred so the white sketch paper doesn't show a square on hover/active):
 | `fillet.png` | Fillet | one edge rounded in orange + dashed sharp original |
 | `rough.png` | Rough Shape | cube with the whole silhouette flagged in orange |
 | `compare.png` | Compare | two cubes — grey solid + orange dashed alternative |
-| `hole.png` | Hole | *(pending — still uses the inline SVG until this is added)* |
+| `hole.png` | Hole | face with a hole bored down its centre |
 
 Square-ish images work best (they render at ~38x38 px, object-fit: contain).
 After dropping the files, reload the add-in — no code change needed.
