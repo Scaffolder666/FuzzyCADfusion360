@@ -18,10 +18,12 @@ def install(m):
     adsk = m.adsk
     old_redraw = m._redraw_marks
     old_public = m._public
+    old_remove_mark = m._remove_mark
     CurrentPaletteHTMLHandler = m.PaletteHTMLHandler
 
     GID = "FuzzyCAD_ImageNode"
     LEADER_RGB = (120, 124, 132)
+    canvases_by_mark = {}   # mark id -> [Canvas objects created this session]
 
     def log(msg):
         try:
@@ -107,8 +109,17 @@ def install(m):
             try:
                 comp = face.body.parentComponent
                 ci = comp.canvases.createInput(path, face)
-                comp.canvases.add(ci)
-                mark.setdefault("images", []).append({"mode": "face", "path": path})
+                canvas = comp.canvases.add(ci)
+                # remember it so accept/reject can delete it (it's a native doc
+                # entity, not tied to the mark on its own).
+                canvases_by_mark.setdefault(mark["id"], []).append(canvas)
+                tok = None
+                try:
+                    tok = canvas.entityToken
+                except Exception:
+                    pass
+                mark.setdefault("images", []).append(
+                    {"mode": "face", "path": path, "canvas_token": tok})
                 log("placed canvas on face for mark {}".format(mark.get("id")))
                 m._send_state()
             except Exception:
@@ -179,6 +190,42 @@ def install(m):
         return result
 
     m._redraw_marks = redraw
+
+    # ---- delete a mark's images when it is accepted OR rejected ------------
+    def delete_mark_images(mid):
+        # Native face canvases created this session.
+        for cv in canvases_by_mark.pop(mid, []):
+            try:
+                cv.deleteMe()
+            except Exception:
+                pass
+        # Any still resolvable by token (e.g. after a reopen).
+        try:
+            mark = m._find(mid)
+        except Exception:
+            mark = None
+        if mark:
+            design = m._design()
+            for im in (mark.get("images") or []):
+                tok = im.get("canvas_token")
+                if tok and design is not None:
+                    try:
+                        for e in design.findEntityByToken(tok):
+                            try:
+                                e.deleteMe()
+                            except Exception:
+                                pass
+                    except Exception:
+                        pass
+
+    def remove_mark(mid):
+        try:
+            delete_mark_images(mid)
+        except Exception:
+            log("image cleanup failed\n{}".format(m.traceback.format_exc()))
+        return old_remove_mark(mid)
+
+    m._remove_mark = remove_mark
 
     # ---- surface the attachment count on the card -------------------------
     def public(mark):
