@@ -39,6 +39,16 @@ def install(m):
     }
 
     def log(msg):
+        # Also append to a file with an immediate flush so the last step survives a
+        # hard crash (the Text Commands panel is lost on a force-quit). File lives
+        # next to the user's temp dir; harmless if it can't be written.
+        try:
+            import os, tempfile
+            with open(os.path.join(tempfile.gettempdir(), "fuzzycad_reopen.log"), "a") as fh:
+                fh.write("[REOPEN] " + str(msg) + "\n")
+                fh.flush()
+        except Exception:
+            pass
         try:
             fn = getattr(m, "_debug", None)
             if fn:
