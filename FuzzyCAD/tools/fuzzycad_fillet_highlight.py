@@ -146,11 +146,14 @@ def install(m):
         size = float(mark.get("size", 3.0))
         g = m._geom.get(mark.get("id"), {})
         for i, poly in enumerate(g.get("fillet_edges", []) or []):
+            # X-ray by default (depth above the coloured surface at 5) so the edge
+            # shows through a face that covers it. Clicking the card toggles it off
+            # for that mark, so the edge reads normally once you've found it.
+            xray_off = getattr(m, "_fillet_xray_off", None) or set()
+            depth = None if mark.get("id") in xray_off else 12
             try:
-                # depth above the coloured surface (5) so the edge stays visible
-                # even when a face sits in front of the edge being filleted.
                 m._visual_stroke(group, poly, "affected_boundary",
-                                 mark.get("id", 1) * 19001 + i, size=size, depth=12)
+                                 mark.get("id", 1) * 19001 + i, size=size, depth=depth)
             except Exception:
                 m._sketchy(group, poly, (245, 118, 24), 0.0,
                            mark.get("id", 1) * 19001 + i,
