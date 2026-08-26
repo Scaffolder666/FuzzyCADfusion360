@@ -1,17 +1,17 @@
 """Reopen a live Fusion manipulator when a Need Input card is clicked.
 
 A Need Input card represents unresolved geometry, so it must remain directly
-editable in the viewport.  Hover can replay a proposal, but click now enters a
+editable in the viewport. Hover can replay a proposal, but click enters a
 lightweight edit command that reuses the proposal's existing geometry reference
-and current value.  No new mark is created and no geometry is committed.
+and current value. No new mark is created and no geometry is committed.
 
 Supported existing proposals:
 - Move / XYZ Rotate
 - Uniform Scale / directional Scale
 - Axis Rotate
-- Extrude / Fillet
+- Extrude / Fillet / Hole
 
-The card and manipulator stay synchronized in both directions.  Closing the edit
+The card and manipulator stay synchronized in both directions. Closing the edit
 command keeps the adjusted proposal open; Accept in the sidebar is still the
 only action that commits it to real geometry.
 """
@@ -20,7 +20,7 @@ import math
 
 EDIT_CMD_ID = "FuzzyCAD_EditExistingProposal"
 EDIT_EVENT_ID = "FuzzyCADEditExistingProposal"
-SUPPORTED = {"move", "rotate", "scale", "scale_axis", "axis_rotate", "extrude", "fillet"}
+SUPPORTED = {"move", "rotate", "scale", "scale_axis", "axis_rotate", "extrude", "fillet", "hole"}
 
 
 def install(m):
@@ -57,6 +57,7 @@ def install(m):
         "axis_rotate": ("Axis Rotate", "Body & axis set", "Adjust angle"),
         "extrude":     ("Extrude",     "Face selected",   "Adjust depth"),
         "fillet":      ("Fillet",      "Edge selected",   "Adjust radius"),
+        "hole":        ("Hole",        "Face selected",   "Adjust diameter / depth"),
     }
 
     def edit_stage_show(tool):
@@ -298,6 +299,28 @@ def install(m):
                 pass
             return
 
+        if tool == "hole":
+            normal = list(geom.get("normal") or [0.0, 0.0, 1.0])
+            try:
+                n = adsk.core.Vector3D.create(*normal)
+                n.normalize()
+                u, _ = perpendicular_basis(normal)
+                dia = add_distance(
+                    inputs, "ehd", "Diameter", float(mark.get("diameter", 0.0)),
+                    anchor, (u.x, u.y, u.z))
+                dep = add_distance(
+                    inputs, "ehp", "Depth", float(mark.get("depth", 0.0)),
+                    anchor, (-n.x, -n.y, -n.z))
+                for it in (dia, dep):
+                    try:
+                        it.minimumValue = 0.01
+                        it.isMinimumValueInclusive = True
+                    except Exception:
+                        pass
+            except Exception:
+                raise RuntimeError("Hole proposal lost its face normal")
+            return
+
         raise RuntimeError("Unsupported Need Input tool: {}".format(tool))
 
     def sync_mark_from_inputs():
@@ -331,6 +354,9 @@ def install(m):
                 mark["amount"] = value
                 if tool == "extrude":
                     m._geom.get(mark["id"], {}).pop("real", None)
+            elif tool == "hole":
+                mark["diameter"] = max(0.01, float(inputs.itemById("ehd").value))
+                mark["depth"] = max(0.01, float(inputs.itemById("ehp").value))
             return mark
         except Exception:
             log("input sync failed\n{}".format(m.traceback.format_exc()))
@@ -359,6 +385,9 @@ def install(m):
                 inputs.itemById("ear").value = math.radians(float(mark.get("angle", 0.0)))
             elif tool in ("extrude", "fillet"):
                 inputs.itemById("d").value = float(mark.get("amount", 0.0))
+            elif tool == "hole":
+                inputs.itemById("ehd").value = float(mark.get("diameter", 0.0))
+                inputs.itemById("ehp").value = float(mark.get("depth", 0.0))
         except Exception:
             pass
         finally:
@@ -538,8 +567,8 @@ def install(m):
                 setup_inputs(args.command, mark)
                 edit_stage_show(mark.get("tool"))
                 session["inputs"] = state.get("inputs")
-                # Some exact renderers (notably Fillet) read m._inputs to clamp
-                # values and keep candidate geometry synchronized.
+                # Some renderers (notably Fillet) read m._inputs to clamp values
+                # and keep candidate geometry synchronized.
                 m._inputs = state["inputs"]
 
                 for HandlerClass, event in (
@@ -588,8 +617,8 @@ def install(m):
                 log("LAUNCH start mid={} tool={}".format(mid, mark.get("tool")))
                 # Do NOT call terminateActiveCommand() ourselves. Terminating the
                 # active edit command explicitly from inside this custom event
-                # hard-crashed Fusion (the log ended right here). Executing the new
-                # command lets Fusion end the current one through its own safe path.
+                # hard-crashed Fusion. Executing the new command lets Fusion end
+                # the current one through its own safe command lifecycle.
                 state["requested_id"] = mid
                 try:
                     m._focus_camera(mark.get("anchor") or [0, 0, 0])
@@ -599,8 +628,7 @@ def install(m):
                 cd = m._ui.commandDefinitions.itemById(EDIT_CMD_ID)
                 if cd is not None:
                     # Mark the switch window so an outgoing toolbar command's Destroy
-                    # (Move/Scale/...) skips its heavy redraw -- this card edit owns
-                    # the viewport now, so that restore would only flash and fight it.
+                    # skips its heavy redraw; this card edit owns the viewport now.
                     m._switching = True
                     try:
                         cd.execute()
@@ -707,7 +735,7 @@ def install(m):
         except Exception:
             log("could not register edit event\n{}".format(m.traceback.format_exc()))
 
-        log("CARD MANIPULATOR READY: click any Need Input card to adjust it in the viewport")
+        log("CARD MANIPULATOR READY: Move/Rotate/Scale/Axis/Extrude/Fillet/Hole")
         return result
 
     def stop(context):
