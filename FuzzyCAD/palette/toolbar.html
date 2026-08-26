@@ -42,6 +42,7 @@
     .tool span{font-size:18px;line-height:1}.tool small{font-size:9.5px;font-weight:650;line-height:1.15;text-align:center}
     .tool__icon-img{width:29px;height:29px;display:block;object-fit:contain}
     .tool__svg{width:32px;height:32px;display:block;overflow:visible}
+    .tool__ico{width:38px;height:38px;display:block;object-fit:contain}
     .tool:hover{border-color:#c7cbd0;background:#fffdfb}.tool:active{background:#fff4eb;color:var(--text);border-color:var(--icon-orange)}
     .tool:active .tool__icon-img,.tool:active .tool__svg{filter:none}
     .tool--wide{grid-column:span 2}.tool--soon{opacity:.42;cursor:default}.tool--soon:hover{border-color:var(--line)}
@@ -179,17 +180,17 @@
       <span class="group__label">Need Input</span>
       <div class="group__grid">
         <button class="tool tool--wide" data-tool="transform" title="Select a body, then drag Move or Rotate handles">
-          <svg class="tool__svg"><use href="#ic-transform"/></svg><small>Move / Rotate</small></button>
+          <img class="tool__ico" src="icons/move.png" alt="Move / Rotate"/><small>Move / Rotate</small></button>
         <button class="tool" data-tool="scale" title="Select a body, then drag the corner handle">
-          <svg class="tool__svg"><use href="#ic-scale"/></svg><small>Scale All</small></button>
+          <img class="tool__ico" src="icons/scale-all.png" alt="Scale All"/><small>Scale All</small></button>
         <button class="tool" data-tool="directional_scale" title="Select a body, choose a direction, then drag">
-          <svg class="tool__svg"><use href="#ic-dscale"/></svg><small>Scale X/Y/Z</small></button>
+          <img class="tool__ico" src="icons/scale-xyz.png" alt="Scale X/Y/Z"/><small>Scale X/Y/Z</small></button>
         <button class="tool tool--wide" data-tool="axis_rotate" title="Select body, select a circular edge, then drag the ring">
-          <svg class="tool__svg"><use href="#ic-axisrot"/></svg><small>Axis Rotate</small></button>
-        <button class="tool" data-tool="extrude"><svg class="tool__svg"><use href="#ic-extrude"/></svg><small>Extrude</small></button>
-        <button class="tool" data-tool="fillet"><svg class="tool__svg"><use href="#ic-fillet"/></svg><small>Fillet</small></button>
+          <img class="tool__ico" src="icons/axis-rotate.png" alt="Axis Rotate"/><small>Axis Rotate</small></button>
+        <button class="tool" data-tool="extrude"><img class="tool__ico" src="icons/extrude.png" alt="Extrude"/><small>Extrude</small></button>
+        <button class="tool" data-tool="fillet"><img class="tool__ico" src="icons/fillet.png" alt="Fillet"/><small>Fillet</small></button>
         <button class="tool" data-tool="hole" title="Select a planar face; a hole is centred on it. Diameter and depth are Need Input"><svg class="tool__svg"><use href="#ic-hole"/></svg><small>Hole</small></button>
-        <button class="tool tool--wide" data-tool="rough" title="Select a rough body to flag the WHOLE shape as uncertain — for handing off intent when the exact form is unknown"><svg class="tool__svg"><use href="#ic-rough"/></svg><small>Rough Shape</small></button>
+        <button class="tool tool--wide" data-tool="rough" title="Select a rough body to flag the WHOLE shape as uncertain — for handing off intent when the exact form is unknown"><img class="tool__ico" src="icons/rough.png" alt="Rough Shape"/><small>Rough Shape</small></button>
       </div>
     </div>
 
@@ -199,7 +200,7 @@
       <span class="group__label">Conflict</span>
       <div class="group__grid">
         <button class="tool tool--wide" data-tool="compare_here" title="Two options already built at the same place — keep one, drop the other">
-          <svg class="tool__svg"><use href="#ic-comparehere"/></svg><small>Compare</small></button>
+          <img class="tool__ico" src="icons/compare.png" alt="Compare"/><small>Compare</small></button>
       </div>
     </div>
   </div>
