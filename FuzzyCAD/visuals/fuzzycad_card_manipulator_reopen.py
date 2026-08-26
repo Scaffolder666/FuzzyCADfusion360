@@ -352,14 +352,19 @@ def install(m):
 
     class EditDestroy(adsk.core.CommandEventHandler):
         def notify(self, args):
+            log("DESTROY step=start")
             try:
                 mark = active_mark()
+                log("DESTROY step=active_mark tool={}".format(
+                    mark.get("tool") if mark else None))
                 if mark is not None and mark.get("tool") in ("extrude", "fillet"):
                     try:
                         m._compute_real(mark)
                     except Exception:
                         pass
+                log("DESTROY step=post_compute")
                 m._clear(m.GROUP_PREVIEW)
+                log("DESTROY step=post_clear")
             except Exception:
                 pass
             state["active_id"] = None
@@ -371,9 +376,12 @@ def install(m):
             m._active_cmd = None
             try:
                 m._redraw_marks()
+                log("DESTROY step=post_redraw")
                 m._send_state()
+                log("DESTROY step=post_send")
                 if getattr(m, "_persist_state", None):
                     m._persist_state("manipulator-close")
+                log("DESTROY step=post_persist")
             except Exception:
                 pass
             log("EDIT CLOSED: proposal remains unresolved")
@@ -384,6 +392,7 @@ def install(m):
                 mid = state.get("requested_id")
                 mark = m._find(mid) if mid is not None else None
                 state["requested_id"] = None
+                log("CREATE start tool={}".format(mark.get("tool") if mark else None))
                 if not is_editable(mark):
                     return
                 state["active_id"] = mark["id"]
@@ -422,18 +431,22 @@ def install(m):
                 mark = m._find(mid)
                 if not is_editable(mark):
                     return
+                log("LAUNCH start mid={} tool={}".format(mid, mark.get("tool")))
                 try:
                     m._ui.terminateActiveCommand()
                 except Exception:
                     pass
+                log("LAUNCH post_terminate")
                 state["requested_id"] = mid
                 try:
                     m._focus_camera(mark.get("anchor") or [0, 0, 0])
                 except Exception:
                     pass
+                log("LAUNCH pre_execute")
                 cd = m._ui.commandDefinitions.itemById(EDIT_CMD_ID)
                 if cd is not None:
                     cd.execute()
+                log("LAUNCH post_execute")
             except Exception:
                 log("edit launch failed\n{}".format(m.traceback.format_exc()))
 
