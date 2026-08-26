@@ -18,9 +18,6 @@ import os
 import random
 import sys
 
-# ============================================================================
-#  TUNABLE KNOBS -- unchanged from the previous renderer.
-# ============================================================================
 FUZZY_ON        = True
 HIDE_BODY       = False
 BODY_OPACITY    = 0.00
@@ -36,7 +33,6 @@ FLAT_FILL       = True
 FILL_RGB        = (222, 220, 214)
 FILL_FLATTEN    = 0.55
 MAX_LINES       = 2400
-# ============================================================================
 
 
 def _ensure_runtime_store(m):
@@ -107,11 +103,6 @@ def install(m):
             return False
 
     def open_fuzzy_tokens():
-        """Bodies whose fuzzy graphics should be retained in runtime memory.
-
-        Editing hides a fuzzy group but does not destroy it. Fillet never uses the
-        comic body, matching the previous policy.
-        """
         out = set()
         for mark in list(getattr(m, "_marks", None) or []):
             if mark.get("status", "open") != "open":
@@ -124,7 +115,6 @@ def install(m):
         return out
 
     def questioned_rows():
-        """Exact previous visibility rule, deduplicated by body token."""
         out, seen = [], set()
         for mark in list(getattr(m, "_marks", None) or []):
             if mark.get("status", "open") != "open" or mark.get("tool") == "note":
@@ -204,7 +194,6 @@ def install(m):
         )
 
     def draw_body_group(tok, body, bi, geometry, line_budget):
-        """Build one body's group once, using the exact previous drawing formula."""
         entry = m._runtime_render_entry(tok, "fuzzy", True)
         gid = entry["gid"]
         m._runtime_delete_group(gid)
@@ -258,7 +247,6 @@ def install(m):
             except Exception:
                 log("showThrough not applied\n{}".format(m.traceback.format_exc()))
 
-        # Store only JSON-safe/pure-Python metadata; never `group` itself.
         entry["signature"] = (
             style_signature(), geometry.get("signature"), int(bi), int(line_budget))
         entry["visible"] = True
@@ -303,7 +291,6 @@ def install(m):
     m._fuzzy_restore_visibility = restore_all_visibility
 
     def sync_fuzzy():
-        """Incrementally synchronize per-body fuzzy groups; returns screen-changed."""
         changed = cleanup_legacy_group()
         try:
             m._runtime_sync_proposals()
@@ -320,13 +307,10 @@ def install(m):
         retained = open_fuzzy_tokens()
         visible = set(tok for tok, _ in rows)
 
-        # Resolved/deleted subjects are the only ones whose persistent group is
-        # destroyed. Editing merely hides its group, which makes card switching O(1).
         for tok in list(m._runtime_render_tokens("fuzzy")):
             if tok not in retained:
                 changed = m._runtime_drop_render(tok, "fuzzy", True) or changed
 
-        # Hide retained-but-editing groups without rebuilding anything.
         for tok in retained - visible:
             entry = m._runtime_render_entry(tok, "fuzzy", False)
             if entry is not None and m._runtime_group_exists(entry.get("gid")):
@@ -335,7 +319,6 @@ def install(m):
                         entry["visible"] = False
                         changed = True
 
-        # Preserve the old renderer's *global* MAX_LINES and body-index seed.
         remaining = int(MAX_LINES)
         for bi, (tok, body) in enumerate(rows):
             if remaining <= 0:
@@ -356,13 +339,6 @@ def install(m):
             signature = (style_signature(), geometry.get("signature"), int(bi), int(budget))
             gid = entry["gid"]
             exists = m._runtime_group_exists(gid)
-
-            if budget <= 0:
-                if exists and entry.get("visible", False):
-                    if m._runtime_set_group_visible(gid, False):
-                        entry["visible"] = False
-                        changed = True
-                continue
 
             if (not exists) or entry.get("signature") != signature or entry.get("dirty", True):
                 if draw_body_group(tok, body, bi, geometry, budget):
@@ -389,8 +365,6 @@ def install(m):
         result = old_redraw(*args, **kwargs)
         try:
             changed = sync_fuzzy()
-            # old_redraw refreshes before this outer layer runs. Refresh once more
-            # only if this layer actually changed graphics/visibility.
             if changed:
                 m._app.activeViewport.refresh()
         except Exception:
@@ -402,9 +376,6 @@ def install(m):
     def run(context):
         result = old_run(context)
         try:
-            # A crash/reload may leave runtime groups in the document. Sweep once;
-            # there are no cached native wrappers to invalidate, then recreate only
-            # the groups required by the hydrated proposal data.
             m._runtime_reset_graphics("FuzzyCAD_Runtime_fuzzy_")
             lifecycle["legacy_cleaned"] = False
             if sync_fuzzy():
