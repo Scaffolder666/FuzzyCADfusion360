@@ -122,51 +122,27 @@ def install(m):
                 log("auto-orient skipped: invalid Canvas plane basis")
                 return False
 
-            # Current camera directions.
-            forward = adsk.core.Vector3D.create(
-                cam.target.x - cam.eye.x,
-                cam.target.y - cam.eye.y,
-                cam.target.z - cam.eye.z,
+            # Desired image-up = WORLD up (Z axis) projected onto the face plane.
+            # Anchoring to world-up instead of the camera is what stops the image
+            # coming in tilted a little differently every time -- the camera is
+            # almost never perfectly square to the face, so its up carried that
+            # tilt into the Canvas. World-up is fixed, so the result is consistent
+            # and reads straight. Only a horizontal face (world-up parallel to the
+            # normal) has no in-plane up; there we fall back to the camera's up.
+            world_up = adsk.core.Vector3D.create(0.0, 0.0, 1.0)
+            up_on_plane = unit3(
+                sub3(world_up, scaled3(normal, dot3(world_up, normal)))
             )
-            forward = unit3(forward)
-            cam_up = unit3(cam.upVector)
-            if forward is None or cam_up is None:
-                log("auto-orient skipped: invalid camera vectors")
-                return False
 
-            # Camera right. For the usual camera convention:
-            # forward=(0,0,-1), up=(0,1,0) -> right=(1,0,0).
-            cam_right = unit3(forward.crossProduct(cam_up))
-            if cam_right is None:
-                log("auto-orient skipped: couldn't derive camera right")
-                return False
-
-            # Project viewport-up into the Canvas plane.
-            up_on_plane = sub3(
-                cam_up,
-                scaled3(normal, dot3(cam_up, normal))
-            )
-            up_on_plane = unit3(up_on_plane)
-
-            # If viewport-up is almost normal to the face, use projected camera-right
-            # and derive an in-plane up vector from that.
             if up_on_plane is None:
-                right_on_plane = sub3(
-                    cam_right,
-                    scaled3(normal, dot3(cam_right, normal))
-                )
-                right_on_plane = unit3(right_on_plane)
-                if right_on_plane is None:
-                    log("auto-orient skipped: camera is degenerate for this face")
+                cam_up = unit3(cam.upVector)
+                if cam_up is not None:
+                    up_on_plane = unit3(
+                        sub3(cam_up, scaled3(normal, dot3(cam_up, normal)))
+                    )
+                if up_on_plane is None:
+                    log("auto-orient skipped: no usable up direction for this face")
                     return False
-
-                # Two in-plane perpendicular choices. Pick the one that points most
-                # like camera-up after projection.
-                cand_a = unit3(normal.crossProduct(right_on_plane))
-                cand_b = unit3(right_on_plane.crossProduct(normal))
-                if cand_a is None or cand_b is None:
-                    return False
-                up_on_plane = cand_a if dot3(cand_a, cam_up) >= dot3(cand_b, cam_up) else cand_b
 
             # Express desired UP in the Canvas plane's own U/V coordinate system.
             up2 = adsk.core.Vector2D.create(
@@ -175,7 +151,7 @@ def install(m):
             )
             up2_len = up2.length
             if up2_len < 1e-10:
-                log("auto-orient skipped: viewport-up has no in-plane component")
+                log("auto-orient skipped: up has no in-plane component")
                 return False
 
             up2_unit = adsk.core.Vector2D.create(
@@ -183,28 +159,11 @@ def install(m):
                 up2.y / up2_len,
             )
 
-            # There are two X directions perpendicular to desired Y.
-            # Pick the one whose model-space direction points toward screen-right.
-            x_a = adsk.core.Vector2D.create(up2_unit.y, -up2_unit.x)
-            x_b = adsk.core.Vector2D.create(-up2_unit.y, up2_unit.x)
-
-            x_a_world = unit3(vec2_world(x_a, u_world, v_world))
-            x_b_world = unit3(vec2_world(x_b, u_world, v_world))
-            if x_a_world is None or x_b_world is None:
-                return False
-
-            # Compare against camera-right projected onto the face.
-            right_on_plane = sub3(
-                cam_right,
-                scaled3(normal, dot3(cam_right, normal))
-            )
-            right_on_plane = unit3(right_on_plane) or cam_right
-
-            x2_unit = (
-                x_a
-                if dot3(x_a_world, right_on_plane) >= dot3(x_b_world, right_on_plane)
-                else x_b
-            )
+            # X = the rightward perpendicular of up. This particular choice,
+            # (up.y, -up.x), is a pure rotation of the plane's own U/V basis
+            # (determinant +1), so the image is only ever rotated -- never
+            # mirrored -- regardless of where the camera sits.
+            x2_unit = adsk.core.Vector2D.create(up2_unit.y, -up2_unit.x)
 
             # Preserve Fusion's default SCALE and, crucially, its visual CENTER.
             #
