@@ -55,7 +55,6 @@ def install(m):
 
     def proposal_record(mark):
         mid = mark.get("id")
-        # Reuse the normalized proposal view when proposal_groups is installed.
         try:
             p = m._proposal_from_mark(mark)
             p = json_safe(p) or {}
@@ -120,7 +119,6 @@ def install(m):
             edges = m._sample_edges(body.edges)
         except Exception:
             edges = []
-        # Copy tuples/lists so no Fusion point/curve wrapper leaks into the cache.
         pure_edges = []
         for poly in edges or []:
             out = []
@@ -293,7 +291,6 @@ def install(m):
         except Exception:
             return False
 
-    # Public runtime API for visual layers. All state values are pure Python.
     m._runtime_entity_token = entity_token
     m._runtime_sync_proposals = sync_proposals
     m._runtime_body_signature = body_signature
@@ -310,12 +307,13 @@ def install(m):
     m._runtime_drop_render = drop_render
     m._runtime_reset_graphics = reset_runtime_graphics
 
-    # Geometry can really change only on committed operations. Clearing the
-    # pure-Python cache after any accept is cheap and avoids relying solely on a
-    # particular Fusion entity's revisionId semantics.
+    # A committed operation can redraw before the accept wrapper returns. Clear
+    # before delegating so that redraw samples the new BRep, then clear again in
+    # case the commit replaced the body/token.
     old_accept = getattr(m, "_accept", None)
     if old_accept is not None:
         def accept(*args, **kwargs):
+            invalidate_geometry()
             result = old_accept(*args, **kwargs)
             invalidate_geometry()
             return result
