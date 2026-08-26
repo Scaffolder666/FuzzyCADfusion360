@@ -41,6 +41,10 @@ _guard = _load("fuzzycad_sync_guard", "core/fuzzycad_sync_guard.py")
 _guard.install(_legacy)
 _commit = _load("fuzzycad_commit_bridge", "core/fuzzycad_commit_bridge.py")
 _commit.install(_legacy)
+# Single source of truth for a mark's visualization phase (editing / proposed /
+# resolved). Loaded early so every later layer can switch off m._mark_phase().
+_phase = _load("fuzzycad_mark_phase", "core/fuzzycad_mark_phase.py")
+_phase.install(_legacy)
 
 if DEV_MODE:
     _debug = _load("fuzzycad_debug_monitor", "dev/fuzzycad_debug_monitor.py")
