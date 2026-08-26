@@ -1,47 +1,85 @@
 """Central visual authority for FuzzyCAD uncertainty.
 
-This module answers one question for every visual layer: given a collaboration
-mark, what should be visible right now? Tool-specific renderers may add detail,
-but they do not get to redefine the baseline lifecycle.
+`VISUAL_STATE_SPEC.md` is the design contract. This module is the runtime source
+of truth that turns a mark + interaction phase into a complete visual policy.
+Individual renderer files draw one layer; they do not redefine lifecycle state.
 
-Core invariant for geometry-bearing uncertainty:
+The shared Proposed baseline for an unresolved geometry-bearing decision is:
 
-    proposed / inactive -> comic fill + sketchy boundary + badge
-    editing             -> clean live preview/manipulator, no comic baseline
-    resolved            -> no uncertainty overlay
+    paper/white comic fill + sketchy boundary + badge
 
-Variations live here too. Fillet can add fillet-specific detail, but its proposed
-state still inherits the common comic baseline. Note and Conflict are semantic
-exceptions because they are annotation/alternative views, not a single uncertain
-body.
+Editing is normally a clean CAD proposal view. Tool variations are explicit data
+here: Fillet/Hole use a semi-transparent source body, Rough keeps the comic look
+while Editing, and Compare reveals alternatives only on explicit focus/compare.
 """
 
+COMIC_SOURCE_OPACITY = 0.02
+SEMITRANSPARENT_SOURCE_OPACITY = 0.50
 
-_VARIATIONS = {
-    "default": {
+
+def _cfg(**overrides):
+    row = {
         "kind": "geometry",
-        "retain_comic": True,
-        "detail_always": False,
+        "comic_capable": True,
+        "comic_proposed": True,
+        "comic_editing": False,
+        "editing_source_opacity": None,   # None = preserve original opacity
+        "editing_detail": True,
+        "editing_preview": True,
+        "editing_manipulator": True,
+        # proposed_detail: reveal = hover/focus; focus = explicit focus only;
+        # none = Proposed never expands beyond comic baseline + badge.
+        "proposed_detail": "reveal",
         "exact_fillet_editing": False,
-    },
-    "fillet": {
-        "kind": "geometry",
-        "retain_comic": True,
-        "detail_always": True,
-        "exact_fillet_editing": True,
-    },
-    "note": {
-        "kind": "annotation",
-        "retain_comic": False,
-        "detail_always": True,
-        "exact_fillet_editing": False,
-    },
-    "compare": {
-        "kind": "conflict",
-        "retain_comic": False,
-        "detail_always": False,
-        "exact_fillet_editing": False,
-    },
+    }
+    row.update(overrides)
+    return row
+
+
+# Explicitly encode every current tool. Similar tools intentionally repeat the
+# same values so the agreed matrix is readable in code instead of hidden behind
+# ad-hoc renderer conditionals.
+_TOOL_VISUALS = {
+    "default": _cfg(),
+    "move": _cfg(),
+    "rotate": _cfg(),
+    "scale": _cfg(),
+    "scale_axis": _cfg(),
+    "axis_rotate": _cfg(),
+    "extrude": _cfg(),
+
+    "fillet": _cfg(
+        editing_source_opacity=SEMITRANSPARENT_SOURCE_OPACITY,
+        proposed_detail="none",
+        exact_fillet_editing=True,
+    ),
+    "hole": _cfg(
+        editing_source_opacity=SEMITRANSPARENT_SOURCE_OPACITY,
+        proposed_detail="none",
+    ),
+    "rough": _cfg(
+        comic_editing=True,
+        editing_detail=False,
+        editing_preview=False,
+        editing_manipulator=False,
+        proposed_detail="none",
+    ),
+    "compare": _cfg(
+        kind="conflict",
+        proposed_detail="focus",
+    ),
+
+    # Backward compatibility only. Note is not part of the current tool matrix.
+    "_legacy_note": _cfg(
+        kind="annotation",
+        comic_capable=False,
+        comic_proposed=False,
+        comic_editing=False,
+        editing_detail=False,
+        editing_preview=False,
+        editing_manipulator=False,
+        proposed_detail="none",
+    ),
 }
 
 
@@ -56,7 +94,9 @@ def install(m):
         if mark is None:
             return "default"
         tool = str(mark.get("tool") or "")
-        if tool in _VARIATIONS:
+        if tool == "note":
+            return "_legacy_note"
+        if tool in _TOOL_VISUALS:
             return tool
         if mark.get("mtype") in ("conflict", "alternative"):
             return "compare"
@@ -64,7 +104,7 @@ def install(m):
 
     def variation(mark):
         name = variation_name(mark)
-        out = dict(_VARIATIONS.get(name, _VARIATIONS["default"]))
+        out = dict(_TOOL_VISUALS.get(name, _TOOL_VISUALS["default"]))
         out["name"] = name
         return out
 
@@ -84,8 +124,43 @@ def install(m):
         except Exception:
             return "id:{}".format(id(body))
 
+    def resolve_body_token(tok):
+        if not tok or str(tok).startswith("id:"):
+            return None
+        try:
+            design = m._design()
+            if design is None:
+                return None
+            for ent in design.findEntityByToken(str(tok)):
+                if isinstance(ent, m.adsk.fusion.BRepBody):
+                    return ent
+        except Exception:
+            pass
+        return None
+
+    def entity_body(ent):
+        if ent is None:
+            return None
+        try:
+            if isinstance(ent, m.adsk.fusion.BRepBody):
+                return ent
+        except Exception:
+            pass
+        try:
+            return m._entity_body(ent)
+        except Exception:
+            pass
+        try:
+            return ent.body
+        except Exception:
+            return None
+
     def subject_bodies(mark):
-        """Bodies participating in this proposal, primary first."""
+        """Bodies owned by the decision, primary first.
+
+        Subject ownership belongs to the visual authority so comic, opacity and
+        future render layers cannot disagree about which bodies a proposal owns.
+        """
         if mark is None:
             return []
         out = []
@@ -93,123 +168,185 @@ def install(m):
 
         def add(body):
             tok = subject_token(body)
-            if body is None or tok in seen:
+            if body is None or not tok or tok in seen:
                 return
             seen.add(tok)
             out.append(body)
 
+        mid = mark.get("id")
         try:
-            add(m._body.get(mark.get("id")))
+            add(m._body.get(mid))
         except Exception:
             pass
 
+        # Some marks (notably target-aligned Compare) store an entity but no body.
+        if not out:
+            try:
+                add(entity_body(m._entity.get(mid)))
+            except Exception:
+                pass
+
+        # Move Together is one proposal with several body subjects.
         if mark.get("tool") == "move" and mark.get("move_scope") == "together":
             for body in mark.get("related_bodies") or []:
                 add(body)
+
+        # In-place Compare has no target body. Use the currently shown option as
+        # the compact conflict subject; explicit Compare/Focus reveals both.
+        if mark.get("tool") == "compare" and mark.get("inplace") and not out:
+            alts = mark.get("alternatives") or []
+            idx = mark.get("selected") if mark.get("selected") in (0, 1) else 0
+            if 0 <= idx < len(alts):
+                for tok in alts[idx].get("body_tokens") or []:
+                    add(resolve_body_token(tok))
+
         return out
 
-    def detail_revealed(mark):
+    def reveal_owned(mark):
         if mark is None:
             return False
-        v = variation(mark)
-        if v.get("detail_always"):
-            return True
         try:
-            return int(mark.get("id")) == int(state.get("revealed_id"))
+            mid = int(mark.get("id"))
+            revealed = int(state.get("revealed_id"))
         except Exception:
             return False
+        if mid != revealed:
+            return False
+
+        mode = variation(mark).get("proposed_detail", "reveal")
+        if mode == "none":
+            return False
+        if mode == "focus":
+            # Compare is deliberately click/focus-to-expand, never hover-to-expand.
+            try:
+                return int(state.get("hover_reveal_id")) != mid
+            except Exception:
+                return True
+        return True
 
     def visual_state(mark):
         """Return the complete derived visual policy for one mark."""
         ph = phase(mark)
         v = variation(mark)
         is_open = bool(mark is not None and mark.get("status", "open") == "open")
-        geometry = v.get("kind") == "geometry"
-        proposed_geometry = bool(is_open and geometry and ph == "proposed")
-        persistent_detail = bool(is_open and ph == "proposed" and detail_revealed(mark))
-        live_preview = bool(is_open and ph == "editing")
+
+        comic_visible = bool(
+            is_open and v.get("comic_capable", True) and (
+                (ph == "proposed" and v.get("comic_proposed", True)) or
+                (ph == "editing" and v.get("comic_editing", False))
+            )
+        )
+        persistent_detail = bool(is_open and ph == "proposed" and reveal_owned(mark))
+        editing = bool(is_open and ph == "editing")
+
+        source_opacity = None
+        if comic_visible:
+            source_opacity = COMIC_SOURCE_OPACITY
+        elif editing and v.get("editing_source_opacity") is not None:
+            source_opacity = float(v.get("editing_source_opacity"))
 
         return {
             "phase": ph,
             "variant": v.get("name", "default"),
             "kind": v.get("kind", "geometry"),
             "is_open": is_open,
-            "is_geometry": geometry,
+            "is_geometry": bool(v.get("kind") in ("geometry", "conflict")),
 
-            # Persistent baseline uncertainty representation.
-            "retain_comic": bool(is_open and geometry and v.get("retain_comic", True)),
-            "show_comic_fill": proposed_geometry,
-            "show_sketch_boundary": proposed_geometry,
-
-            # Collaboration-state marker.
+            # Shared persistent uncertainty baseline.
+            "retain_comic": bool(is_open and v.get("comic_capable", True)),
+            "show_comic_fill": comic_visible,
+            "show_sketch_boundary": comic_visible,
             "show_badge": bool(is_open and ph != "resolved"),
 
-            # Detail has two channels. Persistent detail belongs to Proposed;
-            # live detail belongs to Editing. Renderers can use show_detail when
-            # they draw into either channel, while progressive visibility uses
-            # show_persistent_detail specifically.
+            # Proposal detail is orthogonal to the baseline. Fillet/Hole/Rough
+            # explicitly return False here in Proposed; Compare requires focus.
             "show_persistent_detail": persistent_detail,
-            "show_detail": bool(persistent_detail or live_preview),
+            "show_detail": bool(
+                persistent_detail or (editing and v.get("editing_detail", True))),
 
-            # Interactive layer.
-            "show_live_preview": live_preview,
-            "show_manipulator": live_preview,
+            # Interactive Editing layer.
+            "show_live_preview": bool(editing and v.get("editing_preview", True)),
+            "show_manipulator": bool(editing and v.get("editing_manipulator", True)),
 
-            # Fillet variation: exact translucent BRep is editing-only.
+            # Source body presentation. None means restore/preserve its original
+            # Fusion opacity; numeric values are consumed by opacity_runtime.
+            "source_opacity": source_opacity,
+
+            # Tool-specific additions remain centrally authorized.
             "show_exact_fillet": bool(
-                live_preview and v.get("exact_fillet_editing", False)),
+                editing and v.get("exact_fillet_editing", False)),
         }
 
-    def comic_subject_rows():
-        """Aggregate mark state into body-level comic visibility.
+    def body_visual_states():
+        """Aggregate mark policies into one authoritative state per body.
 
-        Returns `(visible_rows, retained_tokens)`. If any proposal on a body is
-        being edited, editing wins for that body and suppresses the comic baseline.
+        A non-comic Editing mark wins over Proposed comic marks on the same body.
+        Rough is the intentional exception because its Editing policy itself asks
+        for the comic baseline. This same aggregation drives both comic graphics
+        and body opacity so those layers cannot drift apart.
         """
         marks = list(getattr(m, "_marks", None) or [])
-        retained = set()
-        editing = set()
+        rows = {}
+        order = []
 
         for mark in marks:
             vs = visual_state(mark)
-            if not vs.get("retain_comic"):
+            if not vs.get("is_open"):
                 continue
             for body in subject_bodies(mark):
                 tok = subject_token(body)
-                if tok:
-                    retained.add(tok)
-                    if vs.get("phase") == "editing":
-                        editing.add(tok)
+                if not tok:
+                    continue
+                if tok not in rows:
+                    rows[tok] = {
+                        "token": tok,
+                        "body": body,
+                        "retained": False,
+                        "wants_comic": False,
+                        "suppress_comic": False,
+                        "editing_opacity": None,
+                        "mark_ids": [],
+                    }
+                    order.append(tok)
+                row = rows[tok]
+                row["body"] = body
+                row["mark_ids"].append(mark.get("id"))
 
-        visible = []
-        seen = set()
+                if vs.get("retain_comic"):
+                    row["retained"] = True
 
-        def maybe_add(body):
-            tok = subject_token(body)
-            if not tok or tok in seen or tok in editing:
-                return
-            seen.add(tok)
-            visible.append((tok, body))
+                if vs.get("phase") == "editing" and not vs.get("show_comic_fill"):
+                    row["suppress_comic"] = True
+                    if vs.get("source_opacity") is not None:
+                        row["editing_opacity"] = float(vs.get("source_opacity"))
 
-        # Primary subjects first preserve the existing deterministic seed order.
-        for mark in marks:
-            vs = visual_state(mark)
-            if not (vs.get("show_comic_fill") and vs.get("show_sketch_boundary")):
-                continue
-            try:
-                maybe_add(m._body.get(mark.get("id")))
-            except Exception:
-                pass
+                if vs.get("show_comic_fill") and vs.get("show_sketch_boundary"):
+                    row["wants_comic"] = True
 
-        # Additional/group subjects follow primary subjects.
-        for mark in marks:
-            vs = visual_state(mark)
-            if not (vs.get("show_comic_fill") and vs.get("show_sketch_boundary")):
-                continue
-            for body in subject_bodies(mark)[1:]:
-                maybe_add(body)
+        out = []
+        for tok in order:
+            row = rows[tok]
+            row["comic_visible"] = bool(
+                row.get("wants_comic") and not row.get("suppress_comic"))
+            if row["comic_visible"]:
+                row["source_opacity"] = COMIC_SOURCE_OPACITY
+            else:
+                row["source_opacity"] = row.get("editing_opacity")
+            out.append(row)
+        return out
 
+    def comic_subject_rows():
+        states = body_visual_states()
+        visible = [(row["token"], row["body"]) for row in states
+                   if row.get("comic_visible")]
+        retained = set(row["token"] for row in states if row.get("retained"))
         return visible, retained
+
+    def opacity_subject_rows():
+        """Return bodies that currently require a non-original source opacity."""
+        return [(row["token"], row["body"], row.get("source_opacity"))
+                for row in body_visual_states()
+                if row.get("source_opacity") is not None]
 
     def set_revealed(mid, hover=False):
         if mid is None:
@@ -244,14 +381,19 @@ def install(m):
     m._visual_subject_token = subject_token
     m._visual_subject_bodies = subject_bodies
     m._visual_state = visual_state
+    m._visual_body_states = body_visual_states
     m._visual_comic_subject_rows = comic_subject_rows
+    m._visual_opacity_subject_rows = opacity_subject_rows
     m._visual_set_revealed = set_revealed
     m._visual_clear_revealed = clear_revealed
+    m._VISUAL_COMIC_SOURCE_OPACITY = COMIC_SOURCE_OPACITY
+    m._VISUAL_SEMITRANSPARENT_SOURCE_OPACITY = SEMITRANSPARENT_SOURCE_OPACITY
 
     def log(msg):
         try:
-            (m._app or m.adsk.core.Application.get()).log("[FuzzyCAD VISUAL STATE] " + msg)
+            (m._app or m.adsk.core.Application.get()).log(
+                "[FuzzyCAD VISUAL STATE] " + msg)
         except Exception:
             pass
 
-    log("UNCERTAINTY VISUAL AUTHORITY READY: lifecycle + comic invariant + variations")
+    log("VISUAL AUTHORITY READY: explicit tool x moment matrix + body aggregation")
