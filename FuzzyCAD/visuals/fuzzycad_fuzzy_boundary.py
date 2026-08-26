@@ -102,6 +102,22 @@ def install(m):
         except Exception:
             return False
 
+    def related_subjects(mark):
+        """Additional bodies that are part of the same proposal subject set.
+
+        Move Together already treats confirmed related bodies as one proposal in
+        the collaboration data model. They must therefore receive the same comic
+        boundary as the primary body while proposed. Keeping this here also avoids
+        a split-brain state where a related body is faded but has no outline.
+        """
+        if mark.get("tool") != "move" or mark.get("move_scope") != "together":
+            return []
+        out = []
+        for body in mark.get("related_bodies") or []:
+            if body is not None:
+                out.append(body)
+        return out
+
     def open_fuzzy_tokens():
         out = set()
         for mark in list(getattr(m, "_marks", None) or []):
@@ -112,11 +128,23 @@ def install(m):
             body = m._body.get(mark.get("id"))
             if body is not None:
                 out.add(body_tok(body))
+            for related in related_subjects(mark):
+                out.add(body_tok(related))
         return out
 
     def questioned_rows():
+        """Visible proposed fuzzy bodies in stable order.
+
+        Primary subjects are collected first in exactly the legacy order so their
+        seeded sketch offsets remain unchanged. Group-related subjects are appended
+        afterward, which restores the missing outlines without perturbing existing
+        primary-body line placement.
+        """
+        marks = list(getattr(m, "_marks", None) or [])
         out, seen = [], set()
-        for mark in list(getattr(m, "_marks", None) or []):
+
+        # Pass 1: original primary-body order.
+        for mark in marks:
             if mark.get("status", "open") != "open" or mark.get("tool") == "note":
                 continue
             try:
@@ -132,6 +160,22 @@ def install(m):
                 continue
             seen.add(tok)
             out.append((tok, body))
+
+        # Pass 2: proposal-group subjects (currently Move Together).
+        for mark in marks:
+            if mark.get("status", "open") != "open" or mark.get("tool") in ("note", "fillet"):
+                continue
+            try:
+                if m._mark_phase(mark) == "editing":
+                    continue
+            except Exception:
+                pass
+            for body in related_subjects(mark):
+                tok = body_tok(body)
+                if tok in seen:
+                    continue
+                seen.add(tok)
+                out.append((tok, body))
         return out
 
     def gray_for(k):
@@ -314,7 +358,8 @@ def install(m):
         for tok in retained - visible:
             entry = m._runtime_render_entry(tok, "fuzzy", False)
             if entry is not None and m._runtime_group_exists(entry.get("gid")):
-                if entry.get("visible", False):
+                actual = m._runtime_group_visible(entry["gid"])
+                if entry.get("visible", False) or actual is True:
                     if m._runtime_set_group_visible(entry["gid"], False):
                         entry["visible"] = False
                         changed = True
@@ -323,10 +368,12 @@ def install(m):
         for bi, (tok, body) in enumerate(rows):
             if remaining <= 0:
                 entry = m._runtime_render_entry(tok, "fuzzy", False)
-                if entry is not None and entry.get("visible", False):
-                    if m._runtime_set_group_visible(entry["gid"], False):
-                        entry["visible"] = False
-                        changed = True
+                if entry is not None and m._runtime_group_exists(entry.get("gid")):
+                    actual = m._runtime_group_visible(entry["gid"])
+                    if entry.get("visible", False) or actual is True:
+                        if m._runtime_set_group_visible(entry["gid"], False):
+                            entry["visible"] = False
+                            changed = True
                 continue
 
             geometry = m._runtime_body_geometry(body)
@@ -345,7 +392,8 @@ def install(m):
                     changed = True
                 continue
 
-            if not entry.get("visible", False):
+            actual = m._runtime_group_visible(gid)
+            if not entry.get("visible", False) or actual is False:
                 if m._runtime_set_group_visible(gid, True):
                     entry["visible"] = True
                     changed = True
