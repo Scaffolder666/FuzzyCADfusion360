@@ -41,10 +41,22 @@ _guard = _load("fuzzycad_sync_guard", "core/fuzzycad_sync_guard.py")
 _guard.install(_legacy)
 _commit = _load("fuzzycad_commit_bridge", "core/fuzzycad_commit_bridge.py")
 _commit.install(_legacy)
-# Single source of truth for a mark's visualization phase (editing / proposed /
-# resolved). Loaded early so every later layer can switch off m._mark_phase().
+
+# Interaction phase is the first source of truth: editing / proposed / resolved.
 _phase = _load("fuzzycad_mark_phase", "core/fuzzycad_mark_phase.py")
 _phase.install(_legacy)
+
+# Runtime data/render registry stores only pure-Python data, tokens, signatures,
+# and graphics-group ids. It never retains long-lived Fusion native wrappers.
+_runtime_store = _load("fuzzycad_runtime_store", "core/fuzzycad_runtime_store.py")
+_runtime_store.install(_legacy)
+
+# Central visual authority derives every uncertainty layer from the interaction
+# phase. Individual visual files render one layer and consume this policy; tool
+# variations (e.g. Fillet) add detail without redefining the baseline lifecycle.
+_uncertainty_visual = _load(
+    "fuzzycad_uncertainty_visual", "visuals/fuzzycad_uncertainty_visual.py")
+_uncertainty_visual.install(_legacy)
 
 if DEV_MODE:
     _debug = _load("fuzzycad_debug_monitor", "dev/fuzzycad_debug_monitor.py")
@@ -223,12 +235,9 @@ _inspector.install(_legacy)
 _image = _load("fuzzycad_image_attach", "tools/fuzzycad_image_attach.py")
 _image.install(_legacy)
 
-# Fuzzy boundary — the default "unsettled" look that replaces the plain ghost.
-# The questioned body is drawn comic/cel-shaded: a flat matte fill under offset
-# hand-drawn (sketchy) outline copies, so uncertainty reads off the drawing style
-# rather than off transparency. Loaded last so it takes over the fade after
-# opacity_runtime and draws after every other layer. To fall back to the classic
-# ghost: set _legacy._FUZZY_BOUNDARY = False, or remove these two lines.
+# Comic uncertainty renderer. It owns only the shared proposed baseline
+# (paper/putty fill + sketchy boundary) and consumes fuzzycad_uncertainty_visual;
+# it no longer decides tool/lifecycle state itself.
 _fuzzy = _load("fuzzycad_fuzzy_boundary", "visuals/fuzzycad_fuzzy_boundary.py")
 _fuzzy.install(_legacy)
 
