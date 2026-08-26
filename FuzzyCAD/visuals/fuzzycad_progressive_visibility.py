@@ -12,8 +12,6 @@ def install(m):
     old_draw_one = m._draw_one
     CurrentPaletteHTMLHandler = m.PaletteHTMLHandler
 
-    # Fallback only for the short install interval before the visual authority is
-    # loaded by the final comic renderer. Runtime uses m._uncertainty_visual_state.
     fallback = {"revealed_id": None, "hover_reveal_id": None}
 
     def shared_state():
@@ -23,7 +21,7 @@ def install(m):
         if mark is None:
             return False
         try:
-            return bool(m._visual_state(mark).get("show_detail"))
+            return bool(m._visual_state(mark).get("show_persistent_detail"))
         except Exception:
             return mark.get("id") == shared_state().get("revealed_id")
 
@@ -35,8 +33,8 @@ def install(m):
 
     def draw_one(group, mark):
         # This layer only controls proposal DETAIL inside GROUP_MARKS. The comic
-        # baseline (paper fill + sketch boundary) lives in its own persistent
-        # visual and remains visible for every inactive proposed geometry mark.
+        # baseline (paper fill + sketch boundary) remains independently visible
+        # for every inactive proposed geometry mark.
         if not is_persistent_group(group) or is_revealed(mark):
             return old_draw_one(group, mark)
         if mark.get("status", "open") == "open":
@@ -121,7 +119,6 @@ def install(m):
         except Exception:
             return
         s = shared_state()
-        # Only mark hover ownership when hover itself opens the detail layer.
         if s.get("revealed_id") != mid:
             reveal(mid, True, hover=True)
         else:
@@ -168,8 +165,6 @@ def install(m):
             elif action in ("hoverMoveEnd", "hoverOpEnd"):
                 hover_collapse(data.get("id"))
 
-            # Focus/edit opens the detail layer. Editing itself is independently
-            # derived by the central visual authority from the command lifecycle.
             elif action in ("focus", "editManipulator", "edit", "compare_choice"):
                 reveal(data.get("id"), True, hover=False)
 
