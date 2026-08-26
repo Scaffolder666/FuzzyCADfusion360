@@ -441,6 +441,13 @@ def install(m):
                 mark = m._find(mid)
                 if not is_editable(mark):
                     return
+                # Clicking the card that is ALREADY being edited would pointlessly
+                # terminate + recreate the command. That command churn corrupts
+                # Fusion internally and, after a few rounds, the next
+                # terminateActiveCommand hard-crashes. Ignore the re-click.
+                if mid == state.get("active_id"):
+                    log("LAUNCH ignored: mark {} is already the active edit".format(mid))
+                    return
                 log("LAUNCH start mid={} tool={}".format(mid, mark.get("tool")))
                 try:
                     m._ui.terminateActiveCommand()
