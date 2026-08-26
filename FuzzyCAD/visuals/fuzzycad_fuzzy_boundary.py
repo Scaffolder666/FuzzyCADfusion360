@@ -1,15 +1,13 @@
-"""Ghost replacement: a fuzzy, comic-style boundary (the default 'unsettled' look).
+"""Persistent comic uncertainty visual for FuzzyCAD.
 
-Appearance is intentionally unchanged: the same flat paper/putty fill, four
-seeded offset sketch copies, line weights, grey range, overshoot and occlusion
-rules are used. The lifecycle is different: each questioned body owns a stable
-runtime graphics group. Card/tool switching toggles that group's visibility;
-geometry is sampled into a pure-Python cache and rebuilt only when the body or
-visual inputs actually change.
+This file owns one visualization: the default comic uncertainty body -- flat
+paper/putty fill plus seeded sketchy boundary. It does not decide lifecycle.
+`fuzzycad_uncertainty_visual.py` is the visual authority and tells this renderer
+which bodies should be retained, visible, or hidden for editing.
 
-No Fusion CustomGraphics/BRep wrapper is retained in Python state. Runtime data
-stores only entity tokens, XYZ arrays, group-id strings, signatures and flags;
-Fusion groups are resolved fresh by id whenever they must be touched.
+Appearance parameters are unchanged. Runtime groups are persistent per body and
+store only group-id strings/signatures in Python; Fusion wrappers are resolved
+fresh when touched.
 """
 
 import importlib.util
@@ -35,12 +33,11 @@ FILL_FLATTEN    = 0.55
 MAX_LINES       = 2400
 
 
-def _ensure_runtime_store(m):
-    if getattr(m, "_runtime_store", None) is not None:
+def _load_patch(m, name, relpath, installed_attr):
+    if getattr(m, installed_attr, None) is not None:
         return
     root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-    path = os.path.join(root, "core", "fuzzycad_runtime_store.py")
-    name = "fuzzycad_runtime_store"
+    path = os.path.join(root, *relpath.split("/"))
     mod = sys.modules.get(name)
     if mod is None:
         spec = importlib.util.spec_from_file_location(name, path)
@@ -50,8 +47,19 @@ def _ensure_runtime_store(m):
     mod.install(m)
 
 
+def _ensure_runtime_store(m):
+    _load_patch(m, "fuzzycad_runtime_store", "core/fuzzycad_runtime_store.py", "_runtime_store")
+
+
+def _ensure_visual_authority(m):
+    _load_patch(
+        m, "fuzzycad_uncertainty_visual", "visuals/fuzzycad_uncertainty_visual.py",
+        "_uncertainty_visual_state")
+
+
 def install(m):
     _ensure_runtime_store(m)
+    _ensure_visual_authority(m)
 
     adsk = m.adsk
     old_redraw = m._redraw_marks
@@ -66,16 +74,16 @@ def install(m):
 
     def log(msg):
         try:
-            (m._app or adsk.core.Application.get()).log("[FuzzyCAD FUZZY] " + msg)
+            (m._app or adsk.core.Application.get()).log("[FuzzyCAD COMIC] " + msg)
         except Exception:
             pass
 
     def body_tok(body):
         try:
-            return m._runtime_entity_token(body) or "id:{}".format(id(body))
+            return m._visual_subject_token(body)
         except Exception:
             try:
-                return str(body.entityToken)
+                return m._runtime_entity_token(body) or "id:{}".format(id(body))
             except Exception:
                 return "id:{}".format(id(body))
 
@@ -101,82 +109,6 @@ def install(m):
             return bool(before)
         except Exception:
             return False
-
-    def related_subjects(mark):
-        """Additional bodies that are part of the same proposal subject set.
-
-        Move Together already treats confirmed related bodies as one proposal in
-        the collaboration data model. They must therefore receive the same comic
-        boundary as the primary body while proposed. Keeping this here also avoids
-        a split-brain state where a related body is faded but has no outline.
-        """
-        if mark.get("tool") != "move" or mark.get("move_scope") != "together":
-            return []
-        out = []
-        for body in mark.get("related_bodies") or []:
-            if body is not None:
-                out.append(body)
-        return out
-
-    def open_fuzzy_tokens():
-        out = set()
-        for mark in list(getattr(m, "_marks", None) or []):
-            if mark.get("status", "open") != "open":
-                continue
-            if mark.get("tool") in ("note", "fillet"):
-                continue
-            body = m._body.get(mark.get("id"))
-            if body is not None:
-                out.add(body_tok(body))
-            for related in related_subjects(mark):
-                out.add(body_tok(related))
-        return out
-
-    def questioned_rows():
-        """Visible proposed fuzzy bodies in stable order.
-
-        Primary subjects are collected first in exactly the legacy order so their
-        seeded sketch offsets remain unchanged. Group-related subjects are appended
-        afterward, which restores the missing outlines without perturbing existing
-        primary-body line placement.
-        """
-        marks = list(getattr(m, "_marks", None) or [])
-        out, seen = [], set()
-
-        # Pass 1: original primary-body order.
-        for mark in marks:
-            if mark.get("status", "open") != "open" or mark.get("tool") == "note":
-                continue
-            try:
-                if mark.get("tool") == "fillet" or m._mark_phase(mark) == "editing":
-                    continue
-            except Exception:
-                pass
-            body = m._body.get(mark.get("id"))
-            if body is None:
-                continue
-            tok = body_tok(body)
-            if tok in seen:
-                continue
-            seen.add(tok)
-            out.append((tok, body))
-
-        # Pass 2: proposal-group subjects (currently Move Together).
-        for mark in marks:
-            if mark.get("status", "open") != "open" or mark.get("tool") in ("note", "fillet"):
-                continue
-            try:
-                if m._mark_phase(mark) == "editing":
-                    continue
-            except Exception:
-                pass
-            for body in related_subjects(mark):
-                tok = body_tok(body)
-                if tok in seen:
-                    continue
-                seen.add(tok)
-                out.append((tok, body))
-        return out
 
     def gray_for(k):
         if COPIES_PER_BODY <= 1:
@@ -295,13 +227,14 @@ def install(m):
             style_signature(), geometry.get("signature"), int(bi), int(line_budget))
         entry["visible"] = True
         entry["dirty"] = False
-        log("ghost lines drawn={} body={} group={}".format(drawn, tok, gid))
+        log("comic body lines={} body={} group={}".format(drawn, tok, gid))
         return True
 
     def apply_body_state(rows=None):
         if not getattr(m, "_FUZZY_BOUNDARY", True):
             return
-        rows = questioned_rows() if rows is None else rows
+        if rows is None:
+            rows, _ = m._visual_comic_subject_rows()
         want = set(tok for tok, _ in rows)
         for tok, body in rows:
             try:
@@ -334,6 +267,55 @@ def install(m):
 
     m._fuzzy_restore_visibility = restore_all_visibility
 
+    def allocate_budgets(prepared):
+        """Share the global line guard without allowing later bodies to lose all outline.
+
+        When the scene fits under MAX_LINES, every body gets the exact old four-copy
+        budget. Under unusually heavy scenes, guarantee roughly one complete edge
+        copy per body before distributing extra copies. The visual invariant
+        (fill + sketch boundary) therefore survives load shedding.
+        """
+        budgets = [0] * len(prepared)
+        remaining = max(0, int(MAX_LINES))
+        if not prepared or remaining <= 0:
+            return budgets
+
+        base_needs = [len(item[3].get("edges") or []) for item in prepared]
+        total_base = sum(base_needs)
+
+        if total_base <= remaining:
+            for i, need in enumerate(base_needs):
+                budgets[i] = need
+                remaining -= need
+        else:
+            # Rare overload: distribute enough lines to every body instead of
+            # consuming the whole guard on the first body.
+            left = len(prepared)
+            for i, need in enumerate(base_needs):
+                share = max(1, remaining // max(1, left)) if remaining > 0 else 0
+                give = min(need, share, remaining)
+                budgets[i] = give
+                remaining -= give
+                left -= 1
+
+        # Distribute remaining copies fairly while preserving body order/seeds.
+        pending = True
+        while remaining > 0 and pending:
+            pending = False
+            for i, item in enumerate(prepared):
+                possible = int(COPIES_PER_BODY) * len(item[3].get("edges") or [])
+                if budgets[i] >= possible:
+                    continue
+                pending = True
+                step = min(len(item[3].get("edges") or []), possible - budgets[i], remaining)
+                if step <= 0:
+                    continue
+                budgets[i] += step
+                remaining -= step
+                if remaining <= 0:
+                    break
+        return budgets
+
     def sync_fuzzy():
         changed = cleanup_legacy_group()
         try:
@@ -346,11 +328,12 @@ def install(m):
                 changed = m._runtime_drop_render(tok, "fuzzy", True) or changed
             return changed
 
-        rows = questioned_rows()
+        rows, retained = m._visual_comic_subject_rows()
         apply_body_state(rows)
-        retained = open_fuzzy_tokens()
         visible = set(tok for tok, _ in rows)
 
+        # Only resolved/deleted subjects are destroyed. Editing hides the existing
+        # comic group and keeps its sampled geometry for a fast return to Proposed.
         for tok in list(m._runtime_render_tokens("fuzzy")):
             if tok not in retained:
                 changed = m._runtime_drop_render(tok, "fuzzy", True) or changed
@@ -364,24 +347,14 @@ def install(m):
                         entry["visible"] = False
                         changed = True
 
-        remaining = int(MAX_LINES)
+        prepared = []
         for bi, (tok, body) in enumerate(rows):
-            if remaining <= 0:
-                entry = m._runtime_render_entry(tok, "fuzzy", False)
-                if entry is not None and m._runtime_group_exists(entry.get("gid")):
-                    actual = m._runtime_group_visible(entry["gid"])
-                    if entry.get("visible", False) or actual is True:
-                        if m._runtime_set_group_visible(entry["gid"], False):
-                            entry["visible"] = False
-                            changed = True
-                continue
-
             geometry = m._runtime_body_geometry(body)
-            loops = geometry.get("edges") or []
-            possible = max(0, int(COPIES_PER_BODY) * len(loops))
-            budget = min(remaining, possible)
-            remaining -= budget
+            prepared.append((bi, tok, body, geometry))
+        budgets = allocate_budgets(prepared)
 
+        for idx, (bi, tok, body, geometry) in enumerate(prepared):
+            budget = int(budgets[idx]) if idx < len(budgets) else 0
             entry = m._runtime_render_entry(tok, "fuzzy", True)
             signature = (style_signature(), geometry.get("signature"), int(bi), int(budget))
             gid = entry["gid"]
@@ -400,10 +373,13 @@ def install(m):
 
         return changed
 
+    m._sync_comic_uncertainty = sync_fuzzy
+
     def refresh_ghost():
         old_refresh_ghost()
         try:
-            apply_body_state()
+            rows, _ = m._visual_comic_subject_rows()
+            apply_body_state(rows)
         except Exception:
             pass
 
@@ -416,7 +392,7 @@ def install(m):
             if changed:
                 m._app.activeViewport.refresh()
         except Exception:
-            log("fuzzy sync failed\n{}".format(m.traceback.format_exc()))
+            log("comic sync failed\n{}".format(m.traceback.format_exc()))
         return result
 
     m._redraw_marks = redraw
@@ -429,9 +405,8 @@ def install(m):
             if sync_fuzzy():
                 m._app.activeViewport.refresh()
         except Exception:
-            log("startup fuzzy sync failed\n{}".format(m.traceback.format_exc()))
-        log("FUZZY BOUNDARY READY: {:.0%} real body + persistent per-body sketchy grey line-ghost".format(
-            BODY_OPACITY))
+            log("startup comic sync failed\n{}".format(m.traceback.format_exc()))
+        log("COMIC UNCERTAINTY READY: central state -> paper fill + persistent sketch boundary")
         return result
 
     m.run = run
