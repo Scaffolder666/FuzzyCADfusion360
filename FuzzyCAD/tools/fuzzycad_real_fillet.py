@@ -271,13 +271,12 @@ def install(m):
 
     def compute_real(mark):
         if mark.get("tool") != "fillet":
-            try:
-                polys = old_real_extrude_edges(m._entity.get(mark["id"]), mark["amount"])
-                if polys:
-                    m._geom[mark["id"]]["real"] = polys
-                    return True
-            except Exception:
-                pass
+            # Extrude is just a face translated along its normal -- its preview
+            # wireframe (drawn by unified_visuals) is already geometrically exact
+            # for a planar face and costs zero kernel. Building a real extrude
+            # feature here, just for a resting ghost, forced a full model recompute
+            # on big assemblies (the crash). Skip it entirely; the real boolean
+            # join happens only at Accept (_accept builds the extrude feature).
             m._geom.get(mark["id"], {}).pop("real", None)
             return False
 
