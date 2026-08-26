@@ -213,6 +213,12 @@ _clear_all.install(_legacy)
 _inspector = _load("fuzzycad_inspector", "core/fuzzycad_inspector.py")
 _inspector.install(_legacy)
 
+# Image attach: part of the comment layer on ANY mark. Attach a reference picture
+# either as a floating leader'd billboard ("node") or a native Canvas pasted onto a
+# picked face. Picks the file via the OS dialog -- no upload.
+_image = _load("fuzzycad_image_attach", "tools/fuzzycad_image_attach.py")
+_image.install(_legacy)
+
 # Fuzzy boundary — the default "unsettled" look that replaces the plain ghost.
 # The questioned body is drawn comic/cel-shaded: a flat matte fill under offset
 # hand-drawn (sketchy) outline copies, so uncertainty reads off the drawing style

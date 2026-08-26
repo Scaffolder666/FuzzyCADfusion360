@@ -375,7 +375,26 @@
       cin.addEventListener("keydown", function (e) {
         if (e.key === "Enter") post.click();
       });
-      crow.appendChild(cin); crow.appendChild(post); cwrap.appendChild(crow); li.appendChild(cwrap);
+      crow.appendChild(cin); crow.appendChild(post); cwrap.appendChild(crow);
+
+      // Reference images — part of the comment layer, on any mark.
+      var imgrow = document.createElement("div");
+      imgrow.style.cssText = "display:flex;gap:6px;align-items:center;margin-top:6px;flex-wrap:wrap";
+      var imgBtnCss = "border:1px solid #d3d8df;background:#fff;color:#5a6672;font:600 10.5px/1 -apple-system,'Segoe UI',Roboto,sans-serif;padding:5px 8px;border-radius:6px;cursor:pointer";
+      var bFace = btn("📎 Image on face", "img__btn", function (ev) { stop(ev); send("attachImageFace", { id: m.id }); });
+      var bNode = btn("📎 Floating image", "img__btn", function (ev) { stop(ev); send("attachImageNode", { id: m.id }); });
+      bFace.style.cssText = imgBtnCss; bNode.style.cssText = imgBtnCss;
+      imgrow.appendChild(bFace); imgrow.appendChild(bNode);
+      var nImg = (m.images || []).length;
+      if (nImg) {
+        var cnt = document.createElement("span");
+        cnt.style.cssText = "font:600 10.5px/1 -apple-system,sans-serif;color:#2f7d55";
+        cnt.textContent = nImg + " image" + (nImg === 1 ? "" : "s") + " attached";
+        imgrow.appendChild(cnt);
+      }
+      cwrap.appendChild(imgrow);
+
+      li.appendChild(cwrap);
 
       els.marks.appendChild(li);
     });
