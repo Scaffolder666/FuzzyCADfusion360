@@ -17,7 +17,6 @@ body.
 """
 
 
-# Variations are data, not scattered `if tool == ...` checks in renderers.
 _VARIATIONS = {
     "default": {
         "kind": "geometry",
@@ -28,7 +27,6 @@ _VARIATIONS = {
     "fillet": {
         "kind": "geometry",
         "retain_comic": True,
-        # The cheap fillet line/callout remains an addition to the shared state.
         "detail_always": True,
         "exact_fillet_editing": True,
     },
@@ -105,8 +103,6 @@ def install(m):
         except Exception:
             pass
 
-        # Move Together is currently the only multi-body proposal. The expansion
-        # belongs here so every visual agrees on what the proposal owns.
         if mark.get("tool") == "move" and mark.get("move_scope") == "together":
             for body in mark.get("related_bodies") or []:
                 add(body)
@@ -130,6 +126,8 @@ def install(m):
         is_open = bool(mark is not None and mark.get("status", "open") == "open")
         geometry = v.get("kind") == "geometry"
         proposed_geometry = bool(is_open and geometry and ph == "proposed")
+        persistent_detail = bool(is_open and ph == "proposed" and detail_revealed(mark))
+        live_preview = bool(is_open and ph == "editing")
 
         return {
             "phase": ph,
@@ -146,29 +144,27 @@ def install(m):
             # Collaboration-state marker.
             "show_badge": bool(is_open and ph != "resolved"),
 
-            # Persistent proposal-detail layer is only a Proposed-state concern.
-            # Editing has its own live-preview channel and must not duplicate the
-            # same proposal into GROUP_MARKS simply because a command is active.
-            "show_detail": bool(is_open and ph == "proposed" and detail_revealed(mark)),
+            # Detail has two channels. Persistent detail belongs to Proposed;
+            # live detail belongs to Editing. Renderers can use show_detail when
+            # they draw into either channel, while progressive visibility uses
+            # show_persistent_detail specifically.
+            "show_persistent_detail": persistent_detail,
+            "show_detail": bool(persistent_detail or live_preview),
 
             # Interactive layer.
-            "show_live_preview": bool(is_open and ph == "editing"),
-            "show_manipulator": bool(is_open and ph == "editing"),
+            "show_live_preview": live_preview,
+            "show_manipulator": live_preview,
 
-            # Fillet variation: exact translucent BRep is editing-only. Proposed
-            # Fillet gets the common comic baseline plus cheap fillet detail.
+            # Fillet variation: exact translucent BRep is editing-only.
             "show_exact_fillet": bool(
-                is_open and ph == "editing" and v.get("exact_fillet_editing", False)),
+                live_preview and v.get("exact_fillet_editing", False)),
         }
 
     def comic_subject_rows():
         """Aggregate mark state into body-level comic visibility.
 
-        Returns `(visible_rows, retained_tokens)`. `visible_rows` is stable and
-        primary-first so the existing seeded sketch appearance stays stable.
-        `retained_tokens` includes editing bodies so their persistent groups are
-        hidden rather than destroyed. If any proposal on a body is actively being
-        edited, editing wins for that body and suppresses the comic baseline.
+        Returns `(visible_rows, retained_tokens)`. If any proposal on a body is
+        being edited, editing wins for that body and suppresses the comic baseline.
         """
         marks = list(getattr(m, "_marks", None) or [])
         retained = set()
@@ -195,7 +191,7 @@ def install(m):
             seen.add(tok)
             visible.append((tok, body))
 
-        # Pass 1: primary bodies in mark order, preserving legacy body index seeds.
+        # Primary subjects first preserve the existing deterministic seed order.
         for mark in marks:
             vs = visual_state(mark)
             if not (vs.get("show_comic_fill") and vs.get("show_sketch_boundary")):
@@ -205,13 +201,12 @@ def install(m):
             except Exception:
                 pass
 
-        # Pass 2: variation/group subjects after primary bodies.
+        # Additional/group subjects follow primary subjects.
         for mark in marks:
             vs = visual_state(mark)
             if not (vs.get("show_comic_fill") and vs.get("show_sketch_boundary")):
                 continue
-            subjects = subject_bodies(mark)
-            for body in subjects[1:]:
+            for body in subject_bodies(mark)[1:]:
                 maybe_add(body)
 
         return visible, retained
@@ -259,4 +254,4 @@ def install(m):
         except Exception:
             pass
 
-    log("UNCERTAINTY VISUAL AUTHORITY READY: lifecycle + shared comic invariant + variations")
+    log("UNCERTAINTY VISUAL AUTHORITY READY: lifecycle + comic invariant + variations")
