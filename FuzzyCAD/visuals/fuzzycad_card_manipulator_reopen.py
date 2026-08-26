@@ -45,6 +45,44 @@ def install(m):
     def is_current(session):
         return session is not None and session is state.get("current")
 
+    # Left-rail procedural steps for the edit (re-open) state, mirroring the tool
+    # rail shown while first creating a proposal. The geometry is already picked,
+    # so the selection step reads done and the adjust step is active. Confirm (the
+    # rail button) or Done both close the edit; the sidebar Accept still commits.
+    EDIT_STAGE = {
+        "move":        ("Move",        "Body selected",   "Adjust move — drag or type"),
+        "rotate":      ("Rotate",      "Body selected",   "Adjust rotation"),
+        "scale":       ("Scale All",   "Body selected",   "Adjust size"),
+        "scale_axis":  ("Scale X/Y/Z", "Body selected",   "Adjust size along axis"),
+        "axis_rotate": ("Axis Rotate", "Body & axis set", "Adjust angle"),
+        "extrude":     ("Extrude",     "Face selected",   "Adjust depth"),
+        "fillet":      ("Fillet",      "Edge selected",   "Adjust radius"),
+    }
+
+    def edit_stage_show(tool):
+        setter = getattr(m, "_set_tool_stage", None)
+        entry = EDIT_STAGE.get(tool)
+        if setter is None or entry is None:
+            return
+        title, sel_label, adj_label = entry
+        steps = [
+            {"label": sel_label, "done": True},
+            {"label": adj_label, "done": False, "hint": "then Confirm"},
+        ]
+        try:
+            setter(tool, steps, 1, "Editing · " + title)
+        except Exception:
+            pass
+
+    def edit_stage_clear():
+        setter = getattr(m, "_set_tool_stage", None)
+        if setter is None:
+            return
+        try:
+            setter(None, [], None, "")
+        except Exception:
+            pass
+
     def log(msg):
         # Crash-survival file log -- DEV only. It flushes to disk per line so the
         # last step survives a hard crash, but that synchronous I/O has no place on
@@ -446,6 +484,7 @@ def install(m):
             # viewport; a full redraw here would just flash and fight it.
             if owned_cmd and not getattr(m, "_switching", False):
                 try:
+                    edit_stage_clear()
                     m._redraw_marks()
                     m._send_state()
                     if getattr(m, "_persist_state", None):
@@ -497,6 +536,7 @@ def install(m):
                 args.command.isRepeatable = False
                 args.command.okButtonText = "Done adjusting"
                 setup_inputs(args.command, mark)
+                edit_stage_show(mark.get("tool"))
                 session["inputs"] = state.get("inputs")
                 # Some exact renderers (notably Fillet) read m._inputs to clamp
                 # values and keep candidate geometry synchronized.

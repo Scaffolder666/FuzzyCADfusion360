@@ -1032,17 +1032,20 @@ class LaunchHandler(adsk.core.CustomEventHandler):
     def notify(self, args):
         global _switching
         try:
-            # Mark the window where the old command is being torn down and the new
-            # one started. A Destroy that fires in here (the outgoing tool) skips its
-            # heavy redraw/state-restore -- the incoming tool owns the viewport, so a
-            # restore would only flash and fight it (the jank).
-            _switching = True
+            cmd_id = args.additionalInfo
+            cd = _ui.commandDefinitions.itemById(cmd_id) if cmd_id else None
+            # Mark the window where the old command is torn down and a new one
+            # starts, but ONLY when there's a real successor to launch. A Destroy
+            # that fires in here then skips its heavy redraw -- the incoming tool
+            # owns the viewport, so a restore would just flash and fight it (jank).
+            # A terminate-only call (empty id, e.g. the Confirm button) has no
+            # successor, so the outgoing command must do its normal close redraw
+            # (flip to the proposed/comic look); leaving _switching False ensures it.
+            _switching = bool(cd)
             try:
                 _ui.terminateActiveCommand()
             except Exception:
                 pass
-            cmd_id = args.additionalInfo
-            cd = _ui.commandDefinitions.itemById(cmd_id) if cmd_id else None
             if cd:
                 cd.execute()
         except Exception:
