@@ -13,6 +13,32 @@ Canvases). If the face-pick proves flaky from a palette event, it should be
 deferred through a custom event like the tool launcher does.
 """
 
+import os
+import tempfile
+
+# The floating image is shown as a screen-facing sprite, which renders at the
+# image's pixel size -- a big photo would fill the screen. So it is downscaled to
+# a small thumbnail first (needs Pillow, which Fusion's Python ships).
+THUMB_MAX = 220     # longest side of the floating thumbnail, in pixels
+_thumb_seq = [0]
+
+
+def _make_thumb(path):
+    try:
+        from PIL import Image
+    except Exception:
+        return None
+    try:
+        img = Image.open(path)
+        img.thumbnail((THUMB_MAX, THUMB_MAX))
+        _thumb_seq[0] += 1
+        out = os.path.join(tempfile.gettempdir(),
+                           "fuzzycad_thumb_{}.png".format(_thumb_seq[0]))
+        img.convert("RGBA").save(out, "PNG")
+        return out
+    except Exception:
+        return None
+
 
 def install(m):
     adsk = m.adsk
@@ -72,7 +98,11 @@ def install(m):
             path = pick_image()
             if not path:
                 return
-            mark.setdefault("images", []).append({"mode": "node", "path": path})
+            thumb = _make_thumb(path)
+            mark.setdefault("images", []).append(
+                {"mode": "node", "path": path, "sprite_path": thumb or path})
+            if not thumb:
+                log("no thumbnail (Pillow missing?) — floating image may render large")
             log("attached node image to mark {}".format(mark.get("id")))
             try:
                 m._redraw_marks()
@@ -109,6 +139,21 @@ def install(m):
             try:
                 comp = face.body.parentComponent
                 ci = comp.canvases.createInput(path, face)
+                # Stretch the image to fill the face (ignore aspect): set the canvas
+                # transform's scale to the face's in-plane extents. Best-effort --
+                # guarded so a wrong assumption just falls back to the default size.
+                try:
+                    bb = face.boundingBox
+                    ex = sorted([bb.maxPoint.x - bb.minPoint.x,
+                                 bb.maxPoint.y - bb.minPoint.y,
+                                 bb.maxPoint.z - bb.minPoint.z], reverse=True)
+                    fw, fh = max(ex[0], 0.1), max(ex[1], 0.1)
+                    mtx = adsk.core.Matrix2D.create()
+                    mtx.setCell(0, 0, fw)
+                    mtx.setCell(1, 1, fh)
+                    ci.transform = mtx
+                except Exception:
+                    log("fill-scale skipped\n{}".format(m.traceback.format_exc()))
                 canvas = comp.canvases.add(ci)
                 # remember it so accept/reject can delete it (it's a native doc
                 # entity, not tied to the mark on its own).
@@ -165,12 +210,19 @@ def install(m):
             except Exception:
                 pass
             for im in nodes:
+                sprite = im.get("sprite_path") or im.get("path")
+                # Regenerate the thumbnail if the temp file was cleaned up (reopen).
+                if sprite and not os.path.exists(sprite):
+                    sprite = _make_thumb(im.get("path")) or im.get("path")
+                    im["sprite_path"] = sprite
+                if not sprite:
+                    continue
                 try:
                     coords = adsk.fusion.CustomGraphicsCoordinates.create(list(end))
                     grp.addPointSet(
                         coords, [0],
                         adsk.fusion.CustomGraphicsPointTypes.UserDefinedCustomGraphicsPointType,
-                        im["path"])
+                        sprite)
                     drew += 1
                 except Exception:
                     log("sprite failed\n{}".format(m.traceback.format_exc()))
