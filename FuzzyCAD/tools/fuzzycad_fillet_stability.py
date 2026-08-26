@@ -139,7 +139,9 @@ def install(m):
             # stands in for it, so we stop re-tessellating and the lag goes away.
             is_live = False
             try:
-                is_live = (m._live.get("fillet") == mark.get("id"))
+                mid = mark.get("id")
+                is_live = (m._live.get("fillet") == mid or
+                           getattr(m, "_active_edit_id", None) == mid)
             except Exception:
                 pass
 

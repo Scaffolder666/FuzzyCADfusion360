@@ -363,6 +363,7 @@ def install(m):
             except Exception:
                 pass
             state["active_id"] = None
+            m._active_edit_id = None
             state["inputs"] = None
             state["command"] = None
             state["meta"] = {}
@@ -386,6 +387,9 @@ def install(m):
                 if not is_editable(mark):
                     return
                 state["active_id"] = mark["id"]
+                # Expose which mark is being re-edited so other layers (e.g. the
+                # fillet preview) can treat a reopened edit as "live".
+                m._active_edit_id = mark["id"]
                 state["command"] = args.command
                 m._active_cmd = "edit_existing"
                 args.command.isRepeatable = False

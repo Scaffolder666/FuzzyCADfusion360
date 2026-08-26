@@ -136,23 +136,8 @@ def install(m):
                 # Note / Conflict / lost-reference inspection. Consume the old
                 # pan-only action so it cannot immediately overwrite this zoom.
                 mark = m._find(data.get("id"))
-                if mark is not None:
-                    # Clicking a fillet card toggles its edge x-ray: first click
-                    # drops the see-through so the geometry reads normally, next
-                    # click brings it back.
-                    if mark.get("tool") == "fillet":
-                        s = getattr(m, "_fillet_xray_off", None)
-                        if s is None:
-                            s = set()
-                            m._fillet_xray_off = s
-                        mid = mark.get("id")
-                        s.discard(mid) if mid in s else s.add(mid)
-                        try:
-                            m._redraw_marks()
-                        except Exception:
-                            pass
-                    if focus_mark(mark):
-                        return
+                if mark is not None and focus_mark(mark):
+                    return
 
             if action == "editManipulator":
                 try:

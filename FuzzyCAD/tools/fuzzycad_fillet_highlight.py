@@ -133,7 +133,9 @@ def install(m):
         # boundary line below and the dimension annotation.
         is_live = False
         try:
-            is_live = (m._live.get("fillet") == mark.get("id"))
+            mid = mark.get("id")
+            is_live = (m._live.get("fillet") == mid or
+                       getattr(m, "_active_edit_id", None) == mid)
         except Exception:
             pass
         if is_live:
@@ -155,11 +157,11 @@ def install(m):
         size = float(mark.get("size", 3.0))
         g = m._geom.get(mark.get("id"), {})
         for i, poly in enumerate(g.get("fillet_edges", []) or []):
-            # X-ray by default (depth above the coloured surface at 5) so the edge
-            # shows through a face that covers it. Clicking the card toggles it off
-            # for that mark, so the edge reads normally once you've found it.
-            xray_off = getattr(m, "_fillet_xray_off", None) or set()
-            depth = None if mark.get("id") in xray_off else 12
+            # X-ray the edge (depth above the coloured surface at 5) only while the
+            # mark is NOT being edited, so a confirmed fillet's edge stays visible
+            # through a covering face. Once you click the card to edit, the full
+            # translucent preview is back, so the x-ray turns off automatically.
+            depth = None if is_live else 12
             try:
                 m._visual_stroke(group, poly, "affected_boundary",
                                  mark.get("id", 1) * 19001 + i, size=size, depth=depth)
