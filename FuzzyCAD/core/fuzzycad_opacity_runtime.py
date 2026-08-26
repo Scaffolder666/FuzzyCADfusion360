@@ -26,11 +26,8 @@ def install(m):
             tok = body_token(body)
             if body is not None and tok:
                 wanted[tok] = body
-            if mark.get("tool") == "move" and mark.get("move_scope") == "together":
-                for related in mark.get("related_bodies") or []:
-                    rtok = body_token(related)
-                    if related is not None and rtok:
-                        wanted[rtok] = related
+            # Followers are NOT faded: only the questioned (primary) body dims.
+            # A follower stays a solid, real part -- it isn't itself uncertain.
         return wanted
 
     def restore_token(tok):

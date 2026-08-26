@@ -323,9 +323,9 @@ def install(m):
                 matrix = proposal_matrix(mark)
                 body = m._body.get(mark.get("id"))
                 total += draw_body(group, body, matrix, mark)
-                if mark.get("tool") == "move" and mark.get("move_scope") == "together":
-                    for idx, related in enumerate(mark.get("related_bodies") or []):
-                        total += draw_body(group, related, matrix, mark, (idx + 1) * 97)
+                # Followers are deliberately NOT given a moved silhouette -- the
+                # silhouette + ghost read as noise. They stay put as real bodies;
+                # Accept carries them along.
             state["draws"] += 1
             if total and (force or state["draws"] % 30 == 0):
                 log("DRAW curves={} marks={}".format(total, len(m._marks)))

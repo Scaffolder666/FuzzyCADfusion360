@@ -214,16 +214,10 @@ def install(m):
         if not related:
             return
 
-        matrix = m._op_matrix(mark)
-        for body in related:
-            # The original related bodies remain visible as a faint orange
-            # relationship cue.  Together adds a transformed candidate copy.
-            add_body_graphic(group, body, color=HILITE_RGB,
-                             opacity=0.07 if scope == "together" else 0.12)
-            if scope == "together":
-                add_body_graphic(group, body, matrix=matrix,
-                                 color=CANDIDATE_RGB, opacity=0.26)
-
+        # Followers get NO ghost/candidate overlay here. The silhouette +
+        # translucent copies read as noise; the set was already shown (in orange)
+        # at selection time, and Accept still carries them along. They simply stay
+        # as their real selves during the drag and while the proposal is open.
         if getattr(m, "_active_cmd", None) == "transform":
             question_text(group, mark.get("anchor", [0, 0, 0]), len(related))
 
