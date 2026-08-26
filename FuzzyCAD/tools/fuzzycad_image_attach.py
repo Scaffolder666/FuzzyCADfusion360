@@ -139,6 +139,11 @@ def install(m):
             try:
                 comp = face.body.parentComponent
                 ci = comp.canvases.createInput(path, face)
+                # The image came in upside-down relative to the face; flip it back.
+                try:
+                    ci.flipVertical()
+                except Exception:
+                    log("flipVertical unavailable\n{}".format(m.traceback.format_exc()))
                 canvas = comp.canvases.add(ci)
                 # remember it so accept/reject can delete it (it's a native doc
                 # entity, not tied to the mark on its own).
