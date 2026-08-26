@@ -372,7 +372,8 @@ def install(m):
         def __init__(self, session):
             super().__init__(); self.session = session
         def notify(self, args):
-            if not is_current(self.session):
+            sess = self.session
+            if not is_current(sess):
                 return
             try:
                 mark = sync_mark_from_inputs()
@@ -381,6 +382,16 @@ def install(m):
                         m._compute_real(mark)
                     except Exception:
                         pass
+                # Confirm commits the edit: drop this mark out of the "editing" phase
+                # NOW so the redraw already shows the proposed (comic) look, instead
+                # of waiting for Destroy (which Fusion can defer). Ownership-guarded so
+                # a successor command that grabbed the edit id isn't disturbed.
+                if getattr(m, "_active_edit_id", None) == sess.get("mark_id"):
+                    m._active_edit_id = None
+                try:
+                    m._redraw_marks()
+                except Exception:
+                    pass
                 if getattr(m, "_persist_state", None):
                     m._persist_state("manipulator-edit")
             except Exception:

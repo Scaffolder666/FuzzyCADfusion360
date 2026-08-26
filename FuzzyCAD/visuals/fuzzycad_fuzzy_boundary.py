@@ -35,7 +35,8 @@ OVERSHOOT       = 0.0001            # how far lines run PAST each corner (loosen
 LINE_WEIGHT     = 2.0             # ghost line thickness (try 0.6 thin .. 2.5 bold)
 GRAY_LIGHT      = 165             # lightest ghost copy (0=black .. 255=white)
 GRAY_DARK       = 45              # darkest ghost copy — copies fade across this range
-SHOW_THROUGH    = True            # ghost lines stay visible even behind the solid (X-ray)
+SHOW_THROUGH    = False           # X-ray removed: ghost lines are occluded by solids like
+                                  #   normal geometry (no see-through bleed-through material)
 SHOW_THRU_OPACITY = 0.6           # how strongly they bleed through (0 hidden .. 1 full)
 FLAT_FILL       = True            # comic look: fill the body with a flat matte colour under
                                   #   the sketchy lines (cel-shaded). False = lines only.

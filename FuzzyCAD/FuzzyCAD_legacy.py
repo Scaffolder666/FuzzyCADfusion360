@@ -940,6 +940,7 @@ class FuzzyPreview(adsk.core.CommandEventHandler):
 
 class FuzzyExecute(adsk.core.CommandEventHandler):
     def notify(self, args):
+        global _live
         try:
             if _pending:
                 for cat in CMD_CATS[_active_cmd]:
@@ -951,6 +952,11 @@ class FuzzyExecute(adsk.core.CommandEventHandler):
                     if m and m["tool"] in ("extrude", "fillet"):
                         _compute_real(m)
             _clear(GROUP_PREVIEW)
+            # Confirm commits the mark. Drop it from the live set NOW so this redraw
+            # already shows the proposed (comic) look -- otherwise the mark stayed in
+            # the clean "editing" look until Destroy fired, which Fusion can defer, so
+            # the comic state didn't appear "immediately on confirm".
+            _live = {}
             _redraw_marks()
             if _pending:
                 _focus_camera(_pending["anchor"])
