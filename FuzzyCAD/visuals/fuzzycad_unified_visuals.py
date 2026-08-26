@@ -241,75 +241,33 @@ def install(m):
         return out
 
     def compute_extrude_candidate(mark):
-        g = m._geom.get(mark["id"], {})
-        amount = float(mark.get("amount", 0.0))
-        cached = (g.get("extrude_candidate_body") is not None and
-                  g.get("extrude_candidate_amount") is not None and
-                  abs(g["extrude_candidate_amount"] - amount) <= 1e-8)
-        if cached:
-            return True
-
-        face = resolve_extrude_face(mark)
-        if face is None or abs(amount) < 1e-9:
-            return False
-        feat = None
-        try:
-            comp = face.body.parentComponent
-            ext = comp.features.extrudeFeatures
-            ei = ext.createInput(face, adsk.fusion.FeatureOperations.JoinFeatureOperation)
-            ei.setDistanceExtent(False, adsk.core.ValueInput.createByReal(amount))
-            feat = ext.add(ei)
-            if feat is None:
-                return False
-            try:
-                if feat.healthState == adsk.fusion.FeatureHealthStates.ErrorFeatureHealthState:
-                    return False
-            except Exception:
-                pass
-
-            body = feat.bodies.item(0) if feat.bodies.count > 0 else face.body
-            mgr = adsk.fusion.TemporaryBRepManager.get()
-            candidate = mgr.copy(body)
-            if candidate is None:
-                return False
-            g["extrude_candidate_body"] = candidate
-            g["extrude_candidate_amount"] = amount
-            g["extrude_candidate_edges"] = m._sample_edges(body.edges)
-            g["extrude_changed_edges"] = sample_face_edges(feat.faces)
-            return True
-        except Exception as exc:
-            log("extrude candidate failed mark={} amount_mm={:.3f}: {}".format(
-                mark.get("id"), amount * 10.0, exc))
-            return False
-        finally:
-            if feat is not None:
-                try:
-                    feat.deleteMe()
-                except Exception:
-                    pass
+        # DISABLED for the preview. This used to add a REAL extrude feature to the
+        # timeline and immediately delete it -- on every depth change -- just to
+        # build a solid preview. On a real assembly that forces a full model
+        # recompute per drag tick, which lagged the machine to a crash. The preview
+        # is now a cheap sketchy wireframe of the extruded prism (see draw_extrude);
+        # the exact solid is only built at Accept. Return False so any caller falls
+        # back to that wireframe and no kernel work happens while dragging.
+        return False
 
     def draw_extrude(group, mark, rgb, amp):
         g = m._geom.get(mark["id"], {})
-        ok = compute_extrude_candidate(mark)
-        if ok:
-            candidate = g.get("extrude_candidate_body")
-            add_candidate_body(group, candidate)
-            for i, poly in enumerate(g.get("extrude_candidate_edges", [])):
-                m._sketchy(group, poly, rgb, amp * 0.8,
-                           mark["id"] * 420 + i, weight=1, strokes=2)
-            for i, poly in enumerate(g.get("extrude_changed_edges", [])):
-                m._sketchy(group, poly, CHANGE_RGB, amp * 0.35,
-                           mark["id"] * 520 + i, weight=2, strokes=1)
-        else:
-            d = g.get("normal", (0.0, 0.0, 1.0))
-            amt = mark.get("amount", 0.0)
-            for i, loop in enumerate(g.get("loops", [])):
-                off = m._translate(loop, d, amt)
-                m._sketchy(group, off, rgb, amp,
-                           mark["id"] * 430 + i, weight=1, strokes=2)
-
         d = g.get("normal", (0.0, 0.0, 1.0))
         amt = mark.get("amount", 0.0)
+        # Sketchy ghost of the extruded prism: the picked face's loops offset along
+        # the normal, plus a few side walls so it reads as a solid being pushed out.
+        # No kernel feature and no BRep tessellation -- both of those crashed on a
+        # real assembly. The exact solid is built at Accept.
+        for i, loop in enumerate(g.get("loops", [])):
+            if not loop:
+                continue
+            off = m._translate(loop, d, amt)
+            m._sketchy(group, off, rgb, amp, mark["id"] * 430 + i, weight=1, strokes=2)
+            n = len(loop)
+            for k in (0, n // 2, n - 1):
+                m._sketchy(group, [loop[k], off[k]], rgb, amp,
+                           mark["id"] * 440 + i * 8 + k, weight=1, strokes=1)
+
         a = mark.get("anchor") or [0.0, 0.0, 0.0]
         tip = (a[0] + d[0] * amt, a[1] + d[1] * amt, a[2] + d[2] * amt)
         m._sketchy(group, [tuple(a), tip], CHANGE_RGB, 0.0,
