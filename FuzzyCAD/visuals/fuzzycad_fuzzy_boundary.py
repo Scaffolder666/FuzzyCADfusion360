@@ -1,13 +1,12 @@
 """Persistent comic uncertainty visual for FuzzyCAD.
 
-This file owns one visualization: the default comic uncertainty body -- flat
-paper/putty fill plus seeded sketchy boundary. It does not decide lifecycle.
-`fuzzycad_uncertainty_visual.py` is the visual authority and tells this renderer
-which bodies should be retained, visible, or hidden for editing.
+This file owns one visualization only: the paper/white fill plus seeded sketchy
+boundary. It never decides lifecycle and it no longer changes the source body's
+opacity. `fuzzycad_uncertainty_visual.py` decides what is visible and
+`fuzzycad_opacity_runtime.py` applies the centrally derived source opacity.
 
-Appearance parameters are unchanged. Runtime groups are persistent per body and
-store only group-id strings/signatures in Python; Fusion wrappers are resolved
-fresh when touched.
+Runtime groups are persistent per body and store only group-id strings/signatures
+in Python; Fusion wrappers are resolved fresh when touched.
 """
 
 import importlib.util
@@ -17,8 +16,6 @@ import random
 import sys
 
 FUZZY_ON        = True
-HIDE_BODY       = False
-BODY_OPACITY    = 0.00
 COPIES_PER_BODY = 4
 SCATTER         = 0.01
 OVERSHOOT       = 0.0001
@@ -69,7 +66,6 @@ def install(m):
 
     m._FUZZY_BOUNDARY = FUZZY_ON
     LEGACY_GID = "FuzzyCAD_FuzzyBoundary"
-    hidden_tokens = set()
     lifecycle = {"legacy_cleaned": False}
 
     def log(msg):
@@ -77,27 +73,6 @@ def install(m):
             (m._app or adsk.core.Application.get()).log("[FuzzyCAD COMIC] " + msg)
         except Exception:
             pass
-
-    def body_tok(body):
-        try:
-            return m._visual_subject_token(body)
-        except Exception:
-            try:
-                return m._runtime_entity_token(body) or "id:{}".format(id(body))
-            except Exception:
-                return "id:{}".format(id(body))
-
-    def resolve_body(tok):
-        try:
-            design = m._design()
-            if design is None or not tok or str(tok).startswith("id:"):
-                return None
-            for ent in design.findEntityByToken(tok):
-                if isinstance(ent, adsk.fusion.BRepBody):
-                    return ent
-        except Exception:
-            pass
-        return None
 
     def cleanup_legacy_group():
         if lifecycle["legacy_cleaned"]:
@@ -163,7 +138,7 @@ def install(m):
 
     def style_signature():
         return (
-            bool(getattr(m, "_FUZZY_BOUNDARY", True)), HIDE_BODY, BODY_OPACITY,
+            bool(getattr(m, "_FUZZY_BOUNDARY", True)),
             COPIES_PER_BODY, SCATTER, OVERSHOOT, LINE_WEIGHT,
             GRAY_LIGHT, GRAY_DARK, SHOW_THROUGH, SHOW_THRU_OPACITY,
             FLAT_FILL, tuple(FILL_RGB), FILL_FLATTEN, MAX_LINES,
@@ -230,50 +205,12 @@ def install(m):
         log("comic body lines={} body={} group={}".format(drawn, tok, gid))
         return True
 
-    def apply_body_state(rows=None):
-        if not getattr(m, "_FUZZY_BOUNDARY", True):
-            return
-        if rows is None:
-            rows, _ = m._visual_comic_subject_rows()
-        want = set(tok for tok, _ in rows)
-        for tok, body in rows:
-            try:
-                if HIDE_BODY:
-                    hidden_tokens.add(tok)
-                    body.isVisible = False
-                else:
-                    body.opacity = max(0.02, float(BODY_OPACITY))
-            except Exception:
-                pass
-        for tok in list(hidden_tokens):
-            if tok not in want:
-                hidden_tokens.discard(tok)
-                body = resolve_body(tok)
-                try:
-                    if body is not None and body.isValid:
-                        body.isVisible = True
-                except Exception:
-                    pass
-
-    def restore_all_visibility():
-        for tok in list(hidden_tokens):
-            hidden_tokens.discard(tok)
-            body = resolve_body(tok)
-            try:
-                if body is not None and body.isValid:
-                    body.isVisible = True
-            except Exception:
-                pass
-
-    m._fuzzy_restore_visibility = restore_all_visibility
-
     def allocate_budgets(prepared):
-        """Share the global line guard without allowing later bodies to lose all outline.
+        """Share the global line guard without starving later comic bodies.
 
-        When the scene fits under MAX_LINES, every body gets the exact old four-copy
-        budget. Under unusually heavy scenes, guarantee roughly one complete edge
-        copy per body before distributing extra copies. The visual invariant
-        (fill + sketch boundary) therefore survives load shedding.
+        Give every body roughly one edge pass before spending the remaining budget
+        on the extra sketch copies. This preserves the fill+boundary invariant even
+        in a heavy assembly without making the scene unbounded.
         """
         budgets = [0] * len(prepared)
         remaining = max(0, int(MAX_LINES))
@@ -288,8 +225,6 @@ def install(m):
                 budgets[i] = need
                 remaining -= need
         else:
-            # Rare overload: distribute enough lines to every body instead of
-            # consuming the whole guard on the first body.
             left = len(prepared)
             for i, need in enumerate(base_needs):
                 share = max(1, remaining // max(1, left)) if remaining > 0 else 0
@@ -298,7 +233,6 @@ def install(m):
                 remaining -= give
                 left -= 1
 
-        # Distribute remaining copies fairly while preserving body order/seeds.
         pending = True
         while remaining > 0 and pending:
             pending = False
@@ -329,11 +263,11 @@ def install(m):
             return changed
 
         rows, retained = m._visual_comic_subject_rows()
-        apply_body_state(rows)
         visible = set(tok for tok, _ in rows)
 
-        # Only resolved/deleted subjects are destroyed. Editing hides the existing
-        # comic group and keeps its sampled geometry for a fast return to Proposed.
+        # Only resolved/deleted subjects are destroyed. A non-comic Editing phase
+        # merely hides the persistent group so Confirm can return to Proposed by a
+        # cheap visibility toggle when geometry/style did not change.
         for tok in list(m._runtime_render_tokens("fuzzy")):
             if tok not in retained:
                 changed = m._runtime_drop_render(tok, "fuzzy", True) or changed
@@ -376,12 +310,9 @@ def install(m):
     m._sync_comic_uncertainty = sync_fuzzy
 
     def refresh_ghost():
+        # Opacity is owned by fuzzycad_opacity_runtime; keep this wrapper only so
+        # existing call sites still synchronize the persistent comic graphics.
         old_refresh_ghost()
-        try:
-            rows, _ = m._visual_comic_subject_rows()
-            apply_body_state(rows)
-        except Exception:
-            pass
 
     m._refresh_ghost = refresh_ghost
 
@@ -406,14 +337,13 @@ def install(m):
                 m._app.activeViewport.refresh()
         except Exception:
             log("startup comic sync failed\n{}".format(m.traceback.format_exc()))
-        log("COMIC UNCERTAINTY READY: central state -> paper fill + persistent sketch boundary")
+        log("COMIC UNCERTAINTY READY: geometry-only renderer under central visual authority")
         return result
 
     m.run = run
 
     def stop(context):
         try:
-            restore_all_visibility()
             m._runtime_reset_graphics("FuzzyCAD_Runtime_fuzzy_")
             m._clear(LEGACY_GID)
         except Exception:
