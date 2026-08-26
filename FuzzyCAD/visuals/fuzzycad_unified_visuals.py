@@ -250,50 +250,14 @@ def install(m):
         # back to that wireframe and no kernel work happens while dragging.
         return False
 
-    def extrude_fill(group, g, d, amt):
-        # A translucent solid ghost built straight from the picked face's boundary
-        # loops -- side walls + the moved end cap -- as CustomGraphics triangles.
-        # Pure point math, zero kernel. Guarded: if the mesh API misbehaves the
-        # wireframe below still stands.
-        try:
-            adsk = m.adsk
-            for loop in g.get("loops", []):
-                if not loop or len(loop) < 3:
-                    continue
-                off = m._translate(loop, d, amt)
-                n = len(loop)
-                cx = sum(p[0] for p in off) / n
-                cy = sum(p[1] for p in off) / n
-                cz = sum(p[2] for p in off) / n
-                flat = []
-                for p in loop:
-                    flat += [p[0], p[1], p[2]]
-                for p in off:
-                    flat += [p[0], p[1], p[2]]
-                flat += [cx, cy, cz]
-                cap = 2 * n
-                idx = []
-                for k in range(n - 1):
-                    a, b, a2, b2 = k, k + 1, n + k, n + k + 1
-                    idx += [a, b, b2, a, b2, a2]     # side wall quad
-                    idx += [a2, b2, cap]             # moved end-cap fan
-                coords = adsk.fusion.CustomGraphicsCoordinates.create(flat)
-                mesh = group.addMesh(coords, idx, [], [])
-                mesh.color = m._solid((232, 132, 42))
-                mesh.setOpacity(0.24, True)
-        except Exception as exc:
-            log("extrude fill skipped: {}".format(exc))
-
     def draw_extrude(group, mark, rgb, amp):
         g = m._geom.get(mark["id"], {})
         d = g.get("normal", (0.0, 0.0, 1.0))
         amt = mark.get("amount", 0.0)
-        # A translucent prism ghost (walls + moved cap) plus a sketchy wireframe of
-        # the offset loops and a few side edges, so it reads as a solid being pushed
-        # out. No kernel feature and no BRep tessellation -- both crashed on a real
-        # assembly. The exact solid is built only at Accept.
-        if abs(amt) > 1e-9:
-            extrude_fill(group, g, d, amt)
+        # Sketchy ghost of the extruded prism: offset loops + a few side walls. No
+        # kernel, no BRep tessellation, and NO CustomGraphics mesh -- addMesh with
+        # hand-built triangle indices risked a native (uncatchable) crash, which is
+        # the likeliest cause of the back-and-forth crash. Wireframe only; stable.
         for i, loop in enumerate(g.get("loops", [])):
             if not loop:
                 continue
