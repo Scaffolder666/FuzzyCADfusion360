@@ -9,6 +9,12 @@ The stage card also exposes an optional Confirm action. Confirm simply ends the
 currently active FuzzyCAD/Fusion command through the same deferred main-thread
 termination path used when switching tools. Switching directly to another tool
 still works exactly as before and remains the fastest path.
+
+This layer also owns toolbar-command lifecycle guards that do not change any
+visual styling or geometry. Each input/preview/execute handler captures the
+command session that created it and ignores late events after a newer command has
+taken ownership. The existing Execute/Destroy rendering path is intentionally
+left untouched so normal-state appearance remains byte-for-byte policy-equivalent.
 """
 
 import json
@@ -18,8 +24,17 @@ def install(m):
     adsk = m.adsk
     old_ensure_palettes = m._ensure_palettes
     CurrentFuzzyCommandCreated = m.FuzzyCommandCreated
+    CurrentFuzzyInputChanged = m.FuzzyInputChanged
+    CurrentFuzzyPreview = m.FuzzyPreview
+    CurrentFuzzyExecute = m.FuzzyExecute
     CurrentPaletteHTMLHandler = m.PaletteHTMLHandler
     old_run = m.run
+
+    # Which command/edit currently owns the contents of the left rail. This is
+    # deliberately separate from viewport visuals. A new owner replaces the old
+    # token before Fusion delivers the old command's late Destroy, so that stale
+    # Destroy cannot clear the new rail.
+    stage_state = {"owner": None}
 
     def log(msg):
         try:
@@ -54,7 +69,20 @@ def install(m):
         except Exception:
             pass
 
-    m._set_tool_stage = send_stage
+    def set_tool_stage(tool=None, steps=None, active=None, title=None):
+        """External stage setter (e.g. card re-open).
+
+        Calling this with a visible stage claims the rail for a fresh external
+        owner. That makes a late Destroy from the toolbar command that preceded it
+        harmless. Clearing the stage releases the owner. Payloads are unchanged.
+        """
+        if tool is None and not (steps or []):
+            stage_state["owner"] = None
+        else:
+            stage_state["owner"] = object()
+        send_stage(tool, steps, active, title)
+
+    m._set_tool_stage = set_tool_stage
 
     def ensure_palettes():
         result = old_ensure_palettes()
@@ -84,7 +112,9 @@ def install(m):
         except Exception:
             return 0
 
-    def stage_for(tool, inputs=None, cid=None):
+    def stage_for(tool, inputs=None, cid=None, owner=None):
+        if owner is not None:
+            stage_state["owner"] = owner
         inputs = inputs or getattr(m, "_inputs", None)
         if tool == "axis_rotate":
             b = sel_count(inputs, "arb") > 0 if inputs else False
@@ -156,27 +186,79 @@ def install(m):
 
         send_stage(None, [], None, "")
 
-    class StageInput(adsk.core.InputChangedEventHandler):
-        def __init__(self, tool):
-            super().__init__(); self.tool = tool
+    # ---- toolbar runtime ownership (no rendering policy changes) ----------
+    def session_is_current(session):
+        return session is None or session is getattr(m, "_cmd_session", None)
+
+    class FuzzyInputChanged(CurrentFuzzyInputChanged):
+        def __init__(self):
+            super().__init__()
+            self._fuzzy_session = getattr(m, "_cmd_session", None)
+
         def notify(self, args):
+            if not session_is_current(self._fuzzy_session):
+                return
+            return super().notify(args)
+
+    class FuzzyPreview(CurrentFuzzyPreview):
+        def __init__(self):
+            super().__init__()
+            self._fuzzy_session = getattr(m, "_cmd_session", None)
+
+        def notify(self, args):
+            if not session_is_current(self._fuzzy_session):
+                try:
+                    args.isValidResult = True
+                except Exception:
+                    pass
+                return
+            return super().notify(args)
+
+    class FuzzyExecute(CurrentFuzzyExecute):
+        def __init__(self):
+            super().__init__()
+            self._fuzzy_session = getattr(m, "_cmd_session", None)
+
+        def notify(self, args):
+            if not session_is_current(self._fuzzy_session):
+                return
+            return super().notify(args)
+
+    m.FuzzyInputChanged = FuzzyInputChanged
+    m.FuzzyPreview = FuzzyPreview
+    m.FuzzyExecute = FuzzyExecute
+
+    # ---- left rail ownership ----------------------------------------------
+    class StageInput(adsk.core.InputChangedEventHandler):
+        def __init__(self, tool, owner):
+            super().__init__(); self.tool = tool; self.owner = owner
+        def notify(self, args):
+            if stage_state.get("owner") is not self.owner:
+                return
             try:
-                stage_for(self.tool, args.inputs, args.input.id)
+                stage_for(self.tool, args.inputs, args.input.id, self.owner)
             except Exception:
                 log("stage input failed\n{}".format(m.traceback.format_exc()))
 
     class StageDestroy(adsk.core.CommandEventHandler):
+        def __init__(self, owner):
+            super().__init__(); self.owner = owner
         def notify(self, args):
+            if stage_state.get("owner") is not self.owner:
+                return
+            stage_state["owner"] = None
             send_stage(None, [], None, "")
 
     class FuzzyCommandCreated(CurrentFuzzyCommandCreated):
         def notify(self, args):
             super().notify(args)
             try:
-                stage_for(self.cmd, args.command.commandInputs)
-                h = StageInput(self.cmd)
+                session = getattr(m, "_cmd_session", None)
+                owner = session if session is not None else object()
+                stage_for(self.cmd, args.command.commandInputs, owner=owner)
+                h = StageInput(self.cmd, owner)
                 args.command.inputChanged.add(h); m._handlers.append(h)
-                d = StageDestroy()
+                d = StageDestroy(owner)
                 args.command.destroy.add(d); m._handlers.append(d)
             except Exception:
                 log("stage setup failed tool={}\n{}".format(self.cmd, m.traceback.format_exc()))
@@ -217,10 +299,11 @@ def install(m):
         result = old_run(context)
         try:
             ensure_palettes()
+            stage_state["owner"] = None
             send_stage(None, [], None, "")
         except Exception:
             pass
-        log("STAGE UI READY: left tool rail + procedural progress feedback")
+        log("STAGE UI READY: left tool rail + session-safe lifecycle feedback")
         return result
 
     m.run = run
