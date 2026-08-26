@@ -25,7 +25,8 @@ THUMB_MAX = 220     # longest side of the floating thumbnail, in pixels
 #   "v"    -> flipVertical only
 #   "h"    -> flipHorizontal only
 #   "none" -> as-is
-FACE_ROTATE = "180"
+# ("180" == flipV+flipH turned out to cancel on this build; try "v" then "h".)
+FACE_ROTATE = "v"
 _thumb_seq = [0]
 
 
