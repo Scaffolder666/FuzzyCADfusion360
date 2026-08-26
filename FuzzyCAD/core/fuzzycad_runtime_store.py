@@ -1,13 +1,13 @@
 """Runtime-only data/render registry for FuzzyCAD.
 
 This layer separates collaboration data, geometry caches, and viewport graphics.
-It deliberately stores no long-lived Fusion native wrapper objects.  Persistent
+It deliberately stores no long-lived Fusion native wrapper objects. Persistent
 records are JSON-safe Python values (ids, entity tokens, sampled XYZ points,
-group-id strings, signatures, dirty/visibility flags).  Whenever Fusion graphics
+group-id strings, signatures, dirty/visibility flags). Whenever Fusion graphics
 need to be touched, the group is resolved fresh from the active design by id.
 
 Phase 1 is intentionally conservative: the existing mark/persistence model remains
-the source of truth and this registry mirrors it.  The fuzzy-boundary renderer is
+the source of truth and this registry mirrors it. The fuzzy-boundary renderer is
 the first consumer; other visuals can migrate later without changing appearance.
 """
 
@@ -19,9 +19,10 @@ def install(m):
         return
 
     state = {
-        "proposals": {},   # mark id -> JSON-safe normalized record
-        "geometry": {},    # body token -> sampled pure-Python geometry cache
-        "render": {},      # subject token -> role -> ids/signatures/visibility only
+        "proposals": {},
+        "geometry": {},
+        "render": {},
+        "geometry_epoch": 0,
     }
     m._runtime_store = state
 
@@ -110,7 +111,7 @@ def install(m):
     def body_geometry(body):
         """Return a pure-Python sampled geometry snapshot for a live body."""
         tok = entity_token(body) or "id:{}".format(id(body))
-        sig = body_signature(body)
+        sig = (int(state.get("geometry_epoch", 0)), body_signature(body))
         cached = state["geometry"].get(tok)
         if cached is not None and cached.get("signature") == sig:
             return cached
@@ -147,6 +148,7 @@ def install(m):
         return cached
 
     def invalidate_geometry(subject=None):
+        state["geometry_epoch"] = int(state.get("geometry_epoch", 0)) + 1
         if subject is None:
             state["geometry"].clear()
             return
@@ -160,7 +162,6 @@ def install(m):
         return "FuzzyCAD_Runtime_{}_{}".format(str(role), digest)
 
     def find_group(gid, create=False):
-        """Resolve a CustomGraphicsGroup fresh. Never cache the returned wrapper."""
         try:
             design = m._design()
             if design is None:
@@ -205,7 +206,6 @@ def install(m):
             return False
 
     def delete_group(gid):
-        """Delete by id using fresh lookups only; no stale native wrapper is retained."""
         try:
             design = m._design()
             if design is None:
@@ -264,7 +264,6 @@ def install(m):
         return changed
 
     def reset_runtime_graphics(prefix="FuzzyCAD_Runtime_"):
-        """Sweep runtime-owned groups, used on reload after an interrupted/crashed run."""
         try:
             design = m._design()
             if design is None:
@@ -307,9 +306,6 @@ def install(m):
     m._runtime_drop_render = drop_render
     m._runtime_reset_graphics = reset_runtime_graphics
 
-    # A committed operation can redraw before the accept wrapper returns. Clear
-    # before delegating so that redraw samples the new BRep, then clear again in
-    # case the commit replaced the body/token.
     old_accept = getattr(m, "_accept", None)
     if old_accept is not None:
         def accept(*args, **kwargs):
