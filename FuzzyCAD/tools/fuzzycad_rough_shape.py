@@ -77,10 +77,14 @@ def install(m):
     # ---- no proposal geometry to draw (the body itself carries the look) ----
     m._DRAW["rough"] = lambda group, mark, rgb, amp: None
 
-    # ---- card: a single free-text note ------------------------------------
+    # ---- card: no note field; the comment thread + images carry the intent -
     def fields(mark):
         if mark.get("tool") == "rough":
-            return [{"key": "note", "kind": "text", "value": mark.get("note", "")}]
+            # A rough shape needs no constraint/note box of its own -- the size
+            # dimensions are shown on the body, and discussion goes in the comment
+            # thread. Return no editable fields so the card shows only comments +
+            # image attach.
+            return []
         return old_fields(mark)
 
     m._fields = fields
