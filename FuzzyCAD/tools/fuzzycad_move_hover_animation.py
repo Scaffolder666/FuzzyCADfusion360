@@ -1,39 +1,54 @@
-"""Move-card hover replay.
+"""Move-card hover replay under the central animation controller.
 
-Hover keeps the real proposed sketch visible, adds a separate thin wireframe copy
-that travels from the current position to the proposal, and keeps an orange
-movement arrow on screen. The committed body never moves.
+This file owns only Move-specific rendering: a thin wireframe copy translated
+from the current body toward the proposal plus an orange direction arrow.
+Ownership/timing/throttling live in fuzzycad_animation_controller.py, so starting
+any other proposal animation stops this one first.
+
+No Fusion CustomGraphics wrapper is retained across events; only the active mark
+id and completion flag are kept in Python.
 """
 
+import importlib.util
 import math
-import time
+import os
+import sys
 
 HOVER_GROUP = "FuzzyCAD_HoverAnimation"
 HOVER_ARROW_GROUP = "FuzzyCAD_HoverDirectionArrow"
+OWNER = "move_hover"
 ANIM_RGB = (68, 72, 76)
 ANIM_WEIGHT = 1.25
 ARROW_RGB = (225, 126, 38)
 MAX_PRIMARY_POLYS = 30
 MAX_RELATED_POLYS = 12
 MAX_POINTS_PER_POLY = 14
-FRAME_INTERVAL_SEC = 0.12
-FORWARD_SEC = 1.90
+
+
+def _ensure_animation_controller(m):
+    if getattr(m, "_animation_begin", None) is not None:
+        return
+    root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    path = os.path.join(root, "visuals", "fuzzycad_animation_controller.py")
+    name = "fuzzycad_animation_controller"
+    mod = sys.modules.get(name)
+    if mod is None:
+        spec = importlib.util.spec_from_file_location(name, path)
+        mod = importlib.util.module_from_spec(spec)
+        sys.modules[name] = mod
+        spec.loader.exec_module(mod)
+    mod.install(m)
 
 
 def install(m):
+    _ensure_animation_controller(m)
+
     adsk = m.adsk
     CurrentPaletteHTMLHandler = m.PaletteHTMLHandler
     old_run = m.run
     old_stop = m.stop
 
-    state = {
-        "mid": None,
-        "group": None,
-        "arrow_group": None,
-        "frame": 0,
-        "started": 0.0,
-        "last_refresh": 0.0,
-    }
+    state = {"mid": None, "complete": False}
 
     def refresh():
         try:
@@ -49,19 +64,21 @@ def install(m):
             except Exception:
                 pass
 
-    def stop_animation(refresh_view=True):
-        had = state["mid"] is not None or state["group"] is not None or state["arrow_group"] is not None
+    def stop_animation(refresh_view=True, from_controller=False):
+        mid = state.get("mid")
+        had = mid is not None
         clear_groups()
-        state.update({
-            "mid": None,
-            "group": None,
-            "arrow_group": None,
-            "frame": 0,
-            "started": 0.0,
-            "last_refresh": 0.0,
-        })
+        state["mid"] = None
+        state["complete"] = False
+        if not from_controller and mid is not None:
+            try:
+                m._animation_end(OWNER, mid)
+            except Exception:
+                pass
         if had and refresh_view:
             refresh()
+
+    m._animation_register_owner(OWNER, stop_animation)
 
     def valid_body(body):
         if body is None:
@@ -183,14 +200,14 @@ def install(m):
         vec = tuple(float(x) for x in (mark.get("vec") or [0.0, 0.0, 0.0]))
         direction = normalized(vec)
         if direction is None:
-            return None
+            return False
         distance = math.sqrt(sum(x * x for x in vec))
         if distance < 1e-6:
-            return None
+            return False
 
         group = m._group(HOVER_ARROW_GROUP)
         if group is None:
-            return None
+            return False
 
         start = body_center(primary)
         end = tuple(start[i] + vec[i] for i in range(3))
@@ -198,7 +215,6 @@ def install(m):
             m._sketchy(group, [start, end], ARROW_RGB, 0.0,
                        mark.get("id", 1) * 77001, weight=2, strokes=1)
 
-            # Screen-facing V arrowhead.
             right, up = m._camera_xy()
             side = up
             dot = abs(sum(direction[i] * side[i] for i in range(3)))
@@ -211,19 +227,28 @@ def install(m):
             p2 = tuple(base[i] - side[i] * w for i in range(3))
             m._sketchy(group, [p1, end, p2], ARROW_RGB, 0.0,
                        mark.get("id", 1) * 77002, weight=2, strokes=1)
+            return True
+        except Exception:
+            return False
+
+    def existing_group(gid):
+        try:
+            finder = getattr(m, "_runtime_find_group", None)
+            if finder is not None:
+                return finder(gid, False)
         except Exception:
             pass
-        return group
-
-    def eased(t):
-        t = max(0.0, min(1.0, float(t)))
-        return t * t * (3.0 - 2.0 * t)
-
-    def motion_t(now):
-        elapsed = max(0.0, now - state["started"])
-        if elapsed >= FORWARD_SEC:
-            return 1.0
-        return eased(elapsed / FORWARD_SEC)
+        try:
+            design = m._design()
+            groups = design.rootComponent.customGraphicsGroups if design else None
+            if groups is not None:
+                for i in range(groups.count):
+                    g = groups.item(i)
+                    if g is not None and g.id == gid:
+                        return g
+        except Exception:
+            pass
+        return None
 
     def start_animation(mid):
         try:
@@ -232,65 +257,61 @@ def install(m):
             return
         mark = m._find(mid)
         if mark is None or mark.get("tool") != "move":
-            stop_animation()
             return
         primary = m._body.get(mid)
         if not valid_body(primary):
-            stop_animation()
             return
 
-        stop_animation(False)
+        if m._animation_begin(OWNER, mark) is None:
+            return
+
+        clear_groups()
         group = m._group(HOVER_GROUP)
         if group is None:
+            stop_animation(False)
             return
         count = 0
         for poly in animation_polys(mark, primary):
             if add_polyline(group, poly):
                 count += 1
         if count < 1:
-            clear_groups()
+            stop_animation(False)
             return
 
-        arrow_group = add_arrow(mark, primary)
-        now = time.perf_counter()
+        add_arrow(mark, primary)
         try:
             group.transform = move_matrix(mark, 0.0)
         except Exception:
-            clear_groups()
+            stop_animation(False)
             return
 
-        state.update({
-            "mid": mid,
-            "group": group,
-            "arrow_group": arrow_group,
-            "frame": 0,
-            "started": now,
-            "last_refresh": 0.0,
-        })
+        state["mid"] = mid
+        state["complete"] = False
         refresh()
 
-    def animation_frame(mid, _browser_t):
+    def animation_frame(mid, browser_t):
         try:
             mid = int(mid)
         except Exception:
             return
-        if state["mid"] != mid or state["group"] is None:
+        if state.get("mid") != mid or state.get("complete"):
             return
         mark = m._find(mid)
         if mark is None or mark.get("tool") != "move":
             stop_animation()
             return
 
-        now = time.perf_counter()
-        if state["last_refresh"] and now - state["last_refresh"] < FRAME_INTERVAL_SEC:
+        t = m._animation_frame(OWNER, mid, browser_t)
+        if t is None:
             return
-        t = motion_t(now)
-        if t >= 1.0 and state["frame"] < 0:
+        group = existing_group(HOVER_GROUP)
+        if group is None:
+            stop_animation(False)
             return
-        state["last_refresh"] = now
         try:
-            state["group"].transform = move_matrix(mark, t)
-            state["frame"] = -1 if t >= 1.0 else state["frame"] + 1
+            group.transform = move_matrix(mark, t)
+            if t >= 1.0:
+                state["complete"] = True
             refresh()
         except Exception:
             stop_animation()
@@ -318,11 +339,18 @@ def install(m):
                 animation_frame(data.get("id"), data.get("t", 0.0))
                 return
             if action == "hoverMoveEnd":
-                if str(state["mid"]) == str(data.get("id")):
+                if str(state.get("mid")) == str(data.get("id")):
                     stop_animation()
                 return
-            if action in ("editManipulator", "accept", "reject", "tool"):
-                stop_animation()
+
+            if action in (
+                    "focus", "editManipulator", "edit", "compare_choice",
+                    "confirm", "accept", "reject", "tool"):
+                try:
+                    m._animation_cancel("palette:" + str(action), refresh=False)
+                except Exception:
+                    pass
+
             self._delegate.notify(args)
 
     m.PaletteHTMLHandler = PaletteHTMLHandler
@@ -330,10 +358,15 @@ def install(m):
     def run(context):
         result = old_run(context)
         clear_groups()
+        state["mid"] = None
+        state["complete"] = False
         return result
 
     def stop(context):
-        stop_animation(False)
+        try:
+            m._animation_cancel("addon-stop", refresh=False)
+        except Exception:
+            stop_animation(False)
         return old_stop(context)
 
     m.run = run
