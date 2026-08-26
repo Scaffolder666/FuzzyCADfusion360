@@ -133,26 +133,13 @@ def install(m):
             exact_fresh = (candidate is not None and candidate_radius is not None and
                            abs(float(candidate_radius) - amount) <= 1e-7)
 
-            # The translucent exact volume is expensive: addBRepBody re-tessellates
-            # it on every redraw. Only worth it while this fillet is being edited
-            # (live). Once confirmed, the lightweight sketch + dimension annotation
-            # stands in for it, so we stop re-tessellating and the lag goes away.
-            is_live = False
-            try:
-                mid = mark.get("id")
-                is_live = (m._live.get("fillet") == mid or
-                           getattr(m, "_active_edit_id", None) == mid)
-            except Exception:
-                pass
-
+            # The translucent exact volume is expensive (addBRepBody re-tessellates
+            # it). It is NOT drawn here any more -- it lives in a cached persistent
+            # group (sync_fillet_solids) that is rebuilt only when the candidate
+            # actually changes, so it can stay visible from editing right through
+            # to Accept without re-tessellating on every redraw. Here we only draw
+            # the cheap sketch outline.
             if candidate is not None:
-                if is_live:
-                    try:
-                        cg = group.addBRepBody(candidate)
-                        cg.color = m._solid((190, 190, 186))
-                        cg.setOpacity(0.26 if exact_fresh else 0.14, True)
-                    except Exception:
-                        pass
                 for i, poly in enumerate(g.get("candidate_edges", []) or []):
                     try:
                         m._sketchy(group, poly, rgb, amp,
@@ -176,6 +163,104 @@ def install(m):
 
         m._DRAW["fillet"] = draw_fillet
         m._draw_fillet = draw_fillet
+
+    # ---- cached translucent solid, off the per-redraw hot path -------------
+    # The exact fillet volume is shown from editing right up to Accept (per the
+    # simplified fillet policy: no x-ray, the "editing look" persists). To keep it
+    # cheap it lives in its own persistent graphics group and is (re)tessellated
+    # PER MARK only when that mark's radius changes -- never on a plain redraw, and
+    # never for marks whose radius didn't move.
+    FILLET_SOLID_GID = "FuzzyCAD_FilletSolid"
+    solids = {}   # mark id -> {"sig": radius_cm, "ents": [CustomGraphicsBRepBody]}
+
+    def _ents_alive(ents):
+        if not ents:
+            return False
+        for e in ents:
+            try:
+                if not e.isValid:
+                    return False
+            except Exception:
+                return False
+        return True
+
+    def _drop(mid):
+        for e in solids.get(mid, {}).get("ents", []):
+            try:
+                e.deleteMe()
+            except Exception:
+                pass
+        solids.pop(mid, None)
+
+    def sync_fillet_solids():
+        try:
+            group = m._group(FILLET_SOLID_GID)
+        except Exception:
+            return
+        if group is None:
+            return
+        # open fillet marks that carry an exact candidate volume
+        current = {}
+        for mark in list(getattr(m, "_marks", None) or []):
+            try:
+                if mark.get("tool") != "fillet":
+                    continue
+                if m._mark_phase(mark) == "resolved":
+                    continue
+                g = m._geom.get(mark.get("id"), {}) or {}
+                cand = g.get("candidate_body")
+                if cand is None:
+                    continue
+                sig = float(g.get("candidate_radius") or mark.get("amount", 0.0))
+                current[mark.get("id")] = (cand, sig)
+            except Exception:
+                continue
+        for mid in list(solids.keys()):
+            if mid not in current:
+                _drop(mid)
+        for mid, (cand, sig) in current.items():
+            cached = solids.get(mid)
+            if (cached is not None and abs(cached["sig"] - sig) <= 1e-9
+                    and _ents_alive(cached["ents"])):
+                continue
+            _drop(mid)
+            ents = []
+            try:
+                cg = group.addBRepBody(cand)
+                cg.color = m._solid((190, 190, 186))
+                cg.setOpacity(0.26, True)
+                ents.append(cg)
+            except Exception:
+                pass
+            solids[mid] = {"sig": sig, "ents": ents}
+
+    m._sync_fillet_solids = sync_fillet_solids
+
+    # Rebuild the cached solid whenever a fillet candidate is (re)computed -- this
+    # covers both the initial command and a reopened edit, which both go through
+    # _compute_real. A plain redraw also calls sync (cheap: it only re-tessellates
+    # a mark whose radius actually changed).
+    old_compute_real = getattr(m, "_compute_real", None)
+    if old_compute_real is not None:
+        def compute_real_synced(mark):
+            ok = old_compute_real(mark)
+            try:
+                if mark is not None and mark.get("tool") == "fillet":
+                    sync_fillet_solids()
+            except Exception:
+                pass
+            return ok
+        m._compute_real = compute_real_synced
+
+    old_redraw_marks = m._redraw_marks
+    def redraw_marks_synced(*a, **k):
+        r = old_redraw_marks(*a, **k)
+        try:
+            sync_fillet_solids()
+        except Exception:
+            pass
+        return r
+    m._redraw_marks = redraw_marks_synced
 
     def live_mark():
         try:

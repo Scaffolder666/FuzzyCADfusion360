@@ -124,47 +124,19 @@ def install(m):
         return found
 
     def draw_colored_region(group, mark):
-        # The exact orange surface is a validation layer, not the provisional
-        # representation. Draw it only for a current exact candidate.
+        # Only the cheap orange boundary line remains here. The translucent solid
+        # (the "editing look") is drawn from editing through to Accept by the cached
+        # persistent group in fillet_stability (m._sync_fillet_solids), so it is not
+        # re-tessellated on every redraw. The separate orange filled surface and the
+        # edge x-ray were dropped in the simplified fillet policy.
         if not exact_is_current(mark):
             return
-        # The coloured surface is also an addBRepBody (re-tessellated each redraw),
-        # so restrict it to the live edit -- confirmed marks keep only the cheap
-        # boundary line below and the dimension annotation.
-        is_live = False
-        try:
-            mid = mark.get("id")
-            is_live = (m._live.get("fillet") == mid or
-                       getattr(m, "_active_edit_id", None) == mid)
-        except Exception:
-            pass
-        if is_live:
-            face_style = vstyle("affected_surface", {"rgb": (235, 132, 42), "opacity": 0.46})
-            face_rgb = tuple(face_style.get("rgb", (235, 132, 42)))
-            face_opacity = float(face_style.get("opacity", 0.46))
-            for body in find_fillet_face_bodies(mark):
-                try:
-                    cg = group.addBRepBody(body)
-                    cg.color = m._solid(face_rgb)
-                    cg.setOpacity(face_opacity, True)
-                    try:
-                        cg.depthPriority = 5
-                    except Exception:
-                        pass
-                except Exception:
-                    pass
-
         size = float(mark.get("size", 3.0))
         g = m._geom.get(mark.get("id"), {})
         for i, poly in enumerate(g.get("fillet_edges", []) or []):
-            # X-ray the edge (depth above the coloured surface at 5) only while the
-            # mark is NOT being edited, so a confirmed fillet's edge stays visible
-            # through a covering face. Once you click the card to edit, the full
-            # translucent preview is back, so the x-ray turns off automatically.
-            depth = None if is_live else 12
             try:
                 m._visual_stroke(group, poly, "affected_boundary",
-                                 mark.get("id", 1) * 19001 + i, size=size, depth=depth)
+                                 mark.get("id", 1) * 19001 + i, size=size)
             except Exception:
                 m._sketchy(group, poly, (245, 118, 24), 0.0,
                            mark.get("id", 1) * 19001 + i,
