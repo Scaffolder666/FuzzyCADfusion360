@@ -20,6 +20,12 @@ import tempfile
 # image's pixel size -- a big photo would fill the screen. So it is downscaled to
 # a small thumbnail first (needs Pillow, which Fusion's Python ships).
 THUMB_MAX = 220     # longest side of the floating thumbnail, in pixels
+# How to orient the on-face image. The flip methods work; pick what looks right:
+#   "180"  -> flipVertical + flipHorizontal (a 180 rotation)  [default]
+#   "v"    -> flipVertical only
+#   "h"    -> flipHorizontal only
+#   "none" -> as-is
+FACE_ROTATE = "180"
 _thumb_seq = [0]
 
 
@@ -157,10 +163,12 @@ def install(m):
             try:
                 comp = face.body.parentComponent
                 ci = comp.canvases.createInput(path, face)
-                # The image lands rotated 180 on the face (upside down but readable).
-                # flipVertical + flipHorizontal together == a 180 rotation, which
-                # cancels it. Log which calls actually exist / succeed.
-                for meth in ("flipVertical", "flipHorizontal"):
+                # Orient the image per the FACE_ROTATE knob (the flip methods work).
+                flips = {"180": ("flipVertical", "flipHorizontal"),
+                         "v": ("flipVertical",),
+                         "h": ("flipHorizontal",),
+                         "none": ()}.get(FACE_ROTATE, ("flipVertical", "flipHorizontal"))
+                for meth in flips:
                     fn = getattr(ci, meth, None)
                     if callable(fn):
                         try:
@@ -168,8 +176,6 @@ def install(m):
                             log("{} applied".format(meth))
                         except Exception:
                             log("{} failed\n{}".format(meth, m.traceback.format_exc()))
-                    else:
-                        log("{} is not callable on CanvasInput".format(meth))
                 canvas = comp.canvases.add(ci)
                 # remember it so accept/reject can delete it (it's a native doc
                 # entity, not tied to the mark on its own).
