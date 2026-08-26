@@ -63,7 +63,8 @@
 
   var GLYPH = {
     move: "⇄", rotate: "↻", scale: "⤢", scale_axis: "⇥",
-    axis_rotate: "⟳", extrude: "⤒", fillet: "◜", note: "◈", compare: "⑂"
+    axis_rotate: "⟳", extrude: "⤒", fillet: "◜", hole: "⊙",
+    rough: "▱", note: "◈", compare: "⑂"
   };
 
   var MTYPES = [
@@ -327,7 +328,7 @@
 
       var acts = document.createElement("div");
       acts.className = "mark__acts";
-      var acceptLabel = m.tool === "note" ? "Accept" : (m.tool === "compare" ? "Confirm choice" : "Accept (apply)");
+      var acceptLabel = (m.tool === "note" || m.tool === "rough") ? "Accept" : (m.tool === "compare" ? "Confirm choice" : "Accept (apply)");
       var apply = btn(acceptLabel, "act act--apply", function (ev) {
         stop(ev);
         stopMoveHover(true);

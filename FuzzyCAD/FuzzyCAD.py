@@ -168,6 +168,12 @@ _layout.install(_legacy)
 _hole = _load("fuzzycad_hole", "tools/fuzzycad_hole.py")
 _hole.install(_legacy)
 
+# Rough Shape: flag a whole body as uncertain (an open shape, not a parameter) so a
+# non-modeller can drop in a crude placeholder and hand off the intent. The body
+# renders in the comic uncertainty style; the card carries a free-text note.
+_rough = _load("fuzzycad_rough_shape", "tools/fuzzycad_rough_shape.py")
+_rough.install(_legacy)
+
 # Dependent follow: accepting a Move/Rotate on a fuzzy part carries the parts
 # built on it (detected by a shared coincident face) along, after the user
 # confirms. Wraps _accept outermost so it decides before the change is applied.
