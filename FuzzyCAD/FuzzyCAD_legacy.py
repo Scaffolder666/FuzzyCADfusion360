@@ -966,6 +966,12 @@ class FuzzyDestroy(adsk.core.CommandEventHandler):
                 m = _find(mid)
                 if m is None or _is_default(cat, m):
                     _remove_mark(mid)
+            # Clear _live BEFORE redrawing: the surviving mark just left the
+            # command, so it must read as "proposed" (comic look), not "editing"
+            # (clean preview). Redrawing while _live still held it left it stuck in
+            # the editing look until the next redraw (e.g. clicking its card).
+            _live = {}
+            _active_cmd = None
             _redraw_marks()
             _send_state()
         except Exception:
