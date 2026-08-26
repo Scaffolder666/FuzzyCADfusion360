@@ -1,7 +1,7 @@
 """Central visual authority for FuzzyCAD uncertainty.
 
 This module answers one question for every visual layer: given a collaboration
-mark, what should be visible right now?  Tool-specific renderers may add detail,
+mark, what should be visible right now? Tool-specific renderers may add detail,
 but they do not get to redefine the baseline lifecycle.
 
 Core invariant for geometry-bearing uncertainty:
@@ -10,16 +10,14 @@ Core invariant for geometry-bearing uncertainty:
     editing             -> clean live preview/manipulator, no comic baseline
     resolved            -> no uncertainty overlay
 
-Variations live here too.  For example, Fillet may keep additional fillet detail
-visible, but its proposed state still inherits the same comic baseline.  Note and
-Conflict are semantic exceptions because they are annotation/alternative views,
-not a single uncertain body.
+Variations live here too. Fillet can add fillet-specific detail, but its proposed
+state still inherits the common comic baseline. Note and Conflict are semantic
+exceptions because they are annotation/alternative views, not a single uncertain
+body.
 """
 
 
-# Visual variations are intentionally data, not scattered `if tool == ...`
-# checks inside renderers.  A renderer can inspect `variant` or the derived flags
-# below, but lifecycle policy remains centralized in visual_state().
+# Variations are data, not scattered `if tool == ...` checks in renderers.
 _VARIATIONS = {
     "default": {
         "kind": "geometry",
@@ -30,8 +28,7 @@ _VARIATIONS = {
     "fillet": {
         "kind": "geometry",
         "retain_comic": True,
-        # Preserve the existing useful fillet-specific line/callout as an
-        # addition.  The common proposed comic baseline is no longer skipped.
+        # The cheap fillet line/callout remains an addition to the shared state.
         "detail_always": True,
         "exact_fillet_editing": True,
     },
@@ -81,25 +78,24 @@ def install(m):
                 return "resolved"
             return "proposed"
 
-    def subject_bodies(mark):
-        """Bodies participating in this proposal, primary first.
+    def subject_token(body):
+        if body is None:
+            return None
+        try:
+            return str(body.entityToken)
+        except Exception:
+            return "id:{}".format(id(body))
 
-        Keep subject resolution here so the comic renderer, focus logic, and
-        future visual layers agree on what the proposal actually owns.
-        """
+    def subject_bodies(mark):
+        """Bodies participating in this proposal, primary first."""
         if mark is None:
             return []
         out = []
         seen = set()
 
         def add(body):
-            if body is None:
-                return
-            try:
-                tok = str(body.entityToken)
-            except Exception:
-                tok = "id:{}".format(id(body))
-            if tok in seen:
+            tok = subject_token(body)
+            if body is None or tok in seen:
                 return
             seen.add(tok)
             out.append(body)
@@ -109,8 +105,8 @@ def install(m):
         except Exception:
             pass
 
-        # Move Together is currently the only multi-body proposal.  Keeping the
-        # expansion here prevents renderers from drifting on which bodies count.
+        # Move Together is currently the only multi-body proposal. The expansion
+        # belongs here so every visual agrees on what the proposal owns.
         if mark.get("tool") == "move" and mark.get("move_scope") == "together":
             for body in mark.get("related_bodies") or []:
                 add(body)
@@ -136,9 +132,6 @@ def install(m):
         v = variation(mark)
         is_open = bool(mark is not None and mark.get("status", "open") == "open")
         geometry = v.get("kind") == "geometry"
-
-        # Baseline uncertainty appearance.  This is the invariant renderers must
-        # consume instead of independently checking `_live`, tool names, etc.
         proposed_geometry = bool(is_open and geometry and ph == "proposed")
 
         return {
@@ -153,8 +146,7 @@ def install(m):
             "show_comic_fill": proposed_geometry,
             "show_sketch_boundary": proposed_geometry,
 
-            # Badge is the collaboration-state marker.  Existing renderers still
-            # decide exact placement/icon; this authority decides lifecycle only.
+            # Collaboration-state marker.
             "show_badge": bool(is_open and ph != "resolved"),
 
             # Proposal-detail layer is orthogonal to baseline uncertainty style.
@@ -164,12 +156,66 @@ def install(m):
             "show_live_preview": bool(is_open and ph == "editing"),
             "show_manipulator": bool(is_open and ph == "editing"),
 
-            # Fillet-specific addition: exact translucent BRep belongs to editing
-            # only.  Proposed Fillet uses the common comic baseline plus its cheap
-            # fillet-specific line/callout detail.
+            # Fillet variation: exact translucent BRep is editing-only. Proposed
+            # Fillet gets the common comic baseline plus cheap fillet detail.
             "show_exact_fillet": bool(
                 is_open and ph == "editing" and v.get("exact_fillet_editing", False)),
         }
+
+    def comic_subject_rows():
+        """Aggregate mark state into body-level comic visibility.
+
+        Returns `(visible_rows, retained_tokens)`. `visible_rows` is stable and
+        primary-first so the existing seeded sketch appearance stays stable.
+        `retained_tokens` includes editing bodies so their persistent groups are
+        hidden rather than destroyed. If any proposal on a body is actively being
+        edited, editing wins for that body and suppresses the comic baseline.
+        """
+        marks = list(getattr(m, "_marks", None) or [])
+        retained = set()
+        editing = set()
+
+        for mark in marks:
+            vs = visual_state(mark)
+            if not vs.get("retain_comic"):
+                continue
+            for body in subject_bodies(mark):
+                tok = subject_token(body)
+                if tok:
+                    retained.add(tok)
+                    if vs.get("phase") == "editing":
+                        editing.add(tok)
+
+        visible = []
+        seen = set()
+
+        def maybe_add(body):
+            tok = subject_token(body)
+            if not tok or tok in seen or tok in editing:
+                return
+            seen.add(tok)
+            visible.append((tok, body))
+
+        # Pass 1: primary bodies in mark order, preserving legacy body index seeds.
+        for mark in marks:
+            vs = visual_state(mark)
+            if not (vs.get("show_comic_fill") and vs.get("show_sketch_boundary")):
+                continue
+            try:
+                maybe_add(m._body.get(mark.get("id")))
+            except Exception:
+                pass
+
+        # Pass 2: variation/group subjects after primary bodies.
+        for mark in marks:
+            vs = visual_state(mark)
+            if not (vs.get("show_comic_fill") and vs.get("show_sketch_boundary")):
+                continue
+            subjects = subject_bodies(mark)
+            for body in subjects[1:]:
+                maybe_add(body)
+
+        return visible, retained
 
     def set_revealed(mid, hover=False):
         if mid is None:
@@ -201,8 +247,10 @@ def install(m):
             state["hover_reveal_id"] = None
 
     m._visual_variation = variation
+    m._visual_subject_token = subject_token
     m._visual_subject_bodies = subject_bodies
     m._visual_state = visual_state
+    m._visual_comic_subject_rows = comic_subject_rows
     m._visual_set_revealed = set_revealed
     m._visual_clear_revealed = clear_revealed
 
@@ -212,4 +260,4 @@ def install(m):
         except Exception:
             pass
 
-    log("UNCERTAINTY VISUAL AUTHORITY READY: proposed/editing/resolved + variations")
+    log("UNCERTAINTY VISUAL AUTHORITY READY: lifecycle + shared comic invariant + variations")
