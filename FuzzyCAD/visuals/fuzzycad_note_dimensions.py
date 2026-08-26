@@ -255,7 +255,10 @@ def install(m):
             return
         obb = oriented_box(body)
         if obb is None:
+            log("rough dims: no oriented box for mark {}".format(mark.get("id")))
             return
+        log("rough dims mark {} L/W/H = {:.2f}/{:.2f}/{:.2f} cm".format(
+            mark.get("id"), obb.length, obb.width, obb.height))
 
         c = obb.centerPoint
         L, W, H = obb.lengthDirection, obb.widthDirection, obb.heightDirection
