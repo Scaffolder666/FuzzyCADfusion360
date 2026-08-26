@@ -149,9 +149,9 @@ def install(m):
         if tool == "rough":
             b = sel_count(inputs, "sel") > 0 if inputs else False
             send_stage(tool, [
-                {"label": "Select the rough body", "done": b, "hint": "whole shape is flagged"},
-                {"label": "Add a note in the card", "done": False, "hint": "what is it?"},
-            ], 0 if not b else 1, "Rough Shape")
+                {"label": "Select the rough body", "done": b,
+                 "hint": "whole shape is flagged — then Confirm"},
+            ], 0, "Rough Shape")
             return
 
         send_stage(None, [], None, "")
