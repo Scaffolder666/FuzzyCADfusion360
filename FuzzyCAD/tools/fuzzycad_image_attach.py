@@ -156,15 +156,20 @@ def install(m):
                 return
             try:
                 comp = face.body.parentComponent
-                # Pre-rotate with PIL so it lands right-side up; if PIL is missing
-                # fall back to the Canvas API flip.
-                src = _corrected(path)
-                ci = comp.canvases.createInput(src or path, face)
-                if not src:
-                    try:
-                        ci.flipVertical()
-                    except Exception:
-                        log("flipVertical unavailable\n{}".format(m.traceback.format_exc()))
+                ci = comp.canvases.createInput(path, face)
+                # The image lands rotated 180 on the face (upside down but readable).
+                # flipVertical + flipHorizontal together == a 180 rotation, which
+                # cancels it. Log which calls actually exist / succeed.
+                for meth in ("flipVertical", "flipHorizontal"):
+                    fn = getattr(ci, meth, None)
+                    if callable(fn):
+                        try:
+                            fn()
+                            log("{} applied".format(meth))
+                        except Exception:
+                            log("{} failed\n{}".format(meth, m.traceback.format_exc()))
+                    else:
+                        log("{} is not callable on CanvasInput".format(meth))
                 canvas = comp.canvases.add(ci)
                 # remember it so accept/reject can delete it (it's a native doc
                 # entity, not tied to the mark on its own).
