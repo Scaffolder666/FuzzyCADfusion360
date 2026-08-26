@@ -38,7 +38,12 @@ def install(m):
         "updating": False,
         "launching": False,   # a cd.execute() is in flight, awaiting its CommandCreated
         "pending": None,      # newest card requested while launching -- fired once settled
+        "current": None,      # the session dict owned by the active edit command
     }
+    gen_counter = [0]         # monotonic edit-session generation
+
+    def is_current(session):
+        return session is not None and session is state.get("current")
 
     def log(msg):
         # Also append to a file with an immediate flush so the last step survives a
@@ -320,9 +325,15 @@ def install(m):
         finally:
             state["updating"] = False
 
+    # Every edit command owns a session. A handler only acts while its session is
+    # the current one; a stale handler (the OLD command whose destroy/preview
+    # arrives AFTER the new command was created) must NOT touch shared state.
+
     class EditInputChanged(adsk.core.InputChangedEventHandler):
+        def __init__(self, session):
+            super().__init__(); self.session = session
         def notify(self, args):
-            if state.get("updating"):
+            if state.get("updating") or not is_current(self.session):
                 return
             try:
                 sync_mark_from_inputs()
@@ -331,16 +342,24 @@ def install(m):
                 log("edit inputChanged failed\n{}".format(m.traceback.format_exc()))
 
     class EditPreview(adsk.core.CommandEventHandler):
+        def __init__(self, session):
+            super().__init__(); self.session = session
         def notify(self, args):
+            args.isValidResult = True
+            if not is_current(self.session):
+                return
             try:
                 sync_mark_from_inputs()
                 draw_active(True)
-                args.isValidResult = True
             except Exception:
                 log("edit preview failed\n{}".format(m.traceback.format_exc()))
 
     class EditActivate(adsk.core.CommandEventHandler):
+        def __init__(self, session):
+            super().__init__(); self.session = session
         def notify(self, args):
+            if not is_current(self.session):
+                return
             try:
                 redraw_other_marks(state.get("active_id"))
                 draw_active(False)
@@ -349,7 +368,11 @@ def install(m):
                 pass
 
     class EditExecute(adsk.core.CommandEventHandler):
+        def __init__(self, session):
+            super().__init__(); self.session = session
         def notify(self, args):
+            if not is_current(self.session):
+                return
             try:
                 mark = sync_mark_from_inputs()
                 if mark is not None and mark.get("tool") in ("extrude", "fillet"):
@@ -363,40 +386,60 @@ def install(m):
                 pass
 
     class EditDestroy(adsk.core.CommandEventHandler):
+        def __init__(self, session):
+            super().__init__(); self.session = session
         def notify(self, args):
-            log("DESTROY step=start")
+            sess = self.session
+            if not is_current(sess):
+                # A newer edit session already took over (Fusion fires the new
+                # command's Created BEFORE the old one's Destroy). This is a pure
+                # handoff: touch nothing global, don't redraw or persist -- doing so
+                # would stomp the new command's state (the race we were fighting).
+                log("DESTROY gen={} stale -> no-op".format(sess.get("gen")))
+                return
+            # Genuine close of the current session (no successor edit command).
+            owned_cmd = (getattr(m, "_active_cmd", None) == "edit_existing")
+            log("DESTROY gen={} current owned_cmd={}".format(sess.get("gen"), owned_cmd))
             try:
-                mark = active_mark()
-                log("DESTROY step=active_mark tool={}".format(
-                    mark.get("tool") if mark else None))
+                mark = m._find(sess.get("mark_id"))
                 if mark is not None and mark.get("tool") in ("extrude", "fillet"):
                     try:
                         m._compute_real(mark)
                     except Exception:
                         pass
-                log("DESTROY step=post_compute")
                 m._clear(m.GROUP_PREVIEW)
-                log("DESTROY step=post_clear")
             except Exception:
                 pass
-            state["active_id"] = None
-            m._active_edit_id = None
-            state["inputs"] = None
-            state["command"] = None
-            state["meta"] = {}
-            m._inputs = None
-            m._active_cmd = None
-            try:
-                m._redraw_marks()
-                log("DESTROY step=post_redraw")
-                m._send_state()
-                log("DESTROY step=post_send")
-                if getattr(m, "_persist_state", None):
-                    m._persist_state("manipulator-close")
-                log("DESTROY step=post_persist")
-            except Exception:
-                pass
-            log("EDIT CLOSED: proposal remains unresolved")
+            # Clear ONLY the globals this session still owns -- a toolbar command
+            # (Scale/Move/...) may have grabbed them since, and we must never stomp
+            # another command's runtime state.
+            if state.get("current") is sess:
+                state["current"] = None
+            if state.get("active_id") == sess.get("mark_id"):
+                state["active_id"] = None
+            if getattr(m, "_active_edit_id", None) == sess.get("mark_id"):
+                m._active_edit_id = None
+            if state.get("command") is sess.get("command"):
+                state["command"] = None
+            if state.get("inputs") is sess.get("inputs"):
+                state["inputs"] = None
+                state["meta"] = {}
+            if m._inputs is sess.get("inputs"):
+                m._inputs = None
+            if getattr(m, "_active_cmd", None) == "edit_existing":
+                m._active_cmd = None
+            # Restore the proposed UI only on a genuine close -- if a toolbar command
+            # took over (owned_cmd False), let IT own the viewport; a full redraw
+            # here would just flash and fight it.
+            if owned_cmd:
+                try:
+                    m._redraw_marks()
+                    m._send_state()
+                    if getattr(m, "_persist_state", None):
+                        m._persist_state("manipulator-close")
+                except Exception:
+                    pass
+            log("EDIT CLOSED gen={}".format(sess.get("gen")))
 
     def fire_pending():
         # The command from the current launch now exists; release the gate and, if
@@ -420,6 +463,18 @@ def install(m):
                 if not is_editable(mark):
                     fire_pending()
                     return
+                # This command's own session -- becomes the current one. A stale
+                # Destroy/Preview from a prior command will see it is no longer
+                # current and leave this session's globals alone.
+                gen_counter[0] += 1
+                session = {
+                    "gen": gen_counter[0],
+                    "mark_id": mark["id"],
+                    "tool": mark.get("tool"),
+                    "command": args.command,
+                    "inputs": None,
+                }
+                state["current"] = session
                 state["active_id"] = mark["id"]
                 # Expose which mark is being re-edited so other layers (e.g. the
                 # fillet preview) can treat a reopened edit as "live".
@@ -429,17 +484,19 @@ def install(m):
                 args.command.isRepeatable = False
                 args.command.okButtonText = "Done adjusting"
                 setup_inputs(args.command, mark)
+                session["inputs"] = state.get("inputs")
                 # Some exact renderers (notably Fillet) read m._inputs to clamp
                 # values and keep candidate geometry synchronized.
                 m._inputs = state["inputs"]
 
-                for handler, event in (
-                    (EditInputChanged(), args.command.inputChanged),
-                    (EditPreview(), args.command.executePreview),
-                    (EditActivate(), args.command.activate),
-                    (EditExecute(), args.command.execute),
-                    (EditDestroy(), args.command.destroy),
+                for HandlerClass, event in (
+                    (EditInputChanged, args.command.inputChanged),
+                    (EditPreview, args.command.executePreview),
+                    (EditActivate, args.command.activate),
+                    (EditExecute, args.command.execute),
+                    (EditDestroy, args.command.destroy),
                 ):
+                    handler = HandlerClass(session)
                     event.add(handler)
                     m._handlers.append(handler)
                 log("EDIT OPEN mark={} tool={} native manipulator restored".format(
