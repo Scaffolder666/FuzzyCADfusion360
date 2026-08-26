@@ -75,8 +75,12 @@ def install(m):
         for mark in list(getattr(m, "_marks", None) or []):
             if mark.get("status", "open") != "open" or mark.get("tool") == "note":
                 continue
+            # Fillet never takes the comic look: it carries its own translucent
+            # preview from editing right through to Accept, so its appearance is
+            # constant and only the interactivity (the radius arrow) changes. Any
+            # other tool just drops the comic while it is actively being edited.
             try:
-                if m._mark_phase(mark) == "editing":
+                if mark.get("tool") == "fillet" or m._mark_phase(mark) == "editing":
                     continue
             except Exception:
                 pass
