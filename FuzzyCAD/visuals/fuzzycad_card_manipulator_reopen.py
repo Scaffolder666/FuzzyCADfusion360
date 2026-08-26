@@ -46,16 +46,17 @@ def install(m):
         return session is not None and session is state.get("current")
 
     def log(msg):
-        # Also append to a file with an immediate flush so the last step survives a
-        # hard crash (the Text Commands panel is lost on a force-quit). File lives
-        # next to the user's temp dir; harmless if it can't be written.
-        try:
-            import os, tempfile
-            with open(os.path.join(tempfile.gettempdir(), "fuzzycad_reopen.log"), "a") as fh:
-                fh.write("[REOPEN] " + str(msg) + "\n")
-                fh.flush()
-        except Exception:
-            pass
+        # Crash-survival file log -- DEV only. It flushes to disk per line so the
+        # last step survives a hard crash, but that synchronous I/O has no place on
+        # the UI thread in the research build, so it is gated on DEV_MODE.
+        if getattr(m, "DEV_MODE", False):
+            try:
+                import os, tempfile
+                with open(os.path.join(tempfile.gettempdir(), "fuzzycad_reopen.log"), "a") as fh:
+                    fh.write("[REOPEN] " + str(msg) + "\n")
+                    fh.flush()
+            except Exception:
+                pass
         try:
             fn = getattr(m, "_debug", None)
             if fn:
