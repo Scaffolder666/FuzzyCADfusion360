@@ -201,12 +201,128 @@ def install(m):
                    (p0[2] + p1[2]) * 0.5)
             add_dim_text(group, mid, "{} {:.1f} mm".format(label, length * 10.0), seed + 3)
 
+    # ---- rough-shape L/W/H: automatic, oriented, always on -----------------
+    def oriented_box(body):
+        """Oriented bounding box aligned to the body's own axes.
+
+        getOrientedBoundingBox fits the box to the orientation we hand it, so we
+        derive that orientation from the body's largest planar face (its normal
+        plus an in-plane edge). Falls back to world axes for a face-less lump.
+        """
+        try:
+            app = m._app or adsk.core.Application.get()
+            mgr = getattr(app, "measureManager", None)
+            if mgr is None:
+                return None
+            l_dir = w_dir = None
+            try:
+                best, best_area = None, -1.0
+                for f in body.faces:
+                    g = f.geometry
+                    if isinstance(g, adsk.core.Plane) and f.area > best_area:
+                        best, best_area = f, f.area
+                if best is not None:
+                    n = best.geometry.normal
+                    for e in best.edges:
+                        sp = e.startVertex.geometry
+                        ep = e.endVertex.geometry
+                        d = adsk.core.Vector3D.create(
+                            ep.x - sp.x, ep.y - sp.y, ep.z - sp.z)
+                        if d.length > 1e-6:
+                            d.normalize()
+                            w = n.crossProduct(d)
+                            if w.length > 1e-6:
+                                w.normalize()
+                                l_dir, w_dir = d, w
+                                break
+            except Exception:
+                pass
+            if l_dir is None:
+                l_dir = adsk.core.Vector3D.create(1.0, 0.0, 0.0)
+                w_dir = adsk.core.Vector3D.create(0.0, 1.0, 0.0)
+            return mgr.getOrientedBoundingBox(body, l_dir, w_dir)
+        except Exception as exc:
+            log("oriented bbox failed: {}".format(exc))
+            return None
+
+    def draw_rough_dims(group, mark):
+        # Rough shapes are all about intended size, so show L/W/H automatically
+        # for the whole (open) body -- no manipulation and no manual picking.
+        if mark.get("tool") != "rough" or mark.get("status", "open") != "open":
+            return
+        body = m._body.get(mark["id"])
+        if body is None:
+            return
+        obb = oriented_box(body)
+        if obb is None:
+            return
+
+        c = obb.centerPoint
+        L, W, H = obb.lengthDirection, obb.widthDirection, obb.heightDirection
+        hl, hw, hh = obb.length * 0.5, obb.width * 0.5, obb.height * 0.5
+
+        def at(sx, sy, sz):
+            return (c.x + sx * hl * L.x + sy * hw * W.x + sz * hh * H.x,
+                    c.y + sx * hl * L.y + sy * hw * W.y + sz * hh * H.y,
+                    c.z + sx * hl * L.z + sy * hw * W.z + sz * hh * H.z)
+
+        # Label the three edges meeting at the corner nearest the camera, so the
+        # values sit on the visible front of the body rather than behind it.
+        try:
+            eye = (m._app or adsk.core.Application.get()).activeViewport.camera.eye
+        except Exception:
+            eye = c
+        best_sgn, best_d = (1, 1, 1), None
+        for sx in (1, -1):
+            for sy in (1, -1):
+                for sz in (1, -1):
+                    p = at(sx, sy, sz)
+                    d = (p[0] - eye.x) ** 2 + (p[1] - eye.y) ** 2 + (p[2] - eye.z) ** 2
+                    if best_d is None or d < best_d:
+                        best_d, best_sgn = d, (sx, sy, sz)
+        sx, sy, sz = best_sgn
+
+        size = max(mark.get("size", 3.0), 0.1)
+        off = max(0.15, min(size * 0.06, 0.8))
+
+        def place(mid, out, value_cm, seed):
+            ol = (out[0] ** 2 + out[1] ** 2 + out[2] ** 2) ** 0.5 or 1.0
+            p = (mid[0] + out[0] / ol * off,
+                 mid[1] + out[1] / ol * off,
+                 mid[2] + out[2] / ol * off)
+            add_dim_text(group, p, "{:.1f} mm".format(value_cm * 10.0), seed)
+
+        base = mark["id"] * 4700
+        # length edge: runs along L, fixed at the near-corner's W/H side
+        if obb.length > 1e-4:
+            mid = (c.x + sy * hw * W.x + sz * hh * H.x,
+                   c.y + sy * hw * W.y + sz * hh * H.y,
+                   c.z + sy * hw * W.z + sz * hh * H.z)
+            out = (sy * W.x + sz * H.x, sy * W.y + sz * H.y, sy * W.z + sz * H.z)
+            place(mid, out, obb.length, base + 1)
+        if obb.width > 1e-4:
+            mid = (c.x + sx * hl * L.x + sz * hh * H.x,
+                   c.y + sx * hl * L.y + sz * hh * H.y,
+                   c.z + sx * hl * L.z + sz * hh * H.z)
+            out = (sx * L.x + sz * H.x, sx * L.y + sz * H.y, sx * L.z + sz * H.z)
+            place(mid, out, obb.width, base + 2)
+        if obb.height > 1e-4:
+            mid = (c.x + sx * hl * L.x + sy * hw * W.x,
+                   c.y + sx * hl * L.y + sy * hw * W.y,
+                   c.z + sx * hl * L.z + sy * hw * W.z)
+            out = (sx * L.x + sy * W.x, sx * L.y + sy * W.y, sx * L.z + sy * W.z)
+            place(mid, out, obb.height, base + 3)
+
     def draw_one(group, mark):
         old_draw_one(group, mark)
         try:
             draw_size_frame(group, mark)
         except Exception as exc:
             log("size frame failed mark={}: {}".format(mark.get("id"), exc))
+        try:
+            draw_rough_dims(group, mark)
+        except Exception as exc:
+            log("rough dims failed mark={}: {}".format(mark.get("id"), exc))
 
     m._draw_one = draw_one
 
