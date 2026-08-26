@@ -144,7 +144,7 @@ def install(m):
             hi = lo
         return max(lo, min(value, hi))
 
-    def raw_stroke(group, pts, rgb, amp, seed, weight=1, strokes=1):
+    def raw_stroke(group, pts, rgb, amp, seed, weight=1, strokes=1, depth=None):
         n = len(pts)
         if n < 2:
             return
@@ -183,16 +183,23 @@ def install(m):
             line = group.addLines(coords, list(range(n)), True)
             line.color = color_obj
             line.weight = max(0.1, float(weight if weight is not None else 1.0))
+            # A depth priority lets a stroke draw over the model faces that would
+            # otherwise occlude it (e.g. a fillet edge tucked behind its own face).
+            if depth is not None:
+                try:
+                    line.depthPriority = int(depth)
+                except Exception:
+                    pass
 
     def visual_stroke(group, pts, role, seed, size=3.0, amp=None,
-                      rgb=None, weight=None, strokes=None):
+                      rgb=None, weight=None, strokes=None, depth=None):
         st = style(role)
         actual_rgb = tuple(rgb if rgb is not None else st.get("rgb", (86, 90, 94)))
         actual_weight = float(weight if weight is not None else st.get("weight", 1.0))
         actual_strokes = int(strokes if strokes is not None else st.get("strokes", 1))
         actual_amp = role_amp(role, size) if amp is None else max(0.0, float(amp))
         return raw_stroke(group, pts, actual_rgb, actual_amp, seed,
-                          weight=actual_weight, strokes=actual_strokes)
+                          weight=actual_weight, strokes=actual_strokes, depth=depth)
 
     def legacy_role(rgb, weight):
         key = tuple(int(x) for x in rgb)

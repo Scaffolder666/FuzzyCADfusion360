@@ -147,8 +147,10 @@ def install(m):
         g = m._geom.get(mark.get("id"), {})
         for i, poly in enumerate(g.get("fillet_edges", []) or []):
             try:
+                # depth above the coloured surface (5) so the edge stays visible
+                # even when a face sits in front of the edge being filleted.
                 m._visual_stroke(group, poly, "affected_boundary",
-                                 mark.get("id", 1) * 19001 + i, size=size)
+                                 mark.get("id", 1) * 19001 + i, size=size, depth=12)
             except Exception:
                 m._sketchy(group, poly, (245, 118, 24), 0.0,
                            mark.get("id", 1) * 19001 + i,
