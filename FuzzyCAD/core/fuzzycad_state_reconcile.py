@@ -3,6 +3,10 @@
 Lifecycle policy is not defined here. The central visual authority supplies both
 comic visibility and source-body opacity targets. This module only repairs drift
 and clears stale ephemeral interaction graphics.
+
+Ordinary redraw is intentionally targeted: it re-applies authoritative visual
+state but does NOT scan every body in every component. The full-document orphan
+opacity sweep is a recovery operation reserved for startup and explicit Repair.
 """
 
 
@@ -84,12 +88,12 @@ def install(m):
         return any(abs(op - v) < 0.025 for v in vals)
 
     def reclaim_orphan_visual_opacity(design):
-        """Repair stale display opacity left by a dead/rebuilt graphics session.
+        """Full-document recovery for stale FuzzyCAD display opacity.
 
+        This is intentionally NOT part of ordinary redraw. It walks every body in
+        every component, so it belongs to startup recovery and Inspector Repair.
         Fillet/Hole Editing remain in desired_visual_tokens, so their intentional
-        0.50 source body is never reclaimed. Once a mark is accepted/rejected (or
-        an interrupted edit no longer owns the body), both the comic opacity and
-        the 0.50 Editing opacity are eligible for restoration.
+        0.50 source body is never reclaimed.
         """
         want = desired_visual_tokens()
         restore = getattr(m, "_restore_orphan_visual_body", None)
@@ -101,9 +105,6 @@ def install(m):
                 op = float(body.opacity)
             except Exception:
                 continue
-            # The opacity runtime has the persisted/original value when available.
-            # Call it for any known FuzzyCAD visual opacity; legacy fallback there
-            # restores to 1.0 only when no original record exists.
             if known_visual_opacity(op):
                 if restore is not None:
                     try:
@@ -116,13 +117,13 @@ def install(m):
                 except Exception:
                     pass
 
-    def reconcile():
+    def reconcile(full_scan=False):
         design = m._design()
         if design is None:
             return
 
-        # First recover any original opacity records left by a previous interrupted
-        # session, then apply today's authoritative visual target.
+        # Token-based crash recovery and authoritative opacity sync are bounded by
+        # FuzzyCAD-owned records/marks, so they are safe on an ordinary redraw.
         try:
             recover = getattr(m, "_recover_visual_opacity", None)
             if recover is not None:
@@ -138,15 +139,20 @@ def install(m):
 
         if not fuzzy_command_running():
             sweep_ephemeral()
-        try:
-            reclaim_orphan_visual_opacity(design)
-        except Exception:
-            pass
+
+        if full_scan:
+            try:
+                reclaim_orphan_visual_opacity(design)
+            except Exception:
+                pass
+
+    m._reconcile_viewport = reconcile
+    m._reclaim_orphan_visual_opacity = reclaim_orphan_visual_opacity
 
     def redraw(*args, **kwargs):
         result = old_redraw(*args, **kwargs)
         try:
-            reconcile()
+            reconcile(False)
         except Exception:
             pass
         try:
@@ -160,7 +166,8 @@ def install(m):
     def run(context):
         result = old_run(context)
         try:
-            reconcile()
+            # Startup is the right place for the expensive legacy/orphan sweep.
+            reconcile(True)
             m._app.activeViewport.refresh()
         except Exception:
             pass
