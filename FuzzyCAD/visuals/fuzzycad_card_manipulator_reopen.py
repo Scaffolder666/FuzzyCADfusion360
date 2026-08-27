@@ -654,28 +654,12 @@ def install(m):
             except Exception:
                 pass
 
-            # Accept / Reject from the sidebar on the card that is CURRENTLY open
-            # for edit: resolve it first, then end the now-orphaned edit command so
-            # its left-rail Confirm card and dangling manipulator go away. Without
-            # this the edit command stayed active after Accept and the stage rail
-            # lingered. Terminating goes through the proven-safe deferred path
-            # (fireCustomEvent), never a direct terminateActiveCommand from here.
-            if action in ("accept", "reject"):
-                try:
-                    tid = int(data.get("id"))
-                except Exception:
-                    tid = None
-                if tid is not None and tid == state.get("active_id"):
-                    self._delegate.notify(args)
-                    try:
-                        edit_stage_clear()
-                    except Exception:
-                        pass
-                    try:
-                        m._app.fireCustomEvent(m.LAUNCH_EVENT_ID, "")
-                    except Exception:
-                        pass
-                    return
+            # Accept / Reject on the card being edited is owned by
+            # core/fuzzycad_safe_confirm.py, which wraps this handler and finishes
+            # the native edit through Command.doExecute(True) before resolving the
+            # mark. The earlier version here fired the legacy terminateActiveCommand
+            # path, which ARCHITECTURE.md §5 forbids (it hard-crashed Fusion); it has
+            # been removed so that owner is the single route.
 
             if action == "editManipulator":
                 try:
