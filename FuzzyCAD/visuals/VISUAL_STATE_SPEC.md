@@ -17,7 +17,7 @@ This file is the design contract for viewport uncertainty. `fuzzycad_uncertainty
 - **Orange** = operation locus/direction/control only.
 - **Editing source opacity** is a tool variation. `original` means preserve the body's original Fusion opacity.
 - **Initial Editing and Reopen Editing use the same visual policy.**
-- **Confirm must switch visual state immediately; it must not wait for a new geometry sample or command destroy.**
+- **Confirm must switch visual state immediately; it must not wait for a new geometry sample or a later unrelated event.**
 
 ## Tool matrix
 
@@ -33,6 +33,34 @@ This file is the design contract for viewport uncertainty. `fuzzycad_uncertainty
 | Hole | **0.50** | OFF | translucent cut volume + diameter/depth/placement cue + manipulators | comic baseline | **same as default; no extra detail** |
 | Rough Shape | comic-owned | **ON** | comic body remains visible while the rough mark is active | comic baseline | **same as default; no extra detail** |
 | Compare / Conflict | original | OFF while editing an alternative | active alternative editing presentation | comic baseline + Conflict badge | baseline remains + alternatives, only on explicit compare/focus (not hover) |
+
+## Redraw transaction contract
+
+`_redraw_marks()` is a **global state-transition transaction**, not a frame renderer. It may rebuild persistent mark layers, synchronize opacity/comic state, reconcile the viewport, and refresh Fusion. Do not call it merely because a manipulator produced another frame.
+
+### Continuous Editing
+
+- Opening Editing may build the active preview once and transition the source body from Proposed presentation to Editing presentation.
+- During a Move / Rotate / uniform Scale drag, reuse the active preview graphics and update only their transform. Do not clear/rebuild all persistent marks.
+- Other tools may update their **active preview group** when geometry truly changes, but they still must not redraw unrelated persistent marks on every frame.
+- `inputChanged` and `executePreview` may both fire for the same value. They are compatibility event sources, not permission to render the same value twice.
+- Do not write source opacity repeatedly when its target did not change.
+- Do not call `activeViewport.refresh()` from every drag frame. Fusion's command preview cycle already refreshes live CustomGraphics.
+
+### Discrete transitions
+
+A global redraw is appropriate when persistent visual meaning changes, including:
+
+- **Confirm -> Proposed**: remove the Editing preview and show the Proposed comic baseline immediately.
+- **Accept / Reject -> Resolved**: remove uncertainty visuals and restore the original source presentation; Accept may first commit real geometry.
+- **Explicit Proposed reveal/focus**: show or collapse persistent proposal detail while keeping the comic baseline.
+- **Startup / explicit Repair**: reconstruct authoritative persistent state and recover drift.
+
+A numeric edit from the sidebar may cause **at most one** persistent redraw after the new value has been applied. Never redraw once to reveal the old value and then redraw again for the new value. Entering `editManipulator` must not first redraw the Proposed scene immediately before the Editing command performs its own transition.
+
+### Recovery work is not ordinary redraw work
+
+A normal redraw may synchronize only FuzzyCAD-owned marks/tokens. A scan of `design.allComponents` / every BRep body is an expensive recovery operation and belongs only to startup or explicit Inspector Repair.
 
 ## Animation ownership
 
