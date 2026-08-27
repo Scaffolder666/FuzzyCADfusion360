@@ -1,39 +1,53 @@
-"""Authoritative visual handoff for FuzzyCAD lifecycle transitions.
+"""Authoritative visual-state controller for FuzzyCAD.
 
-`fuzzycad_uncertainty_visual.py` decides what each phase means. This module owns
-only the *handoff* between those derived states. In particular, leaving Editing
-for Proposed is a discrete transaction, not a frame update:
+This is the single persistent-render entry point.
 
-    clear temporary Editing graphics
-    -> reassert the centrally-derived source opacity
-    -> rebuild the persistent comic baseline for the affected body
-    -> one viewport refresh
+The system used to let many wrappers independently react to `_redraw_marks()`:
+comic, opacity, silhouette, reconciliation, and proposal detail each performed
+part of the transition.  That made a logically valid state such as Proposed end
+up visually half-Editing (for example: 0.50 opacity with no comic boundary).
 
-Fusion can mutate display state while a native command is being torn down. The
-opacity runtime intentionally caches values to avoid per-drag writes, and the
-comic renderer intentionally reuses persistent groups. Those optimizations are
-correct during Editing, but they must not let a command teardown leave a
-half-Editing / half-Proposed viewport.
+The runtime contract is now deliberately simple:
 
-This module stores only Python ids/tokens/flags. It never retains Fusion native
-wrappers across events.
+    mark + phase + reveal state
+        -> `_visual_state(mark)`        (desired switches; no drawing)
+        -> `_visual_render()`           (apply all persistent switches together)
+
+`_visual_render()` owns one authoritative transaction:
+
+    1. clear idle Editing-only graphics;
+    2. rebuild the persistent mark/detail group from the desired state;
+    3. apply source-body opacity from the desired state;
+    4. rebuild every currently-visible comic body as one complete fill+boundary;
+    5. refresh the visibility-filtered silhouette layer;
+    6. refresh the viewport once.
+
+This intentionally favors determinism over a cheap persistent redraw. Global
+redraws are lifecycle/reveal events, not drag frames. Move/Rotate/Scale drag
+continues to update its already-created preview by transform only; slow tool
+previews continue to own their temporary preview group.  Therefore rebuilding a
+comic body here is acceptable and removes the fragile assumption that a Fusion
+CustomGraphics group which still exists is necessarily complete.
+
+No Fusion native wrapper is retained in controller state. Only ids, booleans,
+and derived policy snapshots are stored.
 """
 
 
 def install(m):
-    old_sync_opacity = getattr(m, "_sync_visual_opacity", None)
-    old_sync_comic = getattr(m, "_sync_comic_uncertainty", None)
-    old_repair = getattr(m, "_repair_comic_integrity", None)
-    CurrentFuzzyDestroy = getattr(m, "FuzzyDestroy", None)
-
-    if old_sync_opacity is None or old_sync_comic is None:
-        return
+    # All layer services are installed before this module in FuzzyCAD.py.
+    # Keep the previous redraw only as an emergency fallback; normal runtime
+    # rendering never delegates to the historical wrapper chain.
+    previous_redraw = getattr(m, "_redraw_marks", None)
 
     state = {
-        "comic_tokens": set(),
-        "opacity_targets": {},
-        "syncing_comic": False,
+        "rendering": False,
+        "pending": False,
+        "generation": 0,
+        "last_snapshot": {},
+        "last_reason": None,
     }
+    m._visual_controller_state = state
 
     def trace(event, detail=""):
         try:
@@ -45,269 +59,294 @@ def install(m):
             pass
         try:
             (m._app or m.adsk.core.Application.get()).log(
-                "[FuzzyCAD VISUAL TRANSITION] {} {}".format(event, detail))
+                "[FuzzyCAD VISUAL CONTROLLER] {} {}".format(event, detail))
         except Exception:
             pass
 
-    def token_of(body):
-        try:
-            return str(m._visual_subject_token(body))
-        except Exception:
-            try:
-                return str(body.entityToken)
-            except Exception:
-                return None
+    def marks():
+        return list(getattr(m, "_marks", None) or [])
 
-    def comic_rows():
+    def desired(mark):
         try:
-            rows, retained = m._visual_comic_subject_rows()
-            return list(rows or []), set(retained or [])
+            return dict(m._visual_state(mark) or {})
         except Exception:
-            return [], set()
+            return {
+                "phase": "proposed" if mark and mark.get("status", "open") == "open" else "resolved",
+                "is_open": bool(mark and mark.get("status", "open") == "open"),
+                "show_badge": bool(mark and mark.get("status", "open") == "open"),
+                "show_live_preview": False,
+            }
 
-    def opacity_rows():
+    def snapshot():
+        """Pure-Python desired visual state, keyed by mark id."""
         out = {}
-        try:
-            for tok, body, target in m._visual_opacity_subject_rows():
-                if tok and body is not None and target is not None:
-                    out[str(tok)] = (body, float(target))
-        except Exception:
-            pass
+        for mark in marks():
+            try:
+                mid = int(mark.get("id"))
+            except Exception:
+                continue
+            vs = desired(mark)
+            # Store only the state switches useful for reasoning/debugging.
+            out[mid] = {
+                "phase": vs.get("phase"),
+                "variant": vs.get("variant"),
+                "show_comic_fill": bool(vs.get("show_comic_fill")),
+                "show_sketch_boundary": bool(vs.get("show_sketch_boundary")),
+                "show_badge": bool(vs.get("show_badge")),
+                "show_persistent_detail": bool(vs.get("show_persistent_detail")),
+                "show_live_preview": bool(vs.get("show_live_preview")),
+                "show_manipulator": bool(vs.get("show_manipulator")),
+                "source_opacity": vs.get("source_opacity"),
+            }
         return out
 
-    def mark_fuzzy_dirty(tokens, reason):
+    m._visual_snapshot = snapshot
+
+    def active_command_running():
+        return bool(getattr(m, "_active_cmd", None))
+
+    def clear_idle_editing_graphics():
+        """Remove only temporary Editing/replay groups when no tool owns them.
+
+        Do not clear dependency/follow highlight groups here; those can be
+        intentionally visible while a post-accept prompt is open.
+        """
+        if active_command_running():
+            return False
         changed = False
-        clean_tokens = set(str(t) for t in (tokens or []) if t)
-        for tok in clean_tokens:
+        gids = [
+            getattr(m, "GROUP_PREVIEW", "FuzzyCAD_Preview"),
+            "FuzzyCAD_HoverAnimation",
+            "FuzzyCAD_HoverDirectionArrow",
+            "FuzzyCAD_OperationHover",
+            "FuzzyCAD_CompareConnectorPreview",
+        ]
+        for gid in gids:
+            try:
+                # `_clear` is idempotent; no native wrapper is retained.
+                m._clear(gid)
+                changed = True
+            except Exception:
+                pass
+        return changed
+
+    def draw_persistent_marks():
+        """Apply badge/detail switches into the one persistent mark group."""
+        m._clear(m.GROUP_MARKS)
+        group = m._group(m.GROUP_MARKS)
+        if group is None:
+            return
+
+        drawer = getattr(m, "_draw_persistent_mark", None) or getattr(m, "_draw_one", None)
+        if drawer is None:
+            return
+
+        geom = getattr(m, "_geom", {}) or {}
+        for mark in marks():
+            mid = mark.get("id")
+            # Preserve the original renderer's safety rule: geometry-bearing marks
+            # are drawn only once their geometry record exists.
+            if mid not in geom:
+                continue
+
+            vs = desired(mark)
+            if not vs.get("is_open", True):
+                continue
+
+            # An active edit owns GROUP_PREVIEW. Drawing the same live proposal in
+            # GROUP_MARKS would duplicate its outline/cue. Rough is the deliberate
+            # exception: it has no live preview and keeps the comic state while
+            # Editing, so it remains a persistent mark.
+            if vs.get("phase") == "editing" and vs.get("show_live_preview"):
+                continue
+
+            try:
+                drawer(group, mark)
+            except Exception:
+                trace("PERSISTENT_DRAW_EXCEPTION", "id={} tool={}".format(
+                    mid, mark.get("tool")))
+
+    def current_comic_tokens():
+        try:
+            rows, _retained = m._visual_comic_subject_rows()
+            return [(str(tok), body) for tok, body in (rows or []) if tok and body is not None]
+        except Exception:
+            return []
+
+    def arm_complete_comic_rebuild():
+        """Make the next comic sync rebuild each visible body completely.
+
+        A global render is a discrete state transition, never a drag frame.  We
+        deliberately do not reuse the previous comic group's signature here.
+        Fill and sketch boundary are therefore created as one output every time a
+        state transition asks for the Proposed comic baseline.
+        """
+        tokens = []
+        for tok, _body in current_comic_tokens():
             try:
                 entry = m._runtime_render_entry(tok, "fuzzy", True)
                 entry["dirty"] = True
                 entry["signature"] = None
-                changed = True
+                tokens.append(tok)
             except Exception:
                 pass
-        if changed:
-            trace(
-                "COMIC_REBUILD_ARMED",
-                "reason={} tokens={}".format(reason, len(clean_tokens)))
-        return changed
+        return tokens
 
-    def reassert_opacity(tokens=None, reason="transition"):
-        """Write authoritative opacity once, outside live drag rendering.
+    def apply_opacity():
+        """Apply the central body's source-opacity switch and reassert reality.
 
-        opacity_runtime deliberately skips redundant writes using a Python cache.
-        Native command teardown can nevertheless disturb Fusion's display state.
-        A lifecycle handoff is rare and safe to reassert once.
+        opacity_runtime keeps an `applied` cache so drag frames never rewrite the
+        same Fusion opacity. A native command teardown can nevertheless change the
+        *actual* display opacity behind that cache. On this non-frame transaction
+        we compare the live value and reassert the desired one if needed.
         """
-        wanted = opacity_rows()
-        selected = set(str(t) for t in (tokens or []) if t)
-        if not selected:
-            selected = set(wanted.keys())
+        try:
+            recover = getattr(m, "_recover_visual_opacity", None)
+            if recover is not None:
+                recover()
+        except Exception:
+            pass
 
-        wrote = 0
-        for tok in selected:
-            row = wanted.get(tok)
-            if row is None:
+        sync = getattr(m, "_sync_visual_opacity", None)
+        if sync is not None:
+            try:
+                sync()
+            except Exception:
+                trace("OPACITY_SYNC_EXCEPTION", "")
+
+        # Reassert only bodies that currently have an explicit non-original target.
+        try:
+            rows = list(m._visual_opacity_subject_rows() or [])
+        except Exception:
+            rows = []
+        for tok, body, target in rows:
+            if body is None or target is None:
                 continue
-            body, target = row
             try:
-                if not bool(body.isValid):
-                    continue
-            except Exception:
-                pass
-            try:
+                wanted = float(target)
                 actual = float(body.opacity)
-            except Exception:
-                actual = None
-            try:
-                # On an explicit transition write once even if the numeric value
-                # already matches. This also refreshes Fusion's display-side state.
-                body.opacity = float(target)
-                wrote += 1
-                if actual is None or abs(actual - float(target)) > 1e-4:
-                    trace(
-                        "OPACITY_REASSERT",
-                        "reason={} token={} actual={} target={}".format(
-                            reason, tok, actual, target))
+                if abs(actual - wanted) > 0.005:
+                    body.opacity = wanted
+                    trace("OPACITY_REASSERT", "token={} actual={} wanted={}".format(
+                        tok, round(actual, 4), round(wanted, 4)))
             except Exception:
                 pass
-        return wrote
 
-    def sync_comic(force_tokens=None, reason="sync"):
-        rows, _retained = comic_rows()
-        visible = set(str(tok) for tok, _body in rows if tok)
-        entering = visible - set(state.get("comic_tokens") or set())
-        forced = set(str(t) for t in (force_tokens or []) if t)
-        dirty = (entering | forced) & visible
-
-        if dirty:
-            mark_fuzzy_dirty(dirty, reason)
-
-        state["syncing_comic"] = True
+    def apply_comic():
+        sync = getattr(m, "_sync_comic_uncertainty", None)
+        if sync is None:
+            return False
         try:
-            result = old_sync_comic()
+            return bool(sync())
+        except Exception:
+            trace("COMIC_SYNC_EXCEPTION", "")
+            return False
+
+    def apply_silhouette():
+        fn = getattr(m, "_redraw_view_silhouettes", None)
+        if fn is None:
+            return
+        try:
+            # silhouette_visibility has already replaced this hook with the
+            # reveal-filtered implementation, so this remains policy-correct.
+            fn(False)
+        except Exception:
+            pass
+
+    def refresh_viewport():
+        try:
+            if m._app and m._app.activeViewport:
+                m._app.activeViewport.refresh()
+        except Exception:
+            pass
+
+    def render_once(reason):
+        state["generation"] += 1
+        generation = state["generation"]
+
+        snap = snapshot()
+        phase_counts = {}
+        for row in snap.values():
+            ph = str(row.get("phase"))
+            phase_counts[ph] = phase_counts.get(ph, 0) + 1
+
+        trace("RENDER_BEGIN", "gen={} reason={} phases={}".format(
+            generation, reason, phase_counts))
+
+        # One state input -> one persistent output transaction.
+        clear_idle_editing_graphics()
+        draw_persistent_marks()
+        comic_tokens = arm_complete_comic_rebuild()
+        apply_opacity()
+        comic_changed = apply_comic()
+        apply_silhouette()
+        refresh_viewport()
+
+        state["last_snapshot"] = snap
+        state["last_reason"] = str(reason)
+        trace("RENDER_DONE", "gen={} comics={} comic_changed={}".format(
+            generation, len(comic_tokens), comic_changed))
+        return snap
+
+    def render(*args, **kwargs):
+        """Authoritative persistent render.
+
+        Compatibility: callers may still invoke `_redraw_marks()` with arbitrary
+        positional arguments. They are ignored because desired state is derived
+        from the current marks/phase, not from caller-specific redraw flags.
+        """
+        reason = kwargs.pop("reason", None) or "redraw"
+        if state["rendering"]:
+            # Coalesce nested redraw requests into one extra pass. This can happen
+            # when a layer notices a stale cache while the controller is applying
+            # the same desired state.
+            state["pending"] = True
+            return state.get("last_snapshot")
+
+        state["rendering"] = True
+        try:
+            result = None
+            passes = 0
+            while True:
+                state["pending"] = False
+                result = render_once(reason if passes == 0 else "coalesced")
+                passes += 1
+                if not state["pending"] or passes >= 2:
+                    break
+            return result
+        except Exception:
+            trace("RENDER_EXCEPTION", "")
+            # Keep a last-resort escape hatch while this architecture lands. The
+            # fallback is not part of normal control flow and is intentionally not
+            # exposed as another public renderer.
+            try:
+                if previous_redraw is not None:
+                    return previous_redraw()
+            except Exception:
+                return None
         finally:
-            state["syncing_comic"] = False
+            state["rendering"] = False
 
-        rows_after, _ = comic_rows()
-        state["comic_tokens"] = set(str(tok) for tok, _body in rows_after if tok)
-        return result
+    def render_mark(mid, reason="mark-state-change"):
+        """Public semantic entry point for lifecycle/reveal owners.
 
-    # Install comic wrapper first. opacity_runtime calls the comic service
-    # dynamically on body-level phase changes, so it should see this wrapper.
-    m._sync_comic_uncertainty = sync_comic
-
-    def sync_opacity(force_tokens=None, reason="sync"):
-        before = dict(state.get("opacity_targets") or {})
-        result = old_sync_opacity()
-
-        wanted = opacity_rows()
-        after = {tok: round(float(target), 6)
-                 for tok, (_body, target) in wanted.items()}
-        changed = set(tok for tok, target in after.items()
-                      if before.get(tok) != target)
-        forced = set(str(t) for t in (force_tokens or []) if t)
-
-        if changed or forced:
-            reassert_opacity(changed | forced, reason)
-
-        state["opacity_targets"] = after
-        return result
-
-    m._sync_visual_opacity = sync_opacity
-
-    def prepare_visual_exit(mid=None, reason="finish"):
-        """Clear Editing-only layers before a native command hands off."""
+        Rendering remains a whole persistent transaction because GROUP_MARKS is
+        still a single legacy group. Comic geometry itself is targeted per body;
+        once GROUP_MARKS also moves to per-mark groups this function can become a
+        true per-mark diff without changing any caller.
+        """
         try:
-            cancel = getattr(m, "_animation_cancel", None)
-            if cancel is not None:
-                cancel("visual-transition:" + str(reason), refresh=False)
+            mid = int(mid) if mid is not None else None
         except Exception:
-            pass
-        try:
-            clear = getattr(m, "_visual_clear_revealed", None)
-            if clear is not None:
-                clear(mid, hover_only=False)
-        except Exception:
-            pass
-        try:
-            m._clear(m.GROUP_PREVIEW)
-        except Exception:
-            pass
+            mid = None
+        return render(reason="{}:{}".format(reason, mid))
 
-    def subject_tokens(mark):
-        out = []
-        seen = set()
-        try:
-            bodies = m._visual_subject_bodies(mark)
-        except Exception:
-            bodies = []
-        for body in bodies or []:
-            tok = token_of(body)
-            if tok and tok not in seen:
-                seen.add(tok)
-                out.append(tok)
-        return out
+    m._visual_render = render
+    m._visual_render_mark = render_mark
 
-    def force_proposed_visual(mid, reason="confirm", refresh=True):
-        """Establish one open mark's complete Proposed baseline immediately."""
-        try:
-            mark = m._find(mid)
-        except Exception:
-            mark = None
-        if mark is None:
-            return False
-        try:
-            if m._mark_phase(mark) != "proposed":
-                return False
-        except Exception:
-            return False
+    # IMPORTANT: from this point onward `_redraw_marks` means exactly one thing:
+    # apply the complete desired persistent visual state. Historical redraw
+    # wrappers captured earlier remain implementation history, not runtime owners.
+    m._redraw_marks = render
 
-        tokens = subject_tokens(mark)
-        prepare_visual_exit(mid, reason)
-        mark_fuzzy_dirty(tokens, reason)
-
-        try:
-            sync_opacity(tokens, reason)
-        except Exception:
-            pass
-        try:
-            # If opacity_runtime already synchronized comic on its phase change,
-            # this is a cheap no-op. Otherwise the entering-token detector performs
-            # the rebuild now. Do not force-dirty twice.
-            sync_comic(None, reason)
-        except Exception:
-            pass
-
-        # Integrity remains a fallback after the authoritative rebuild.
-        if old_repair is not None:
-            try:
-                old_repair("transition:" + str(reason))
-            except Exception:
-                pass
-
-        if refresh:
-            try:
-                if m._app and m._app.activeViewport:
-                    m._app.activeViewport.refresh()
-            except Exception:
-                pass
-
-        trace(
-            "PROPOSED_READY",
-            "reason={} id={} tool={} tokens={}".format(
-                reason, mid, mark.get("tool"), len(tokens)))
-        return True
-
-    m._prepare_visual_exit = prepare_visual_exit
-    m._force_proposed_visual = force_proposed_visual
-    m._force_visual_opacity = reassert_opacity
-    m._force_comic_sync = lambda tokens=None, reason="force": sync_comic(tokens, reason)
-
-    # The normal toolbar command has its own FuzzyDestroy path (separate from the
-    # reopened-card EditDestroy). Capture which marks were Editing before Destroy,
-    # let the existing lifecycle finish, then establish Proposed only for those
-    # marks that actually transitioned. This is targeted: no second global redraw.
-    if CurrentFuzzyDestroy is not None:
-        class FuzzyDestroy(CurrentFuzzyDestroy):
-            def notify(self, args):
-                editing = []
-                for mark in list(getattr(m, "_marks", None) or []):
-                    try:
-                        if m._mark_phase(mark) == "editing":
-                            editing.append(mark.get("id"))
-                    except Exception:
-                        pass
-
-                result = super().notify(args)
-
-                changed = False
-                for mid in editing:
-                    try:
-                        changed = force_proposed_visual(
-                            mid, "toolbar-destroy", refresh=False) or changed
-                    except Exception:
-                        pass
-                if changed:
-                    try:
-                        if m._app and m._app.activeViewport:
-                            m._app.activeViewport.refresh()
-                    except Exception:
-                        pass
-                return result
-
-        m.FuzzyDestroy = FuzzyDestroy
-
-    # Seed signatures without touching graphics. Future syncs can then identify
-    # real phase transitions rather than treating the whole existing document as
-    # newly Proposed.
-    rows, _ = comic_rows()
-    state["comic_tokens"] = set(str(tok) for tok, _body in rows if tok)
-    state["opacity_targets"] = {
-        tok: round(float(target), 6)
-        for tok, (_body, target) in opacity_rows().items()
-    }
-
-    trace(
-        "VISUAL_TRANSITION_READY",
-        "Editing->Proposed is one targeted lifecycle handoff")
+    trace("CONTROLLER_READY", "one state -> one persistent render transaction")
