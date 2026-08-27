@@ -5,6 +5,11 @@ lifecycle boundaries that are useful when Fusion exits before Python can report 
 exception: card actions, reopen-command creation/activation/execute/destroy, and
 basic mark/reference health. Every record is flushed immediately to a small temp
 file so the tail normally survives a hard Fusion crash.
+
+For reopened-card activation only, a short diagnostic window also traces the
+render calls made before Fusion activates the native manipulator. The window is
+armed at CommandCreated and closed by the activation observer, so drag/preview
+frames remain completely outside this file logger.
 """
 
 import os
@@ -25,7 +30,7 @@ def install(m):
     old_stop = m.stop
     CurrentPaletteHTMLHandler = m.PaletteHTMLHandler
     path = os.path.join(tempfile.gettempdir(), LOG_NAME)
-    state = {"observer": None}
+    state = {"observer": None, "activate_watch": None}
     m._crash_log_path = path
 
     def trim_once():
@@ -116,9 +121,105 @@ def install(m):
     m._crash_trace = write
     m._crash_mark_detail = mark_detail
 
+    # ---- activation-only render tracing ---------------------------------
+    # These wrappers are silent unless a reopened command has just been created
+    # and has not yet reached our activate observer. This gives us the exact last
+    # completed render call if Fusion dies inside native activation, without
+    # adding synchronous file I/O to normal drag/preview frames.
+    old_clear = m._clear
+    old_group = m._group
+    old_draw_one = m._draw_one
+    old_refresh_ghost = m._refresh_ghost
+
+    def watch_mid():
+        return state.get("activate_watch")
+
+    def clear(gid):
+        mid = watch_mid()
+        if mid is not None:
+            write("ACTIVATE_CLEAR_BEGIN", "id={} group={}".format(mid, gid))
+        try:
+            result = old_clear(gid)
+        except Exception:
+            if mid is not None:
+                try:
+                    write("ACTIVATE_CLEAR_EXCEPTION", m.traceback.format_exc())
+                except Exception:
+                    pass
+            raise
+        if mid is not None:
+            write("ACTIVATE_CLEAR_DONE", "id={} group={}".format(mid, gid))
+        return result
+
+    def group(gid):
+        mid = watch_mid()
+        if mid is not None:
+            write("ACTIVATE_GROUP_BEGIN", "id={} group={}".format(mid, gid))
+        try:
+            result = old_group(gid)
+        except Exception:
+            if mid is not None:
+                try:
+                    write("ACTIVATE_GROUP_EXCEPTION", m.traceback.format_exc())
+                except Exception:
+                    pass
+            raise
+        if mid is not None:
+            write("ACTIVATE_GROUP_DONE", "id={} group={} found={}".format(
+                mid, gid, result is not None))
+        return result
+
+    def draw_one(group_obj, mark):
+        mid = watch_mid()
+        mark_id = mark.get("id") if isinstance(mark, dict) else None
+        if mid is not None:
+            write("ACTIVATE_DRAW_ONE_BEGIN", "active={} mark={} tool={}".format(
+                mid, mark_id, mark.get("tool") if isinstance(mark, dict) else None))
+        try:
+            result = old_draw_one(group_obj, mark)
+        except Exception:
+            if mid is not None:
+                try:
+                    write("ACTIVATE_DRAW_ONE_EXCEPTION", m.traceback.format_exc())
+                except Exception:
+                    pass
+            raise
+        if mid is not None:
+            write("ACTIVATE_DRAW_ONE_DONE", "active={} mark={}".format(mid, mark_id))
+        return result
+
+    def refresh_ghost():
+        mid = watch_mid()
+        if mid is not None:
+            write("ACTIVATE_REFRESH_GHOST_BEGIN", "id={}".format(mid))
+        try:
+            result = old_refresh_ghost()
+        except Exception:
+            if mid is not None:
+                try:
+                    write("ACTIVATE_REFRESH_GHOST_EXCEPTION", m.traceback.format_exc())
+                except Exception:
+                    pass
+            raise
+        if mid is not None:
+            write("ACTIVATE_REFRESH_GHOST_DONE", "id={}".format(mid))
+        return result
+
+    m._clear = clear
+    m._group = group
+    m._draw_one = draw_one
+    m._refresh_ghost = refresh_ghost
+
     class EditActivate(adsk.core.CommandEventHandler):
         def notify(self, args):
-            write("EDIT_ACTIVATE", mark_detail(getattr(m, "_active_edit_id", None)))
+            mid = getattr(m, "_active_edit_id", None)
+            write("EDIT_ACTIVATE", mark_detail(mid))
+            # Reopen's own activate handler is registered before this observer in
+            # the normal lifecycle. Reaching here therefore means its redraw,
+            # active-preview draw, ghost sync, and viewport refresh all returned.
+            if state.get("activate_watch") is not None:
+                write("ACTIVATE_WATCH_COMPLETE", "id={}".format(state.get("activate_watch")))
+                state["activate_watch"] = None
 
     class EditExecute(adsk.core.CommandEventHandler):
         def notify(self, args):
@@ -126,6 +227,7 @@ def install(m):
 
     class EditDestroy(adsk.core.CommandEventHandler):
         def notify(self, args):
+            state["activate_watch"] = None
             write(
                 "EDIT_DESTROY",
                 "active_edit={} active_cmd={}".format(
@@ -135,7 +237,9 @@ def install(m):
     class EditCommandObserver(adsk.core.CommandCreatedEventHandler):
         def notify(self, args):
             mid = getattr(m, "_active_edit_id", None)
+            state["activate_watch"] = mid
             write("EDIT_COMMAND_CREATED", mark_detail(mid))
+            write("ACTIVATE_WATCH_ARMED", "id={}".format(mid))
             # Do not trace inputChanged/executePreview: those are hot drag paths.
             try:
                 for handler, event in (
@@ -215,6 +319,7 @@ def install(m):
         return result
 
     def stop(context):
+        state["activate_watch"] = None
         write("SESSION_STOP", "normal addon stop")
         return old_stop(context)
 
