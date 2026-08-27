@@ -1,7 +1,8 @@
 /* Extra card-hover replay for non-Move FuzzyCAD proposals.
- * Hover is only a lightweight preview of change tendency: wait briefly, move
- * once toward the proposal, hold there while the pointer stays on the card, and
- * disappear immediately on leave/click. It never expands persistent geometry.
+ * Hover is only a lightweight preview of change tendency: wait deliberately,
+ * move once toward the proposal, hold there while the pointer stays on the card,
+ * and disappear immediately on leave/click. Interactive controls cancel pending
+ * replay so aiming for Accept/Reject/fields never starts viewport animation.
  */
 (function () {
   "use strict";
@@ -9,6 +10,7 @@
   var SUPPORTED = { rotate:true, scale:true, scale_axis:true, axis_rotate:true, extrude:true };
   var FRAME_MS = 90;
   var FORWARD_MS = 900;
+  var DWELL_MS = Number(window.FuzzyCADAnimationDwellMs || 650);
   var timer = null;
   var dwell = null;
   var hoverId = null;
@@ -71,7 +73,12 @@
     dwell = setTimeout(function () {
       dwell = null;
       begin(mark);
-    }, 220);
+    }, DWELL_MS);
+  }
+
+  function isInteractive(target) {
+    if (!target || typeof target.closest !== "function") return false;
+    return !!target.closest("button,input,textarea,select,a,[contenteditable='true']");
   }
 
   function attach(marks) {
@@ -83,8 +90,13 @@
        * listeners when the same cards receive another state snapshot. */
       if (card.getAttribute("data-hover-op-bound") === "1") return;
       card.setAttribute("data-hover-op-bound", "1");
-      card.title = "Hover to preview the proposed " + mark.tool.replace("_", " ") + "; click to inspect/edit";
-      card.addEventListener("mouseenter", function () { start(mark); });
+      card.title = "Pause over the card to preview the proposed " + mark.tool.replace("_", " ") + "; click to inspect/edit";
+      card.addEventListener("mouseenter", function (ev) {
+        if (!isInteractive(ev.target)) start(mark);
+      });
+      card.addEventListener("mousemove", function (ev) {
+        if (hoverId === mark.id && isInteractive(ev.target)) stop(true);
+      });
       card.addEventListener("mouseleave", function () {
         if (hoverId === mark.id) stop(true);
       });
