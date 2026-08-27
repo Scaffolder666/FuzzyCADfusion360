@@ -5,11 +5,21 @@ exists:
 
 - hide the real alternatives while the conflict is unresolved;
 - draw the currently shown alternative with proposal strokes;
-- accept by keeping the selected alternative and deleting the other;
+- accept by keeping the selected alternative and removing the other;
 - restore hidden alternatives when the mark is resolved or the add-in stops.
 
 Creation/selection is intentionally not implemented here. The authoritative
 command flow is compare/fuzzycad_compare_selection_flow.py.
+
+Important assembly rule
+-----------------------
+A body selected in the root assembly is commonly a proxy inside an Occurrence,
+especially for imported/inserted STEP parts. In that case the *Occurrence* is the
+comparison subject. Hiding/deleting the BRepBody definition directly can affect
+other assembly instances and can leave the kept option hidden after topology or
+entity-token changes. Therefore this module operates on Occurrence visibility and
+Occurrence.deleteMe() whenever the selected body has an assemblyContext. Root
+bodies keep the original body-level behavior.
 """
 
 
@@ -19,6 +29,8 @@ def install(m):
     old_accept = m._accept
     old_draw = m._DRAW.get("compare")
 
+    MAX_DRAW_EDGES = 180
+
     def log(msg):
         try:
             (m._app or adsk.core.Application.get()).log(
@@ -26,24 +38,232 @@ def install(m):
         except Exception:
             pass
 
+    def trace(event, detail=""):
+        try:
+            fn = getattr(m, "_crash_trace", None)
+            if fn is not None:
+                fn(event, detail)
+        except Exception:
+            pass
+
+    def token(obj):
+        if obj is None:
+            return None
+        try:
+            return str(obj.entityToken)
+        except Exception:
+            return None
+
     def resolve_body(design, tok):
         if design is None or not tok:
             return None
         try:
-            for ent in design.findEntityByToken(tok):
-                if isinstance(ent, adsk.fusion.BRepBody):
-                    return ent
+            for ent in design.findEntityByToken(str(tok)):
+                body = adsk.fusion.BRepBody.cast(ent)
+                if body is not None:
+                    return body
         except Exception:
             pass
         return None
 
-    # Tokens currently hidden by unresolved in-place comparisons. Keep tokens,
-    # never long-lived BRepBody wrappers, so shutdown/reconcile resolves fresh.
-    hidden = set()
+    def resolve_occurrence(design, tok):
+        if design is None or not tok:
+            return None
+        try:
+            for ent in design.findEntityByToken(str(tok)):
+                occ = adsk.fusion.Occurrence.cast(ent)
+                if occ is not None:
+                    return occ
+        except Exception:
+            pass
+        return None
 
-    def shown_index(mark):
-        selected = mark.get("selected")
-        return selected if selected in (0, 1) else 0
+    def collection_items(coll):
+        rows = []
+        if coll is None:
+            return rows
+        try:
+            for i in range(coll.count):
+                item = coll.item(i)
+                if item is not None:
+                    rows.append(item)
+        except Exception:
+            pass
+        return rows
+
+    def occurrence_for_body(body):
+        if body is None:
+            return None
+        try:
+            occ = body.assemblyContext
+            return adsk.fusion.Occurrence.cast(occ) if occ is not None else None
+        except Exception:
+            return None
+
+    def occurrence_path(occ):
+        try:
+            value = str(occ.fullPathName or "").strip()
+            return value or None
+        except Exception:
+            return None
+
+    def occurrence_key(occ):
+        path = occurrence_path(occ)
+        if path:
+            return "path:" + path
+        tok = token(occ)
+        return ("token:" + tok) if tok else None
+
+    def find_occurrence(design, tok=None, path=None):
+        occ = resolve_occurrence(design, tok)
+        if occ is not None:
+            return occ
+        if design is None or not path:
+            return None
+        try:
+            all_occ = design.rootComponent.allOccurrences
+            for i in range(all_occ.count):
+                candidate = all_occ.item(i)
+                if candidate is not None and occurrence_path(candidate) == path:
+                    return candidate
+        except Exception:
+            pass
+        return None
+
+    def body_subject(alternative):
+        design = m._design()
+        toks = [str(t) for t in (alternative.get("body_tokens") or []) if t]
+        bodies = [resolve_body(design, t) for t in toks]
+        bodies = [b for b in bodies if b is not None]
+        return {
+            "kind": "body",
+            "bodies": bodies,
+            "body_tokens": toks,
+            "occurrence": None,
+            "occurrence_token": None,
+            "occurrence_path": None,
+            "key": None,
+        }
+
+    def subject_for_alternative(alternative, allow_occurrence=True):
+        subject = body_subject(alternative)
+        if not allow_occurrence or not subject["bodies"]:
+            return subject
+
+        occ = occurrence_for_body(subject["bodies"][0])
+        if occ is None:
+            return subject
+
+        occ_tok = token(occ)
+        occ_path = occurrence_path(occ)
+        key = occurrence_key(occ)
+        if not key:
+            return subject
+
+        occ_bodies = collection_items(getattr(occ, "bRepBodies", None))
+        if not occ_bodies:
+            occ_bodies = subject["bodies"]
+        return {
+            "kind": "occurrence",
+            "bodies": occ_bodies,
+            "body_tokens": subject["body_tokens"],
+            "occurrence": occ,
+            "occurrence_token": occ_tok,
+            "occurrence_path": occ_path,
+            "key": key,
+        }
+
+    def subjects_for_mark(mark):
+        alternatives = (mark.get("alternatives") or [])[:2]
+        subjects = [subject_for_alternative(alt) for alt in alternatives]
+
+        # If two selected bodies happen to live inside the same occurrence, the
+        # user is comparing bodies within that component, not the component with
+        # itself. Fall back to body-level semantics for that special case.
+        if len(subjects) == 2:
+            a, b = subjects
+            if (a.get("kind") == "occurrence" and b.get("kind") == "occurrence"
+                    and a.get("key") and a.get("key") == b.get("key")):
+                subjects = [body_subject(alternatives[0]), body_subject(alternatives[1])]
+        return subjects
+
+    # Store only pure-Python visibility state. Never retain Occurrence/BRepBody
+    # wrappers across events.
+    hidden_occurrences = {}  # stable key -> {token, path, original}
+    hidden_bodies = {}       # body token -> {token, original}
+
+    def remember_hide_occurrence(subject):
+        occ = subject.get("occurrence")
+        key = subject.get("key")
+        if occ is None or not key:
+            return
+        if key not in hidden_occurrences:
+            try:
+                original = bool(occ.isLightBulbOn)
+            except Exception:
+                original = True
+            hidden_occurrences[key] = {
+                "token": subject.get("occurrence_token"),
+                "path": subject.get("occurrence_path"),
+                "original": original,
+            }
+        try:
+            occ.isLightBulbOn = False
+        except Exception:
+            pass
+
+    def remember_hide_body(body, tok):
+        if body is None or not tok:
+            return
+        if tok not in hidden_bodies:
+            try:
+                original = bool(body.isLightBulbOn)
+            except Exception:
+                original = True
+            hidden_bodies[tok] = {"token": tok, "original": original}
+        try:
+            body.isLightBulbOn = False
+        except Exception:
+            pass
+
+    def restore_occurrence_row(key, row):
+        design = m._design()
+        occ = find_occurrence(design, row.get("token"), row.get("path"))
+        if occ is not None:
+            try:
+                occ.isLightBulbOn = bool(row.get("original", True))
+            except Exception:
+                pass
+        hidden_occurrences.pop(key, None)
+
+    def restore_body_row(tok, row):
+        body = resolve_body(m._design(), row.get("token") or tok)
+        if body is not None:
+            try:
+                body.isLightBulbOn = bool(row.get("original", True))
+            except Exception:
+                pass
+        hidden_bodies.pop(tok, None)
+
+    def restore_subject_now(subject):
+        """Restore a kept subject before any destructive loser operation."""
+        if subject.get("kind") == "occurrence":
+            key = subject.get("key")
+            row = hidden_occurrences.get(key) or {}
+            occ = subject.get("occurrence")
+            if occ is not None:
+                try:
+                    occ.isLightBulbOn = bool(row.get("original", True))
+                except Exception:
+                    pass
+            return
+
+        for body, tok in zip(subject.get("bodies") or [], subject.get("body_tokens") or []):
+            row = hidden_bodies.get(tok) or {}
+            try:
+                body.isLightBulbOn = bool(row.get("original", True))
+            except Exception:
+                pass
 
     # ---- renderer ---------------------------------------------------------
     def draw_compare(group, mark, rgb, amp):
@@ -52,27 +272,27 @@ def install(m):
                 return old_draw(group, mark, rgb, amp)
             return
 
-        design = m._design()
-        alternatives = mark.get("alternatives") or []
-        shown = shown_index(mark)
-        if not (0 <= shown < len(alternatives)):
+        subjects = subjects_for_mark(mark)
+        selected = mark.get("selected")
+        shown = selected if selected in (0, 1) else 0
+        if not (0 <= shown < len(subjects)):
             return
 
+        subject = subjects[shown]
         seed = mark["id"] * 700
         size = mark.get("size", 3.0)
         line_index = 0
-        for tok in alternatives[shown].get("body_tokens", []):
-            body = resolve_body(design, tok)
-            if body is None:
-                continue
+        remaining = MAX_DRAW_EDGES
+
+        for body in subject.get("bodies") or []:
+            if remaining <= 0:
+                break
             try:
-                polylines = m._sample_edges(body.edges)
-            except Exception:
-                continue
-            for poly in polylines:
-                if len(poly) < 2:
-                    continue
-                try:
+                edge_count = min(int(body.edges.count), remaining)
+                for i in range(edge_count):
+                    poly = m._sample_edge(body.edges.item(i))
+                    if len(poly) < 2:
+                        continue
                     if hasattr(m, "_visual_stroke"):
                         m._visual_stroke(
                             group,
@@ -92,18 +312,17 @@ def install(m):
                             strokes=2,
                         )
                     line_index += 1
-                except Exception:
-                    continue
+                remaining -= edge_count
+            except Exception:
+                continue
 
     m._DRAW["compare"] = draw_compare
 
-    # ---- unresolved real-body visibility --------------------------------
+    # ---- unresolved real-subject visibility ------------------------------
     def reconcile_visibility():
-        design = m._design()
-        if design is None:
-            return
+        want_occurrences = {}
+        want_bodies = {}
 
-        want_hidden = set()
         for mark in list(getattr(m, "_marks", []) or []):
             if not (
                 mark.get("tool") == "compare"
@@ -111,33 +330,66 @@ def install(m):
                 and mark.get("status", "open") == "open"
             ):
                 continue
-            for alternative in (mark.get("alternatives") or [])[:2]:
-                for tok in alternative.get("body_tokens", []):
-                    if tok:
-                        want_hidden.add(tok)
 
-        for tok in want_hidden:
-            body = resolve_body(design, tok)
-            if body is None:
-                continue
-            try:
-                body.isVisible = False
-                hidden.add(tok)
-            except Exception:
-                pass
+            for subject in subjects_for_mark(mark):
+                if subject.get("kind") == "occurrence":
+                    key = subject.get("key")
+                    if key:
+                        want_occurrences[key] = subject
+                else:
+                    for body, tok in zip(
+                            subject.get("bodies") or [],
+                            subject.get("body_tokens") or []):
+                        if body is not None and tok:
+                            want_bodies[tok] = body
 
-        for tok in list(hidden):
-            if tok in want_hidden:
-                continue
-            body = resolve_body(design, tok)
-            if body is not None:
-                try:
-                    body.isVisible = True
-                except Exception:
-                    pass
-            hidden.discard(tok)
+        for subject in want_occurrences.values():
+            remember_hide_occurrence(subject)
+        for tok, body in want_bodies.items():
+            remember_hide_body(body, tok)
+
+        for key, row in list(hidden_occurrences.items()):
+            if key not in want_occurrences:
+                restore_occurrence_row(key, row)
+        for tok, row in list(hidden_bodies.items()):
+            if tok not in want_bodies:
+                restore_body_row(tok, row)
 
     # ---- terminal semantics ----------------------------------------------
+    def delete_subject(subject):
+        if subject.get("kind") == "occurrence":
+            occ = subject.get("occurrence")
+            if occ is None:
+                return False, "occurrence could not be resolved"
+            try:
+                if bool(getattr(occ, "isDerived", False)):
+                    return False, "derived occurrence cannot be deleted"
+            except Exception:
+                pass
+            try:
+                result = occ.deleteMe()
+                return (result is not False), "occurrence"
+            except Exception:
+                return False, "occurrence delete failed"
+
+        bodies = list(subject.get("bodies") or [])
+        if not bodies:
+            return False, "body could not be resolved"
+        deleted = 0
+        for body in bodies:
+            try:
+                if bool(getattr(body, "isDerived", False)):
+                    return False, "derived body cannot be deleted"
+            except Exception:
+                pass
+            try:
+                result = body.deleteMe()
+                if result is not False:
+                    deleted += 1
+            except Exception:
+                return False, "body delete failed"
+        return deleted == len(bodies), "{} body(s)".format(deleted)
+
     def accept(mark):
         if not (mark.get("tool") == "compare" and mark.get("inplace")):
             return old_accept(mark)
@@ -150,36 +402,58 @@ def install(m):
                 pass
             return False
 
+        subjects = subjects_for_mark(mark)
+        if len(subjects) < 2:
+            return False
+
         winner = int(choice)
         loser = 1 - winner
-        design = m._design()
-        alternatives = mark.get("alternatives") or []
-        deleted = 0
+        winner_subject = subjects[winner]
+        loser_subject = subjects[loser]
 
-        if 0 <= loser < len(alternatives):
-            for tok in alternatives[loser].get("body_tokens", []):
-                hidden.discard(tok)
-                body = resolve_body(design, tok)
-                if body is None:
-                    continue
-                try:
-                    body.deleteMe()
-                    deleted += 1
-                except Exception:
-                    log("delete loser failed tok={}".format(tok))
+        trace(
+            "COMPARE_ACCEPT_BEGIN",
+            "id={} choice={} winner_kind={} loser_kind={} winner_path={} loser_path={}".format(
+                mark.get("id"),
+                winner + 1,
+                winner_subject.get("kind"),
+                loser_subject.get("kind"),
+                winner_subject.get("occurrence_path"),
+                loser_subject.get("occurrence_path"),
+            ),
+        )
 
-        if 0 <= winner < len(alternatives):
-            for tok in alternatives[winner].get("body_tokens", []):
-                hidden.discard(tok)
-                body = resolve_body(design, tok)
-                if body is None:
-                    continue
-                try:
-                    body.isVisible = True
-                except Exception:
-                    pass
+        # Critical ordering for imported STEP/assembly subjects: restore the kept
+        # occurrence before deleting the loser. Deleting a body/component can
+        # invalidate other entity references; the winner must not depend on a
+        # later token re-resolution just to become visible again.
+        restore_subject_now(winner_subject)
 
-        log("ACCEPT keep=Option {} deleted={}".format(winner + 1, deleted))
+        ok, detail = delete_subject(loser_subject)
+        if not ok:
+            trace("COMPARE_ACCEPT_FAILED", "id={} reason={}".format(mark.get("id"), detail))
+            log("ACCEPT failed: " + detail)
+            try:
+                reconcile_visibility()
+            except Exception:
+                pass
+            try:
+                m._ui.messageBox(
+                    "FuzzyCAD couldn't remove the unselected comparison option. "
+                    "The comparison is still unresolved."
+                )
+            except Exception:
+                pass
+            return False
+
+        # Re-assert winner visibility through the already-resolved local subject.
+        # No long-lived native wrapper is retained after this synchronous event.
+        restore_subject_now(winner_subject)
+        trace(
+            "COMPARE_ACCEPT_DONE",
+            "id={} keep={} removed={}".format(mark.get("id"), winner + 1, detail),
+        )
+        log("ACCEPT keep=Option {} removed={}".format(winner + 1, detail))
         return True
 
     m._accept = accept
@@ -201,18 +475,13 @@ def install(m):
     m._redraw_marks = redraw
 
     def stop(context):
-        # Resolve fresh wrappers before shutdown and restore every body this
-        # module hid. Selection-command cleanup belongs to selection_flow.
+        # Restore every browser visibility state this module changed. Resolve
+        # fresh wrappers; the dictionaries above contain pure-Python values only.
         try:
-            design = m._design()
-            for tok in list(hidden):
-                body = resolve_body(design, tok)
-                if body is not None:
-                    try:
-                        body.isVisible = True
-                    except Exception:
-                        pass
-            hidden.clear()
+            for key, row in list(hidden_occurrences.items()):
+                restore_occurrence_row(key, row)
+            for tok, row in list(hidden_bodies.items()):
+                restore_body_row(tok, row)
         except Exception:
             pass
         return old_stop(context)
