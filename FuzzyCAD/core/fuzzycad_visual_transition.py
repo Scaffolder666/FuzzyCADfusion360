@@ -440,4 +440,231 @@ def install(m):
 
         m.FuzzyCommandCreated = FuzzyCommandCreated
 
+    # Reopened Extrude used the generic slow preview path: delete GROUP_PREVIEW,
+    # recreate all CustomGraphics, redraw the wireframe/cue, and refresh ghost
+    # state on every native distance-manipulator tick. The crash log shows a frame
+    # completing in Python and Fusion disappearing immediately afterward, which is
+    # the same native graphics-churn failure mode previously removed from Move and
+    # Scale. Build Extrude's wireframe once, then stretch that persistent group
+    # along the face normal with one Matrix3D per frame. Keep only pure Python
+    # numbers in state; every graphics group is still resolved fresh by its id.
+    base_clear = m._clear
+    base_draw_one = m._draw_one
+    base_refresh_ghost = m._refresh_ghost
+    extrude_preview = {
+        "mark_id": None,
+        "built": False,
+        "ref_amount": None,
+        "pivot": None,
+        "normal": None,
+        "ghost_pending": False,
+    }
+
+    def active_reopened_extrude():
+        if getattr(m, "_active_cmd", None) != "edit_existing":
+            return None
+        mid = getattr(m, "_active_edit_id", None)
+        if mid is None:
+            return None
+        try:
+            mark = m._find(mid)
+        except Exception:
+            mark = None
+        if (mark is None or mark.get("status", "open") != "open" or
+                mark.get("tool") != "extrude"):
+            return None
+        return mark
+
+    def reset_extrude_preview(reason=""):
+        old_mid = extrude_preview.get("mark_id")
+        extrude_preview["mark_id"] = None
+        extrude_preview["built"] = False
+        extrude_preview["ref_amount"] = None
+        extrude_preview["pivot"] = None
+        extrude_preview["normal"] = None
+        extrude_preview["ghost_pending"] = False
+        if old_mid is not None and reason:
+            trace("EXTRUDE_REOPEN_RESET", "id={} reason={}".format(old_mid, reason))
+
+    def ensure_extrude_session(mark):
+        mid = mark.get("id") if mark is not None else None
+        if extrude_preview.get("mark_id") != mid:
+            reset_extrude_preview("new-session")
+            extrude_preview["mark_id"] = mid
+
+    def normalized_extrude_normal(mark):
+        g = (getattr(m, "_geom", None) or {}).get(mark.get("id"), {}) or {}
+        raw = list(g.get("normal") or [0.0, 0.0, 1.0])
+        try:
+            length = (float(raw[0]) ** 2 + float(raw[1]) ** 2 + float(raw[2]) ** 2) ** 0.5
+            if length < 1e-9:
+                return (0.0, 0.0, 1.0)
+            return (float(raw[0]) / length, float(raw[1]) / length, float(raw[2]) / length)
+        except Exception:
+            return (0.0, 0.0, 1.0)
+
+    def extrude_face_pivot(mark):
+        g = (getattr(m, "_geom", None) or {}).get(mark.get("id"), {}) or {}
+        for loop in g.get("loops", []) or []:
+            if loop:
+                try:
+                    p = loop[0]
+                    return (float(p[0]), float(p[1]), float(p[2]))
+                except Exception:
+                    pass
+        a = list(mark.get("anchor") or [0.0, 0.0, 0.0])
+        return (float(a[0]), float(a[1]), float(a[2]))
+
+    def extrude_transform(mark):
+        ref = extrude_preview.get("ref_amount")
+        pivot = extrude_preview.get("pivot")
+        normal = extrude_preview.get("normal")
+        if ref is None or pivot is None or normal is None:
+            return m.adsk.core.Matrix3D.create()
+        try:
+            ref = float(ref)
+            current = float(mark.get("amount", 0.0))
+            if abs(ref) < 1e-9:
+                return m.adsk.core.Matrix3D.create()
+            scale = current / ref
+            n = normal
+            k = scale - 1.0
+            linear = [[0.0, 0.0, 0.0] for _ in range(3)]
+            for i in range(3):
+                for j in range(3):
+                    linear[i][j] = (1.0 if i == j else 0.0) + k * n[i] * n[j]
+
+            mat = m.adsk.core.Matrix3D.create()
+            for i in range(3):
+                for j in range(3):
+                    mat.setCell(i, j, linear[i][j])
+
+            ap = [sum(linear[i][j] * pivot[j] for j in range(3)) for i in range(3)]
+            mat.translation = m.adsk.core.Vector3D.create(
+                pivot[0] - ap[0], pivot[1] - ap[1], pivot[2] - ap[2])
+            return mat
+        except Exception:
+            return m.adsk.core.Matrix3D.create()
+
+    def build_extrude_wireframe(group, mark):
+        ensure_extrude_session(mark)
+        g = (getattr(m, "_geom", None) or {}).get(mark.get("id"), {}) or {}
+        normal = normalized_extrude_normal(mark)
+        amount = float(mark.get("amount", 0.0) or 0.0)
+        ref = amount
+        if abs(ref) < 1e-6:
+            # An open Extrude proposal is normally non-zero. Keep a safe reference
+            # anyway so a typed zero can collapse/re-expand without rebuilding.
+            ref = max(float(mark.get("size", 1.0)) * 0.15, 0.10)
+        pivot = extrude_face_pivot(mark)
+        try:
+            rgb, amp = m._style(mark)
+        except Exception:
+            rgb, amp = (150, 150, 150), 0.0
+        orange = (225, 126, 38)
+
+        loops = list(g.get("loops", []) or [])
+        for i, loop in enumerate(loops):
+            if not loop:
+                continue
+            try:
+                base = [(float(p[0]), float(p[1]), float(p[2])) for p in loop]
+            except Exception:
+                continue
+            off = [(p[0] + normal[0] * ref,
+                    p[1] + normal[1] * ref,
+                    p[2] + normal[2] * ref) for p in base]
+
+            # Orange is locus/control only: outline the selected face boundary,
+            # while the candidate offset and side walls stay provisional gray.
+            try:
+                m._sketchy(group, base, orange, 0.0,
+                           mark.get("id", 1) * 451 + i, weight=2, strokes=1)
+                m._sketchy(group, off, rgb, amp,
+                           mark.get("id", 1) * 452 + i, weight=1, strokes=2)
+            except Exception:
+                pass
+
+            count = len(base)
+            if count:
+                for kidx in sorted(set((0, count // 2, count - 1))):
+                    try:
+                        m._sketchy(group, [base[kidx], off[kidx]], rgb, amp,
+                                   mark.get("id", 1) * 453 + i * 8 + kidx,
+                                   weight=1, strokes=1)
+                    except Exception:
+                        pass
+
+        tip = (pivot[0] + normal[0] * ref,
+               pivot[1] + normal[1] * ref,
+               pivot[2] + normal[2] * ref)
+        try:
+            m._sketchy(group, [pivot, tip], orange, 0.0,
+                       mark.get("id", 1) * 454, weight=3, strokes=1)
+        except Exception:
+            pass
+
+        extrude_preview["ref_amount"] = ref
+        extrude_preview["pivot"] = pivot
+        extrude_preview["normal"] = normal
+        extrude_preview["built"] = True
+        extrude_preview["ghost_pending"] = True
+
+        # If the first value is effectively zero, the reference geometry was built
+        # at a safe non-zero depth; collapse it immediately to the actual value.
+        try:
+            group.transform = extrude_transform(mark)
+        except Exception:
+            pass
+        trace("EXTRUDE_REOPEN_BASE", "id={} ref={} loops={}".format(
+            mark.get("id"), round(ref, 6), len(loops)))
+
+    def stable_clear(gid):
+        if gid == getattr(m, "GROUP_PREVIEW", "FuzzyCAD_Preview"):
+            mark = active_reopened_extrude()
+            if mark is not None:
+                ensure_extrude_session(mark)
+                if extrude_preview.get("built"):
+                    # Reopen draw_active calls clear every tick. Once the base is
+                    # built, that clear is exactly the native churn we must avoid.
+                    return
+            elif extrude_preview.get("mark_id") is not None:
+                # Ownership is gone (Confirm/Cancel/switch). The next real clear is
+                # allowed and also resets our pure-Python session state.
+                reset_extrude_preview("ownership-ended")
+        return base_clear(gid)
+
+    def stable_draw_one(group, mark):
+        active = active_reopened_extrude()
+        if (active is not None and mark is not None and
+                mark.get("id") == active.get("id")):
+            ensure_extrude_session(mark)
+            if not extrude_preview.get("built"):
+                build_extrude_wireframe(group, mark)
+            else:
+                try:
+                    # Fresh wrapper each touch; only the group's transform changes.
+                    group.transform = extrude_transform(mark)
+                except Exception:
+                    pass
+            return
+        return base_draw_one(group, mark)
+
+    def stable_refresh_ghost():
+        mark = active_reopened_extrude()
+        if mark is not None:
+            ensure_extrude_session(mark)
+            if extrude_preview.get("built"):
+                if extrude_preview.get("ghost_pending"):
+                    extrude_preview["ghost_pending"] = False
+                    return base_refresh_ghost()
+                # Source opacity is phase-derived and already correct for Editing;
+                # do not rescan/rewrite it on every native drag tick.
+                return None
+        return base_refresh_ghost()
+
+    m._clear = stable_clear
+    m._draw_one = stable_draw_one
+    m._refresh_ghost = stable_refresh_ghost
+
     trace("CONTROLLER_READY", "one state -> one persistent render transaction")
