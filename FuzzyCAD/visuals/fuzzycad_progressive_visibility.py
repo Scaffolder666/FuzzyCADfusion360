@@ -191,8 +191,23 @@ def install(m):
                 # _redraw_marks() here.
                 pass
 
-            elif action in ("focus", "editManipulator", "edit", "compare_choice"):
+            elif action in ("focus", "compare_choice"):
+                # These are explicit Proposed-detail changes, so the viewport must
+                # update immediately.
                 reveal(data.get("id"), True, hover=False)
+
+            elif action == "editManipulator":
+                # Entering Editing owns its own viewport transition. Record the
+                # reveal state without first redrawing the Proposed scene; otherwise
+                # a card click redraws every mark immediately before the native edit
+                # command redraws again.
+                reveal(data.get("id"), False, hover=False)
+
+            elif action == "edit":
+                # Numeric card edit is applied by the delegated handler, which then
+                # performs the single authoritative redraw with the NEW value. Set
+                # reveal first but do not redraw the OLD value here.
+                reveal(data.get("id"), False, hover=False)
 
             elif action == "tool":
                 collapse(True)
