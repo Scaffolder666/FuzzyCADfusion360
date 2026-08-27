@@ -241,5 +241,10 @@ _image.install(_legacy)
 _fuzzy = _load("fuzzycad_fuzzy_boundary", "visuals/fuzzycad_fuzzy_boundary.py")
 _fuzzy.install(_legacy)
 
+# Always-on coarse lifecycle trace for hard-crash diagnosis. It deliberately
+# excludes drag/animation frames and is independent of the heavier DEV_MODE tools.
+_crash_trace = _load("fuzzycad_crash_trace", "core/fuzzycad_crash_trace.py")
+_crash_trace.install(_legacy)
+
 run = _legacy.run
 stop = _legacy.stop
