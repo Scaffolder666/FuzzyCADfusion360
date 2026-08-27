@@ -1,8 +1,14 @@
-"""FuzzyCAD entry point.
+"""FuzzyCAD entry point and explicit runtime patch order.
 
 The original implementation is kept in FuzzyCAD_legacy.py. Runtime patches
 layer collaboration UI, persistence, manipulators, proposal visuals, and
 operation-specific behavior onto the legacy implementation.
+
+This file is the only normal owner of patch installation order. Feature modules
+should consume services exposed on the shared legacy module object instead of
+silently installing sibling modules. A small defensive fallback inside an
+individual renderer is acceptable, but the study/runtime dependency graph should
+be readable here.
 
 DEV_MODE is intentionally False for the study/runtime build. Heavy lifecycle,
 value, handle, identity, and performance tracing stay available in the repo but
@@ -57,6 +63,13 @@ _runtime_store.install(_legacy)
 _uncertainty_visual = _load(
     "fuzzycad_uncertainty_visual", "visuals/fuzzycad_uncertainty_visual.py")
 _uncertainty_visual.install(_legacy)
+
+# Animation ownership is also a first-class runtime service. Install it here
+# before any Move/operation replay renderer so those modules only provide
+# operation-specific geometry and never own dependency loading.
+_animation_controller = _load(
+    "fuzzycad_animation_controller", "visuals/fuzzycad_animation_controller.py")
+_animation_controller.install(_legacy)
 
 if DEV_MODE:
     _debug = _load("fuzzycad_debug_monitor", "dev/fuzzycad_debug_monitor.py")
@@ -164,6 +177,15 @@ _compare_focus = _load(
     "fuzzycad_compare_card_focus",
     "compare/fuzzycad_compare_card_focus.py")
 _compare_focus.install(_legacy)
+
+# The rail-first Compare command shell is a separate interaction owner. It is
+# installed explicitly here (after the in-place renderer/accept + focus layers)
+# instead of being hidden inside the camera-focus module.
+_compare_selection = _load(
+    "fuzzycad_compare_selection_flow",
+    "compare/fuzzycad_compare_selection_flow.py")
+_compare_selection.install(_legacy)
+
 _card_focus = _load(
     "fuzzycad_card_focus_zoom",
     "visuals/fuzzycad_card_focus_zoom.py")
