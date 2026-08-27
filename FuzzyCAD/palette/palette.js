@@ -9,6 +9,8 @@
   "use strict";
 
   var state = { marks: [] };
+  var ANIMATION_DWELL_MS = 650;
+  window.FuzzyCADAnimationDwellMs = ANIMATION_DWELL_MS;
 
   function send(action, data) {
     if (window.adsk && typeof window.adsk.fusionSendData === "function") {
@@ -86,8 +88,9 @@
     editTimers[k] = setTimeout(function () { send("edit", { id: id, key: key, value: value }); }, 120);
   }
 
-  /* Move replay remains real-time after intent is clear, but a short dwell keeps
-   * casual pointer travel from opening a JS -> Python -> viewport refresh loop. */
+  /* Move replay remains real-time after intent is clear, but a deliberate dwell
+   * keeps casual pointer travel and aiming for card controls from opening a
+   * JS -> Python -> viewport refresh loop. */
   var hoverMoveTimer = null;
   var hoverMoveDwell = null;
   var hoverMoveId = null;
@@ -136,7 +139,7 @@
     hoverMoveDwell = setTimeout(function () {
       hoverMoveDwell = null;
       beginMoveHover(mark);
-    }, 220);
+    }, ANIMATION_DWELL_MS);
   }
 
   function stop(ev) { ev.stopPropagation(); }
@@ -245,7 +248,7 @@
         li.title = "This question needs to be relinked to geometry";
       } else if (mtype === "need_input") {
         li.title = m.tool === "move"
-          ? "Hover to replay; click to reopen the viewport manipulator"
+          ? "Pause to replay; click to reopen the viewport manipulator"
           : "Click to reopen the viewport manipulator";
       } else {
         li.title = "Click to focus this in the model";
@@ -262,6 +265,12 @@
       });
       if (m.tool === "move" && !m.reference_lost) {
         li.addEventListener("mouseenter", function () { startMoveHover(m); });
+        li.addEventListener("mousemove", function (ev) {
+          if (hoverMoveId !== m.id || !ev.target || typeof ev.target.closest !== "function") return;
+          if (ev.target.closest("button,input,textarea,select,a,[contenteditable='true']")) {
+            stopMoveHover(true);
+          }
+        });
         li.addEventListener("mouseleave", function () {
           if (hoverMoveId === m.id) stopMoveHover(true);
         });
