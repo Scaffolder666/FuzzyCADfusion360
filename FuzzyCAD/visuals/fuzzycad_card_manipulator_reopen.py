@@ -39,6 +39,7 @@ def install(m):
         "launching": False,   # a cd.execute() is in flight, awaiting its CommandCreated
         "pending": None,      # newest card requested while launching -- fired once settled
         "current": None,      # the session dict owned by the active edit command
+        "last_preview_signature": None,
     }
     gen_counter = [0]         # monotonic edit-session generation
 
@@ -220,7 +221,7 @@ def install(m):
                 log("transform preview failed\n{}".format(m.traceback.format_exc()))
             return
 
-        # --- Slow path (other tools): full per-frame redraw, sub-step traced ---
+        # --- Slow path (other tools): full active-preview redraw, sub-step traced ---
         ct = getattr(m, "_crash_trace", None)
         sample = bool(ct) and frame_sample()
         tag = "tool={} mark={}".format(tool, mark.get("id")) if sample else ""
@@ -459,6 +460,48 @@ def install(m):
             log("input sync failed\n{}".format(m.traceback.format_exc()))
             return mark
 
+    def preview_signature(mark):
+        """Pure-data visual signature for one active edit value.
+
+        Fusion can emit both inputChanged and executePreview for the same value.
+        Those are two event sources for one visual state, not two render requests.
+        """
+        if mark is None:
+            return None
+
+        def q(v):
+            try:
+                return round(float(v), 9)
+            except Exception:
+                return v
+
+        tool = mark.get("tool")
+        if tool == "move":
+            return (tool,) + tuple(q(v) for v in (mark.get("vec") or [0, 0, 0]))
+        if tool == "rotate":
+            return (tool,) + tuple(q(v) for v in (mark.get("rot") or [0, 0, 0]))
+        if tool == "scale":
+            return (tool, q(mark.get("factor", 1.0)))
+        if tool == "scale_axis":
+            return (tool, str(mark.get("axis", "X")), str(mark.get("scale_side", "positive")),
+                    q(mark.get("factor", 1.0)))
+        if tool == "axis_rotate":
+            return (tool, q(mark.get("angle", 0.0)))
+        if tool in ("extrude", "fillet"):
+            return (tool, q(mark.get("amount", 0.0)))
+        if tool == "hole":
+            return (tool, q(mark.get("diameter", 0.0)), q(mark.get("depth", 0.0)))
+        return (str(tool),)
+
+    def sync_and_draw(send=True, force=False):
+        mark = sync_mark_from_inputs()
+        sig = preview_signature(mark)
+        if not force and sig is not None and sig == state.get("last_preview_signature"):
+            return mark
+        state["last_preview_signature"] = sig
+        draw_active(send)
+        return mark
+
     def sync_inputs_from_mark(mark):
         inputs = state.get("inputs")
         if inputs is None or mark is None:
@@ -501,8 +544,7 @@ def install(m):
             if state.get("updating") or not is_current(self.session):
                 return
             try:
-                sync_mark_from_inputs()
-                draw_active(True)
+                sync_and_draw(True)
             except Exception:
                 log("edit inputChanged failed\n{}".format(m.traceback.format_exc()))
 
@@ -514,8 +556,7 @@ def install(m):
             if not is_current(self.session):
                 return
             try:
-                sync_mark_from_inputs()
-                draw_active(True)
+                sync_and_draw(True)
             except Exception:
                 log("edit preview failed\n{}".format(m.traceback.format_exc()))
 
@@ -527,7 +568,7 @@ def install(m):
                 return
             try:
                 redraw_other_marks(state.get("active_id"))
-                draw_active(False)
+                sync_and_draw(False, force=True)
                 m._app.activeViewport.refresh()
             except Exception:
                 pass
@@ -557,6 +598,7 @@ def install(m):
                 # proposed comic if Destroy is deferred. xform_built resets so a later
                 # re-edit rebuilds the outline.
                 state["xform_built"] = False
+                state["last_preview_signature"] = None
                 try:
                     m._clear(m.GROUP_PREVIEW)
                 except Exception:
@@ -613,6 +655,7 @@ def install(m):
                 m._inputs = None
             if getattr(m, "_active_cmd", None) == "edit_existing":
                 m._active_cmd = None
+            state["last_preview_signature"] = None
             # Restore the proposed UI only on a genuine close -- if a toolbar command
             # took over (owned_cmd False), or we're mid-switch (a toolbar Launch set
             # _switching while terminating us), let the incoming command own the
@@ -684,6 +727,7 @@ def install(m):
                 # A fresh edit -> the transform preview outline must be rebuilt once
                 # for this session before per-frame re-transforming.
                 state["xform_built"] = False
+                state["last_preview_signature"] = None
                 # Expose which mark is being re-edited so other layers (e.g. the
                 # fillet preview) can treat a reopened edit as "live".
                 m._active_edit_id = mark["id"]
@@ -824,6 +868,7 @@ def install(m):
                         if mark is not None:
                             m._apply_edit(mark, data.get("key"), data.get("value"))
                             sync_inputs_from_mark(mark)
+                            state["last_preview_signature"] = preview_signature(mark)
                             draw_active(False)
                         return
                 except Exception:
