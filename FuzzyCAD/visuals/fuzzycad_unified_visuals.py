@@ -71,6 +71,8 @@ def install(m):
             return mat
         return adsk.core.Matrix3D.create()
 
+    m._candidate_matrix = candidate_matrix
+
     def add_candidate_body(group, body, matrix=None):
         if body is None:
             return None

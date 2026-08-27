@@ -161,14 +161,69 @@ def install(m):
         except Exception:
             return False
 
+    # Tools whose candidate is the original geometry under ONE matrix. For these we
+    # draw the outline once and only re-transform per frame (Phase 2), instead of
+    # clearing and rebuilding CustomGraphics every frame -- that per-frame churn
+    # during a live native manipulator drag is what hard-crashed Fusion, and it is
+    # also the bulk of the drag-time redraw cost.
+    TRANSFORM_MATRIX_TOOLS = ("move", "rotate", "scale")
+
+    def build_transform_base(mark):
+        """Draw the candidate outline ONCE at the body's ORIGINAL position so that
+        each later frame only sets group.transform = candidate_matrix(mark)."""
+        m._clear(m.GROUP_PREVIEW)
+        group = m._group(m.GROUP_PREVIEW)
+        if group is None:
+            return None
+        try:
+            rgb, amp = m._style(mark)
+        except Exception:
+            rgb, amp = (150, 150, 150), 0.0
+        g = m._geom.get(mark.get("id"), {}) or {}
+        for i, loop in enumerate(g.get("edges", []) or []):
+            try:
+                m._sketchy(group, loop, rgb, amp * 0.8,
+                           mark.get("id", 1) * 120 + i, weight=1, strokes=2)
+            except Exception:
+                pass
+        return group
+
     def draw_active(send=True):
         mark = active_mark()
         if mark is None:
             return
+        tool = mark.get("tool")
+        geom = m._geom.get(mark.get("id"), {}) or {}
+
+        # --- Fast transform path (move / rotate / scale) -------------------
+        if (tool in TRANSFORM_MATRIX_TOOLS and geom.get("edges")
+                and getattr(m, "_candidate_matrix", None) is not None):
+            try:
+                if not state.get("xform_built"):
+                    build_transform_base(mark)
+                    # Apply the editing-phase source opacity ONCE on entry
+                    # (proposed comic -> editing original). The guarded write then
+                    # stays put; we never touch opacity again during the drag.
+                    try:
+                        m._refresh_ghost()
+                    except Exception:
+                        pass
+                    state["xform_built"] = True
+                group = m._group(m.GROUP_PREVIEW)
+                if group is not None:
+                    # Just move the already-drawn outline. NO clear/rebuild, NO
+                    # per-frame _refresh_ghost (both are the crash/lag sources).
+                    group.transform = m._candidate_matrix(mark)
+                if send:
+                    (getattr(m, "_send_state_throttled", None) or m._send_state)()
+            except Exception:
+                log("transform preview failed\n{}".format(m.traceback.format_exc()))
+            return
+
+        # --- Slow path (other tools): full per-frame redraw, sub-step traced ---
         ct = getattr(m, "_crash_trace", None)
         sample = bool(ct) and frame_sample()
-        tag = "tool={} mark={}".format(
-            mark.get("tool"), mark.get("id")) if sample else ""
+        tag = "tool={} mark={}".format(tool, mark.get("id")) if sample else ""
         try:
             if sample:
                 ct("DA_BEGIN", tag)
@@ -599,6 +654,9 @@ def install(m):
                 }
                 state["current"] = session
                 state["active_id"] = mark["id"]
+                # A fresh edit -> the transform preview outline must be rebuilt once
+                # for this session before per-frame re-transforming.
+                state["xform_built"] = False
                 # Expose which mark is being re-edited so other layers (e.g. the
                 # fillet preview) can treat a reopened edit as "live".
                 m._active_edit_id = mark["id"]
