@@ -246,5 +246,11 @@ _fuzzy.install(_legacy)
 _crash_trace = _load("fuzzycad_crash_trace", "core/fuzzycad_crash_trace.py")
 _crash_trace.install(_legacy)
 
+# Reopened-card Confirm must never terminate Fusion through the legacy
+# terminateActiveCommand custom-event path. Intercept that one lifecycle edge and
+# finish the active edit via Command.doExecute(True), equivalent to pressing OK.
+_safe_confirm = _load("fuzzycad_safe_confirm", "core/fuzzycad_safe_confirm.py")
+_safe_confirm.install(_legacy)
+
 run = _legacy.run
 stop = _legacy.stop
