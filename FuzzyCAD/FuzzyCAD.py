@@ -269,6 +269,13 @@ _fuzzy.install(_legacy)
 _comic_integrity = _load("fuzzycad_comic_integrity", "visuals/fuzzycad_comic_integrity.py")
 _comic_integrity.install(_legacy)
 
+# Editing -> Proposed is a discrete lifecycle handoff. Install this after the
+# final comic/opacity services so it can reassert only the affected body and
+# establish the complete Proposed baseline without another global redraw.
+_visual_transition = _load(
+    "fuzzycad_visual_transition", "core/fuzzycad_visual_transition.py")
+_visual_transition.install(_legacy)
+
 # Always-on coarse lifecycle trace for hard-crash diagnosis. It deliberately
 # excludes drag/animation frames and is independent of the heavier DEV_MODE tools.
 _crash_trace = _load("fuzzycad_crash_trace", "core/fuzzycad_crash_trace.py")
