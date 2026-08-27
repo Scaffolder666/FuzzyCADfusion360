@@ -155,7 +155,10 @@ def install(m):
                 m._draw_one(group, mark)
             m._refresh_ghost()
             if send:
-                m._send_state()
+                # Per-frame drag push: throttle the full-sidebar re-render to a
+                # human rate (the manipulator shows the live value; settle pushes
+                # the exact one). Falls back to the unthrottled push if absent.
+                (getattr(m, "_send_state_throttled", None) or m._send_state)()
             # Deliberately no activeViewport.refresh() here. Fusion refreshes the
             # CustomGraphics during its command preview cycle; forcing refresh in
             # a drag can release the native manipulator.

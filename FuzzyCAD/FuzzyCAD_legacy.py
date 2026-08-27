@@ -22,6 +22,7 @@ then, so the .f3d carries the *proposed* change.
 
 import math
 import os
+import time
 import traceback
 
 import adsk.core
@@ -928,7 +929,7 @@ class FuzzyPreview(adsk.core.CommandEventHandler):
                     if mark is not None:
                         _draw_one(group, mark)
                 _refresh_ghost()   # fade the original live while dragging
-                _send_state()      # keep the right-panel card in sync with the drag
+                _send_state_throttled()   # sync the card at a human rate, not per frame
             # NOTE: do NOT call activeViewport.refresh() here — forcing a refresh
             # mid-drag releases the manipulator, so the drag only worked once.
             # Fusion refreshes custom graphics after executePreview on its own.
@@ -1478,7 +1479,25 @@ def _send_state():
     if not palette:
         return
     import json
+    _last_state_send[0] = time.perf_counter()
     palette.sendInfoToHTML("state", json.dumps({"marks": [_public(m) for m in _marks]}))
+
+
+# Throttle for the per-frame drag paths. Pushing the whole sidebar (rebuild every
+# card's JSON + a full palette DOM re-render + IPC) on every executePreview frame
+# is the bulk of the drag-time redraw cost and races the native manipulator. The
+# manipulator already shows the live value, so during a drag we only need the card
+# to keep up at a human rate; the final exact value is always pushed by the
+# unthrottled _send_state() at settle (execute/destroy).
+_last_state_send = [0.0]
+STATE_SEND_THROTTLE_SEC = 0.10
+
+
+def _send_state_throttled():
+    now = time.perf_counter()
+    if now - _last_state_send[0] < STATE_SEND_THROTTLE_SEC:
+        return
+    _send_state()
 
 
 class PaletteHTMLHandler(adsk.core.HTMLEventHandler):
