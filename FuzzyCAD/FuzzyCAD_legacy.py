@@ -1042,10 +1042,24 @@ class LaunchHandler(adsk.core.CustomEventHandler):
             # successor, so the outgoing command must do its normal close redraw
             # (flip to the proposed/comic look); leaving _switching False ensures it.
             _switching = bool(cd)
-            try:
-                _ui.terminateActiveCommand()
-            except Exception:
-                pass
+            # If a reopened card edit is live, NEVER terminateActiveCommand() on it
+            # -- terminating that native manipulator command hard-crashes Fusion
+            # (ARCHITECTURE.md §5). Close it through the crash-safe doExecute path
+            # (valid here because we are inside a custom event). Any OTHER active
+            # command uses the normal terminate -- Fusion's ordinary tool-switch
+            # mechanism, which the toolbar has always relied on.
+            if _active_cmd == "edit_existing":
+                closer = globals().get("_close_active_edit_sync")
+                if closer is not None:
+                    try:
+                        closer("toolbar-switch")
+                    except Exception:
+                        pass
+            else:
+                try:
+                    _ui.terminateActiveCommand()
+                except Exception:
+                    pass
             if cd:
                 cd.execute()
         except Exception:

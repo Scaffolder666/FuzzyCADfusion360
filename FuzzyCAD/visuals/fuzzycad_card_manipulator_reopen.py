@@ -626,17 +626,32 @@ def install(m):
                     pass
                 log("LAUNCH pre_execute")
                 cd = m._ui.commandDefinitions.itemById(EDIT_CMD_ID)
+                launched = False
                 if cd is not None:
                     # Mark the switch window so an outgoing toolbar command's Destroy
                     # skips its heavy redraw; this card edit owns the viewport now.
                     m._switching = True
                     try:
                         cd.execute()
+                        launched = True
+                    except Exception:
+                        log("edit execute raised\n{}".format(m.traceback.format_exc()))
                     finally:
                         m._switching = False
-                log("LAUNCH post_execute")
+                log("LAUNCH post_execute launched={}".format(launched))
+                # If execute never happened (no command def, or it raised),
+                # EditCommandCreated -> fire_pending will not run, so release the
+                # launch gate here. Otherwise every future card reopen is silently
+                # parked in state["pending"] forever (a hard usability lockout).
+                if not launched:
+                    fire_pending()
             except Exception:
                 log("edit launch failed\n{}".format(m.traceback.format_exc()))
+                # Never leave the gate stuck closed on an unexpected failure.
+                try:
+                    fire_pending()
+                except Exception:
+                    pass
 
     class PaletteHTMLHandler(adsk.core.HTMLEventHandler):
         def __init__(self):

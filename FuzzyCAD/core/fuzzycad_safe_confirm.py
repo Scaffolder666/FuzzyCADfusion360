@@ -74,6 +74,37 @@ def install(m):
                 pass
             return False
 
+    def close_active_edit_sync(reason="switch"):
+        """Close an active reopened proposal edit synchronously via doExecute(True).
+
+        This is the crash-safe replacement for UserInterface.terminateActiveCommand()
+        when the active command is the native manipulator edit (`edit_existing`) --
+        terminating that hard-crashes Fusion (ARCHITECTURE.md §5). Safe to call from
+        inside a CustomEventHandler (the same context this module's doExecute runs in);
+        do NOT call it directly from an HTML event (defer through request_finish there).
+
+        Returns True if an edit was active and closed; False if no edit was active
+        (the caller should then fall back to its normal path).
+        """
+        if getattr(m, "_active_cmd", None) != "edit_existing":
+            return False
+        cmd = active_command()
+        if cmd is None:
+            return False
+        trace("CLOSE_EDIT_SYNC_BEGIN", "reason={} active_edit={}".format(
+            reason, getattr(m, "_active_edit_id", None)))
+        try:
+            cmd.doExecute(True)
+        except Exception:
+            try:
+                trace("CLOSE_EDIT_SYNC_EXCEPTION", m.traceback.format_exc())
+            except Exception:
+                trace("CLOSE_EDIT_SYNC_EXCEPTION", "traceback unavailable")
+            return False
+        trace("CLOSE_EDIT_SYNC_DONE", "reason={} active_cmd={}".format(
+            reason, getattr(m, "_active_cmd", None)))
+        return True
+
     def resolve_terminal(action, mid):
         """Resolve a card only after its native edit command is fully closed."""
         try:
@@ -263,6 +294,7 @@ def install(m):
 
     m.PaletteHTMLHandler = PaletteHTMLHandler
     m._safe_finish_reopen = request_finish
+    m._close_active_edit_sync = close_active_edit_sync
 
     def run(context):
         result = old_run(context)

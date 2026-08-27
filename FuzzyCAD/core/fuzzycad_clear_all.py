@@ -44,6 +44,21 @@ def install(m):
         # A live Compare/manipulator command keeps redrawing its own preview
         # group, so deleting graphics without ending it would let the overlay
         # (e.g. connector sprites) come straight back.
+        #
+        # A reopened card edit (`edit_existing`) must NEVER be closed with
+        # terminateActiveCommand() -- that native-manipulator terminate hard-crashes
+        # Fusion (ARCHITECTURE.md §5). Ask safe_confirm to finish it through the
+        # deferred doExecute path instead, and DON'T null _active_cmd here (the
+        # deferred close needs to still see it as the active edit). For any other
+        # command the normal terminate is fine.
+        if getattr(m, "_active_cmd", None) == "edit_existing":
+            finisher = getattr(m, "_safe_finish_reopen", None)
+            if finisher is not None:
+                try:
+                    finisher("confirm", getattr(m, "_active_edit_id", None))
+                    return
+                except Exception:
+                    pass
         try:
             m._ui.terminateActiveCommand()
         except Exception:
