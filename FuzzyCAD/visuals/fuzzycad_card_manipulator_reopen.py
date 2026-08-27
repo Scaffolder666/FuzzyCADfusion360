@@ -620,10 +620,28 @@ def install(m):
             if owned_cmd and not getattr(m, "_switching", False):
                 try:
                     edit_stage_clear()
+                    state["xform_built"] = False
                     m._redraw_marks()
+                    # Confirm goes through doExecute(True), which fires Destroy but
+                    # NOT Execute, so this is the ONLY cleanup pass. Force the comic
+                    # boundary + source opacity back to the proposed look here rather
+                    # than relying on refresh_ghost's phase-change guard (which can
+                    # skip the re-sync and leave a proposal with no sketch outline).
+                    for name in ("_sync_visual_opacity", "_sync_comic_uncertainty"):
+                        fn = getattr(m, name, None)
+                        if fn is not None:
+                            try:
+                                fn()
+                            except Exception:
+                                pass
                     m._send_state()
                     if getattr(m, "_persist_state", None):
                         m._persist_state("manipulator-close")
+                    try:
+                        if m._app and m._app.activeViewport:
+                            m._app.activeViewport.refresh()
+                    except Exception:
+                        pass
                 except Exception:
                     pass
             log("EDIT CLOSED gen={}".format(sess.get("gen")))
