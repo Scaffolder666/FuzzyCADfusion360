@@ -552,6 +552,15 @@ def install(m):
                 # a successor command that grabbed the edit id isn't disturbed.
                 if getattr(m, "_active_edit_id", None) == sess.get("mark_id"):
                     m._active_edit_id = None
+                # Remove the live edit preview (incl. the Phase-2 transform outline in
+                # GROUP_PREVIEW) at the commit moment, so it can't linger over the
+                # proposed comic if Destroy is deferred. xform_built resets so a later
+                # re-edit rebuilds the outline.
+                state["xform_built"] = False
+                try:
+                    m._clear(m.GROUP_PREVIEW)
+                except Exception:
+                    pass
                 try:
                     m._redraw_marks()
                 except Exception:
