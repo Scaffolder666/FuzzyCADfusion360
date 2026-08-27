@@ -2,7 +2,8 @@
 
 Card clicks bring the relevant uncertainty into view without changing the user's
 viewing orientation. Need Input cards then continue into their existing native
-edit-manipulator flow; Note and Conflict cards simply inspect/focus the mark.
+edit-manipulator flow; Rough Shape, Note, and Conflict cards simply inspect/focus
+the mark because they do not own a native manipulator.
 """
 
 
@@ -17,7 +18,7 @@ def install(m):
     ZOOM_FACTOR = 0.78
     MAX_BODY_FRAMES = 4.5
     MIN_BODY_FRAMES = 1.9
-    BODY_TOOLS = {"move", "rotate", "scale", "scale_axis"}
+    BODY_TOOLS = {"move", "rotate", "scale", "scale_axis", "rough"}
     EDIT_CMD_ID = "FuzzyCAD_EditExistingProposal"
     state = {"pending_edit_id": None}
 
@@ -209,7 +210,16 @@ def install(m):
 
             if action == "editManipulator":
                 try:
-                    state["pending_edit_id"] = int(data.get("id"))
+                    mid = int(data.get("id"))
+                    mark = m._find(mid)
+                    # Rough Shape is Need Input semantically, but it intentionally
+                    # has no geometric parameter/manipulator. Its card click is
+                    # therefore pure inspection/focus, not a failed reopen attempt.
+                    if mark is not None and mark.get("tool") == "rough":
+                        state["pending_edit_id"] = None
+                        if focus_mark(mark):
+                            return
+                    state["pending_edit_id"] = mid
                 except Exception:
                     state["pending_edit_id"] = None
 
