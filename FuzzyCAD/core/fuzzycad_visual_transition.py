@@ -349,4 +349,95 @@ def install(m):
     # wrappers captured earlier remain implementation history, not runtime owners.
     m._redraw_marks = render
 
+    # Directional Scale and Axis Rotate are custom toolbar commands whose legacy
+    # Execute/Destroy handlers used to redraw *before* clearing `_live` and
+    # `_active_cmd`. The visual authority therefore saw their final card as still
+    # Editing on the first Confirm. Reopened Confirm was fine because the reopen
+    # owner clears edit ownership before its persistent render. Keep the same
+    # lifecycle rule here: defer those two toolbar redraws until the command's
+    # existing Destroy handler has fully released ownership, then render once.
+    custom_finish = {
+        "deferred": False,
+        "command": None,
+        "mark_id": None,
+    }
+    custom_live_key = {
+        "directional_scale": "scale_axis",
+        "axis_rotate": "axis_rotate",
+    }
+    CurrentFuzzyCommandCreated = getattr(m, "FuzzyCommandCreated", None)
+
+    def finish_aware_redraw(*args, **kwargs):
+        cmd_name = getattr(m, "_active_cmd", None)
+        live_key = custom_live_key.get(cmd_name)
+        if live_key is not None:
+            mid = (getattr(m, "_live", None) or {}).get(live_key)
+            custom_finish["deferred"] = True
+            custom_finish["command"] = cmd_name
+            custom_finish["mark_id"] = mid
+            trace("TOOL_RENDER_DEFERRED", "tool={} id={}".format(cmd_name, mid))
+            return state.get("last_snapshot")
+        return render(*args, **kwargs)
+
+    # Keep `_visual_render` as the direct authority. Only the compatibility
+    # `_redraw_marks` entry point is finish-aware so the post-Destroy handler can
+    # deliberately call `render()` after lifecycle ownership is gone.
+    m._redraw_marks = finish_aware_redraw
+
+    if CurrentFuzzyCommandCreated is not None:
+        class PostCustomToolDestroy(m.adsk.core.CommandEventHandler):
+            def __init__(self, cmd_name):
+                super().__init__()
+                self.cmd_name = cmd_name
+
+            def notify(self, args):
+                # Registered after the command's existing Destroy handlers, so
+                # direct_interactions has already set _active_cmd=None and _live={}
+                # here. Never manufacture phase state ourselves; ask the central
+                # resolver what the mark is *now* and render that state.
+                if getattr(m, "_active_cmd", None) == self.cmd_name:
+                    trace("TOOL_POST_DESTROY_EARLY", "tool={}".format(self.cmd_name))
+                    return
+
+                mid = custom_finish.get("mark_id")
+                try:
+                    render(reason="{}-post-destroy".format(self.cmd_name))
+                except Exception:
+                    trace("TOOL_POST_DESTROY_RENDER_EXCEPTION", "tool={}".format(
+                        self.cmd_name))
+                try:
+                    m._send_state()
+                except Exception:
+                    pass
+
+                phase = None
+                try:
+                    mark = m._find(mid) if mid is not None else None
+                    phase = m._mark_phase(mark) if mark is not None else "gone"
+                except Exception:
+                    pass
+                trace("TOOL_POST_DESTROY_RENDERED", "tool={} id={} phase={}".format(
+                    self.cmd_name, mid, phase))
+
+                if custom_finish.get("command") == self.cmd_name:
+                    custom_finish["deferred"] = False
+                    custom_finish["command"] = None
+                    custom_finish["mark_id"] = None
+
+        class FuzzyCommandCreated(CurrentFuzzyCommandCreated):
+            def notify(self, args):
+                super().notify(args)
+                cmd_name = getattr(self, "cmd", None)
+                if cmd_name not in custom_live_key:
+                    return
+                try:
+                    handler = PostCustomToolDestroy(cmd_name)
+                    args.command.destroy.add(handler)
+                    m._handlers.append(handler)
+                except Exception:
+                    trace("TOOL_POST_DESTROY_REGISTER_EXCEPTION", "tool={}".format(
+                        cmd_name))
+
+        m.FuzzyCommandCreated = FuzzyCommandCreated
+
     trace("CONTROLLER_READY", "one state -> one persistent render transaction")
