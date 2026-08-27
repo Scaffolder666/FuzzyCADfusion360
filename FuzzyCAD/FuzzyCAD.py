@@ -241,6 +241,12 @@ _image.install(_legacy)
 _fuzzy = _load("fuzzycad_fuzzy_boundary", "visuals/fuzzycad_fuzzy_boundary.py")
 _fuzzy.install(_legacy)
 
+# Fusion can occasionally retain the per-body comic group while dropping its
+# line graphics. Validate only visible Proposed comic bodies and rebuild that one
+# group if its sampled boundary exists but its CustomGraphicsLines do not.
+_comic_integrity = _load("fuzzycad_comic_integrity", "visuals/fuzzycad_comic_integrity.py")
+_comic_integrity.install(_legacy)
+
 # Always-on coarse lifecycle trace for hard-crash diagnosis. It deliberately
 # excludes drag/animation frames and is independent of the heavier DEV_MODE tools.
 _crash_trace = _load("fuzzycad_crash_trace", "core/fuzzycad_crash_trace.py")
