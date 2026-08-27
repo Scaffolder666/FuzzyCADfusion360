@@ -8,9 +8,9 @@ palette so it can be seen and repaired by hand:
   inspectorData   -> a snapshot: counts (open marks by type, ghosted bodies,
                      any stray graphics groups), where the state is stored, and a
                      compact per-mark list.
-  repairViewport  -> manually run the visual authority once: sweep every stray
-                     graphics group, restore every ghosted body to full opacity,
-                     then redraw so only the legitimate ghosts/badges come back.
+  repairViewport  -> run the expensive recovery path deliberately: restore tracked
+                     opacity, sweep stray graphics, scan for legacy orphan opacity,
+                     then redraw the authoritative current state once.
 
 Per-mark Locate / Delete in the panel reuse the existing focus / reject actions,
 so this module only adds the two read/repair actions above.
@@ -46,7 +46,7 @@ def install(m):
     def stray_groups():
         """Ephemeral graphics groups that are not empty. When no FuzzyCAD command
         is running these should all be zero; anything here is leftover the Repair
-        button (or the next reconcile) will sweep."""
+        button can sweep."""
         out = []
         for gid in list(getattr(m, "_EPHEMERAL_GROUPS", []) or []):
             try:
@@ -88,7 +88,7 @@ def install(m):
         }
 
     def repair():
-        result = {"swept": False, "restored": 0}
+        result = {"swept": False, "restored": 0, "full_scan": False}
         try:
             n = ghost_count()
             fn = getattr(m, "_restore_all_bodies", None)
@@ -104,16 +104,24 @@ def install(m):
                 result["swept"] = True
         except Exception:
             log("sweep failed\n{}".format(m.traceback.format_exc()))
-        # Redraw so the legitimate ghosts/badges are re-applied from the marks.
+
+        # Ordinary redraw no longer walks design.allComponents. Repair is the
+        # deliberate escape hatch for that expensive legacy/orphan scan.
+        try:
+            fn = getattr(m, "_reconcile_viewport", None)
+            if fn:
+                fn(True)
+                result["full_scan"] = True
+        except Exception:
+            log("full reconcile failed\n{}".format(m.traceback.format_exc()))
+
+        # One authoritative redraw recreates only the visuals implied by open marks.
         try:
             m._redraw_marks()
         except Exception:
             pass
-        try:
-            m._app.activeViewport.refresh()
-        except Exception:
-            pass
-        log("REPAIR swept={} restored={}".format(result["swept"], result["restored"]))
+        log("REPAIR swept={} restored={} full_scan={}".format(
+            result["swept"], result["restored"], result["full_scan"]))
         return result
 
     class PaletteHTMLHandler(adsk.core.HTMLEventHandler):
