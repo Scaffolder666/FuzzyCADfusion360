@@ -10,6 +10,12 @@ Reject, the edit is closed first; only after Fusion has returned from doExecute 
 we commit/remove the mark. This avoids deleting a proposal while its native
 manipulator command is still alive.
 
+Before finishing, this owner also clears temporary replay/reveal state. The
+reopened Confirm palette action is intercepted here and therefore does not reach
+older palette wrappers; without this explicit cleanup, the mark could return to
+Proposed while still carrying the persistent-detail reveal flag, which looked
+like leftover Editing lines over the comic baseline.
+
 The custom event carries only plain JSON data. No Fusion event/command wrapper is
 retained across the palette -> main-thread boundary.
 """
@@ -74,6 +80,52 @@ def install(m):
                 pass
             return False
 
+    def prepare_visual_finish(reason, mid):
+        """Remove ephemeral Editing-only state before the native command closes.
+
+        safe_confirm is the outer palette owner for a reopened Confirm, so the
+        intercepted action never reaches progressive_visibility's normal Confirm
+        cleanup. Do that cleanup here, before Destroy redraws the mark as Proposed.
+        """
+        try:
+            cancel = getattr(m, "_animation_cancel", None)
+            if cancel is not None:
+                cancel("safe-finish:" + str(reason), refresh=False)
+        except Exception:
+            pass
+        try:
+            clear_reveal = getattr(m, "_visual_clear_revealed", None)
+            if clear_reveal is not None:
+                clear_reveal(mid, hover_only=False)
+        except Exception:
+            pass
+        try:
+            m._clear(m.GROUP_PREVIEW)
+        except Exception:
+            pass
+        trace(
+            "SAFE_FINISH_VISUAL_PREP",
+            "reason={} active_edit={}".format(reason, mid))
+
+    def verify_confirm_visual(mid):
+        """Validate the comic baseline after Fusion has fully closed the command."""
+        # Destroy normally clears GROUP_PREVIEW, but clear it once more after
+        # doExecute returns so a late native preview cannot survive the handoff.
+        try:
+            m._clear(m.GROUP_PREVIEW)
+        except Exception:
+            pass
+        repaired = False
+        try:
+            repair = getattr(m, "_repair_comic_integrity", None)
+            if repair is not None:
+                repaired = bool(repair("confirm-post-command"))
+        except Exception:
+            pass
+        trace(
+            "SAFE_FINISH_VISUAL_VERIFY",
+            "active_edit={} repaired={}".format(mid, repaired))
+
     def close_active_edit_sync(reason="switch"):
         """Close an active reopened proposal edit synchronously via doExecute(True).
 
@@ -91,8 +143,9 @@ def install(m):
         cmd = active_command()
         if cmd is None:
             return False
-        trace("CLOSE_EDIT_SYNC_BEGIN", "reason={} active_edit={}".format(
-            reason, getattr(m, "_active_edit_id", None)))
+        mid = getattr(m, "_active_edit_id", None)
+        trace("CLOSE_EDIT_SYNC_BEGIN", "reason={} active_edit={}".format(reason, mid))
+        prepare_visual_finish(reason, mid)
         try:
             cmd.doExecute(True)
         except Exception:
@@ -101,6 +154,8 @@ def install(m):
             except Exception:
                 trace("CLOSE_EDIT_SYNC_EXCEPTION", "traceback unavailable")
             return False
+        if str(reason) == "confirm":
+            verify_confirm_visual(mid)
         trace("CLOSE_EDIT_SYNC_DONE", "reason={} active_cmd={}".format(
             reason, getattr(m, "_active_cmd", None)))
         return True
@@ -228,6 +283,7 @@ def install(m):
                 trace("SAFE_FINISH_NO_COMMAND", "reason={} active_edit={}".format(reason, mid))
                 return
 
+            prepare_visual_finish(reason, mid)
             trace("SAFE_FINISH_DOEXECUTE_BEGIN", "reason={} active_edit={}".format(reason, mid))
             try:
                 ok = bool(cmd.doExecute(True))
@@ -239,6 +295,11 @@ def install(m):
                 except Exception:
                     trace("SAFE_FINISH_EXCEPTION", "traceback unavailable")
                 return
+
+            if reason == "confirm":
+                # This runs after Destroy returned, catching graphics Fusion may
+                # drop at the command-teardown boundary without another global redraw.
+                verify_confirm_visual(mid)
 
             if reason in ("accept", "reject"):
                 # doExecute is synchronous in the tested Fusion lifecycle: Destroy
