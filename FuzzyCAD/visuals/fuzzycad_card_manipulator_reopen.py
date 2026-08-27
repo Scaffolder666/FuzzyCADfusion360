@@ -144,21 +144,50 @@ def install(m):
         except Exception:
             pass
 
+    _frame_gate = {"last": 0.0}
+
+    def frame_sample():
+        # True at most ~8x/sec, so a sampled drag frame logs a COMPLETE sub-step
+        # sequence (draw -> ghost -> send) without per-frame flooding. The crash is
+        # deterministic per frame, so a sampled frame will hit it and the log will
+        # end on whichever sub-step marker came last.
+        try:
+            import time
+            now = time.perf_counter()
+            if now - _frame_gate["last"] < 0.12:
+                return False
+            _frame_gate["last"] = now
+            return True
+        except Exception:
+            return False
+
     def draw_active(send=True):
         mark = active_mark()
         if mark is None:
             return
+        ct = getattr(m, "_crash_trace", None)
+        sample = bool(ct) and frame_sample()
+        tag = "tool={} mark={}".format(
+            mark.get("tool"), mark.get("id")) if sample else ""
         try:
+            if sample:
+                ct("DA_BEGIN", tag)
             m._clear(m.GROUP_PREVIEW)
             group = m._group(m.GROUP_PREVIEW)
             if group is not None:
                 m._draw_one(group, mark)
+            if sample:
+                ct("DA_AFTER_DRAW", tag)
             m._refresh_ghost()
+            if sample:
+                ct("DA_AFTER_GHOST", tag)
             if send:
                 # Per-frame drag push: throttle the full-sidebar re-render to a
                 # human rate (the manipulator shows the live value; settle pushes
                 # the exact one). Falls back to the unthrottled push if absent.
                 (getattr(m, "_send_state_throttled", None) or m._send_state)()
+            if sample:
+                ct("DA_AFTER_SEND", tag)
             # Deliberately no activeViewport.refresh() here. Fusion refreshes the
             # CustomGraphics during its command preview cycle; forcing refresh in
             # a drag can release the native manipulator.
