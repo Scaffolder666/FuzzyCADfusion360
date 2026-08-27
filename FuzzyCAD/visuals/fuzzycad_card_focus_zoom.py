@@ -10,6 +10,7 @@ def install(m):
     adsk = m.adsk
     CurrentPaletteHTMLHandler = m.PaletteHTMLHandler
     old_focus_camera = m._focus_camera
+    old_run = m.run
 
     # Card focus should feel like inspection, not a camera jump.  Keep enough
     # context around the object and never zoom out from the user's current view.
@@ -17,6 +18,7 @@ def install(m):
     MAX_BODY_FRAMES = 4.5
     MIN_BODY_FRAMES = 1.9
     BODY_TOOLS = {"move", "rotate", "scale", "scale_axis"}
+    EDIT_CMD_ID = "FuzzyCAD_EditExistingProposal"
     state = {"pending_edit_id": None}
 
     def body_center(mark):
@@ -116,6 +118,72 @@ def install(m):
 
     m._focus_camera = focus_camera
 
+    # Fusion can hide a DistanceValueCommandInput manipulator between
+    # CommandCreated and Activate when the reopened Extrude also rebuilds its
+    # CustomGraphics preview. Reassert the same face-center/normal manipulator
+    # once, after the reopen owner's Activate handler has finished. This is a
+    # command-boundary repair only; it does no per-frame work.
+    def reassert_extrude_manipulator():
+        if getattr(m, "_active_cmd", None) != "edit_existing":
+            return False
+        mid = getattr(m, "_active_edit_id", None)
+        if mid is None:
+            return False
+        try:
+            mark = m._find(mid)
+        except Exception:
+            mark = None
+        if mark is None or mark.get("tool") != "extrude" or mark.get("status", "open") != "open":
+            return False
+        inputs = getattr(m, "_inputs", None)
+        if inputs is None:
+            return False
+        try:
+            it = inputs.itemById("d")
+            if it is None:
+                return False
+            anchor = list(mark.get("anchor") or [0.0, 0.0, 0.0])
+            geom = (getattr(m, "_geom", None) or {}).get(mark.get("id"), {}) or {}
+            raw = list(geom.get("normal") or [0.0, 0.0, 1.0])
+            direction = adsk.core.Vector3D.create(float(raw[0]), float(raw[1]), float(raw[2]))
+            if direction.length < 1e-9:
+                direction = adsk.core.Vector3D.create(0.0, 0.0, 1.0)
+            else:
+                direction.normalize()
+            it.setManipulator(
+                adsk.core.Point3D.create(float(anchor[0]), float(anchor[1]), float(anchor[2])),
+                direction)
+            it.isVisible = True
+            it.isEnabled = True
+            try:
+                trace = getattr(m, "_crash_trace", None)
+                if trace is not None:
+                    trace("EXTRUDE_MANIPULATOR_REASSERT", "id={}".format(mark.get("id")))
+            except Exception:
+                pass
+            return True
+        except Exception:
+            return False
+
+    class ReopenActivate(adsk.core.CommandEventHandler):
+        def notify(self, args):
+            if not reassert_extrude_manipulator():
+                return
+            try:
+                if m._app and m._app.activeViewport:
+                    m._app.activeViewport.refresh()
+            except Exception:
+                pass
+
+    class ReopenCreated(adsk.core.CommandCreatedEventHandler):
+        def notify(self, args):
+            try:
+                handler = ReopenActivate()
+                args.command.activate.add(handler)
+                m._handlers.append(handler)
+            except Exception:
+                pass
+
     class PaletteHTMLHandler(adsk.core.HTMLEventHandler):
         def __init__(self):
             super().__init__()
@@ -148,3 +216,20 @@ def install(m):
             self._delegate.notify(args)
 
     m.PaletteHTMLHandler = PaletteHTMLHandler
+
+    def run(context):
+        result = old_run(context)
+        # card_manipulator_reopen creates/recreates this command definition in its
+        # run(). Register second so our Activate handler is attached after the
+        # reopen owner's own handler and can reassert the native arrow last.
+        try:
+            cd = m._ui.commandDefinitions.itemById(EDIT_CMD_ID)
+            if cd is not None:
+                handler = ReopenCreated()
+                cd.commandCreated.add(handler)
+                m._handlers.append(handler)
+        except Exception:
+            pass
+        return result
+
+    m.run = run
