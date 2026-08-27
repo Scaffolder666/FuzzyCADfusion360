@@ -1,15 +1,13 @@
-"""Give Compare cards a more deliberate camera focus interaction.
+"""Give Compare cards a deliberate camera focus interaction.
 
-Clicking a Conflict/Compare card already pans the camera target to the mark.
-This patch keeps the current viewing orientation, moves the target to the
-conflict, and adds a modest zoom-in with a smooth transition. Alternative
-buttons still stop event propagation, so choosing A/B does not unexpectedly move
-the camera.
+Clicking a Conflict/Compare card keeps the current viewing orientation, moves the
+camera target to the conflict, and adds a modest zoom-in with a smooth transition.
+Alternative buttons stop event propagation, so choosing A/B does not unexpectedly
+move the camera.
 
-This module also installs the rail-first Compare selection shell after the
-in-place Compare renderer/accept logic has loaded. Keeping that interaction in a
-separate file lets the existing Compare mark semantics stay unchanged while the
-creation flow becomes independent of Fusion's native command panel.
+Compare creation/selection is owned separately by
+``fuzzycad_compare_selection_flow.py`` and is installed explicitly by the top-level
+loader. This module owns camera focus only.
 """
 
 
@@ -106,25 +104,4 @@ def install(m):
 
     m.PaletteHTMLHandler = PaletteHTMLHandler
     m._focus_compare_card = focus_compare
-
-    # Install the selection/Confirm shell after this handler so it becomes the
-    # outer Compare-specific interaction owner. The helper re-registers the same
-    # CompareHere command id after the legacy shell and therefore wins cleanly at
-    # runtime without changing the renderer/accept implementation.
-    try:
-        import importlib.util
-        import os
-        import sys
-        path = os.path.join(os.path.dirname(os.path.abspath(__file__)),
-                            "fuzzycad_compare_selection_flow.py")
-        name = "fuzzycad_compare_selection_flow"
-        mod = sys.modules.get(name)
-        if mod is None:
-            spec = importlib.util.spec_from_file_location(name, path)
-            mod = importlib.util.module_from_spec(spec)
-            sys.modules[name] = mod
-            spec.loader.exec_module(mod)
-        mod.install(m)
-        log("READY: Compare cards focus + rail-first selection")
-    except Exception:
-        log("selection flow install failed\n{}".format(m.traceback.format_exc()))
+    log("READY: Compare card focus")
