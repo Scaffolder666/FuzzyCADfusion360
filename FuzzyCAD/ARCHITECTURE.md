@@ -31,7 +31,7 @@ must not be the primary dependency path.
 | reopened manipulators | `visuals/fuzzycad_card_manipulator_reopen.py` | native edit command + session ownership |
 | reopened Confirm/Accept/Reject | `core/fuzzycad_safe_confirm.py` | close edit via `Command.doExecute(True)` |
 | persistence | `core/fuzzycad_persistence.py` | document attribute snapshot + backup |
-| final viewport repair | `core/fuzzycad_state_reconcile.py` | drift repair, not lifecycle policy |
+| final viewport repair | `core/fuzzycad_state_reconcile.py` | targeted redraw reconcile; full scan only startup/Repair |
 | Compare mark semantics | `compare/fuzzycad_compare_inplace.py` + existing Compare renderer stack | keep/drop alternatives |
 | Compare creation flow | `compare/fuzzycad_compare_selection_flow.py` | first body -> second body -> Confirm |
 | Compare card camera focus | `compare/fuzzycad_compare_card_focus.py` | camera only |
@@ -63,6 +63,26 @@ mark data
 Renderers may draw geometry, but they must not redefine whether a mark is
 Editing/Proposed/Resolved. Proposed baseline visibility must not depend on hover.
 
+### Global redraw invariant
+
+`_redraw_marks()` means **persistent visual meaning changed**. It is not a generic
+"something moved" callback and must not be used as an animation/manipulator frame
+renderer.
+
+Continuous Editing should update only the active preview layer. Move, Rotate, and
+uniform Scale should reuse already-created preview graphics and change only their
+transform. `inputChanged` and `executePreview` may both arrive for one numeric
+value; render that value once.
+
+The valid reasons for a global redraw are discrete transitions such as Confirm ->
+Proposed, Accept/Reject -> Resolved, explicit persistent reveal/focus, startup,
+or explicit viewport Repair. A sidebar numeric edit may redraw once after the new
+value is applied, never once before and once after.
+
+Full-document recovery work (for example scanning `design.allComponents` to find
+legacy orphan opacity) is not part of ordinary redraw. It runs at startup or from
+Inspector Repair.
+
 ## 5. Command lifecycle
 
 Do not call `UserInterface.terminateActiveCommand()` from a custom event to close a
@@ -84,13 +104,14 @@ comic, silhouette, and refresh wrappers.
 
 Optimization order:
 
-1. avoid global redraw for ephemeral hover/animation;
-2. throttle or patch sidebar updates during manipulator drag;
-3. make viewport refresh a single transaction per logical action;
-4. keep orphan-opacity full-document sweeps out of ordinary redraw;
-5. invalidate geometry cache only for affected subjects;
-6. migrate `GROUP_MARKS` and silhouette toward per-mark dirty updates;
-7. replace chained palette handler wrappers with one parsed event router.
+1. keep global redraw out of manipulator/animation frames;
+2. deduplicate equivalent `inputChanged` / `executePreview` values;
+3. throttle or patch sidebar updates during manipulator drag;
+4. make viewport refresh a single transaction per logical action;
+5. keep orphan-opacity full-document sweeps out of ordinary redraw;
+6. invalidate geometry cache only for affected subjects;
+7. migrate `GROUP_MARKS` and silhouette toward per-mark dirty updates;
+8. replace chained palette handler wrappers with one parsed event router.
 
 ## 7. Cleanup rules
 
