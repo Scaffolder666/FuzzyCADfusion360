@@ -28,6 +28,7 @@ def install(m):
     crash_records = {}  # persisted token -> original numeric opacity
     crash_loaded = [False]
     last_targets = [None]  # pure-Python phase signature; avoids per-drag comic sync
+    applied = {}  # entity token -> opacity we last WROTE (skip redundant per-frame writes)
 
     def design():
         try:
@@ -167,6 +168,7 @@ def install(m):
 
     def restore_token(tok):
         load_crash_records()
+        applied.pop(tok, None)
         original = records.pop(tok, None)
         if original is None:
             original = crash_records.get(tok)
@@ -202,6 +204,7 @@ def install(m):
             return False
 
         load_crash_records()
+        applied.pop(tok, None)
         original = records.pop(tok, None)
         if original is None:
             original = crash_records.get(tok)
@@ -248,6 +251,7 @@ def install(m):
                 body.opacity = float(original)
                 crash_records.pop(tok, None)
                 records.pop(tok, None)
+                applied.pop(tok, None)
                 changed = True
             except Exception:
                 pass
@@ -263,14 +267,23 @@ def install(m):
         for tok, (body, target) in wanted.items():
             if tok not in records:
                 records[tok] = capture_original(tok, body, target)
+            target = float(target)
+            # Only WRITE body.opacity when it actually changes. Re-writing the same
+            # value every executePreview frame during a native manipulator drag is a
+            # Fusion hard-crash (each write pokes the display like a mid-drag
+            # refresh). Unchanged targets -> no write -> the drag stays stable.
+            if applied.get(tok) == target:
+                continue
             try:
-                body.opacity = float(target)
+                body.opacity = target
+                applied[tok] = target
             except Exception:
                 pass
 
         for tok in list(records.keys()):
             if tok not in wanted:
                 restore_token(tok)
+                applied.pop(tok, None)
 
         try:
             m._ghosted = {tok: body for tok, (body, _target) in wanted.items()}
@@ -294,6 +307,7 @@ def install(m):
         tokens = set(records.keys()) | set(crash_records.keys())
         for tok in list(tokens):
             restore_token(tok)
+        applied.clear()
         last_targets[0] = None
         try:
             m._ghosted.clear()
