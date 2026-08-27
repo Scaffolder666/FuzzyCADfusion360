@@ -57,6 +57,28 @@ def install(m):
         except Exception:
             pass
 
+    # Throttled per-frame heartbeat. During a drag/redraw (outside the activation
+    # window) we don't want a file write every frame, but we DO want the last
+    # operation before a native hard-crash. Emit at most one heartbeat per
+    # FRAME_HEARTBEAT_SEC, and coalesce repeats of the same (event, tool) so a
+    # sustained move drag shows up as one periodic marker, not a flood.
+    FRAME_HEARTBEAT_SEC = 0.12
+    frame_hb = {"last": 0.0, "sig": None}
+
+    def _frame_heartbeat(event, mark_id, tool):
+        try:
+            now = time.perf_counter()
+            sig = (event, tool, mark_id)
+            if sig == frame_hb["sig"] and (now - frame_hb["last"]) < FRAME_HEARTBEAT_SEC:
+                return
+            frame_hb["sig"] = sig
+            frame_hb["last"] = now
+            write(event, "mark={} tool={} active_cmd={} active_edit={}".format(
+                mark_id, tool, getattr(m, "_active_cmd", None),
+                getattr(m, "_active_edit_id", None)))
+        except Exception:
+            pass
+
     def valid(obj):
         if obj is None:
             return False
@@ -172,17 +194,24 @@ def install(m):
     def draw_one(group_obj, mark):
         mid = watch_mid()
         mark_id = mark.get("id") if isinstance(mark, dict) else None
+        tool = mark.get("tool") if isinstance(mark, dict) else None
         if mid is not None:
             write("ACTIVATE_DRAW_ONE_BEGIN", "active={} mark={} tool={}".format(
-                mid, mark_id, mark.get("tool") if isinstance(mark, dict) else None))
+                mid, mark_id, tool))
+        else:
+            # Outside the activation window this is a hot per-frame draw (drag
+            # preview / redraw). A native hard-crash here leaves no trace, so emit
+            # a THROTTLED, flushed heartbeat BEFORE the draw: if Fusion dies mid-
+            # frame the log ends on FRAME_DRAW_BEGIN naming the exact tool/mark.
+            _frame_heartbeat("FRAME_DRAW_BEGIN", mark_id, tool)
         try:
             result = old_draw_one(group_obj, mark)
         except Exception:
-            if mid is not None:
-                try:
-                    write("ACTIVATE_DRAW_ONE_EXCEPTION", m.traceback.format_exc())
-                except Exception:
-                    pass
+            try:
+                write("DRAW_ONE_EXCEPTION", "mark={} tool={} {}".format(
+                    mark_id, tool, m.traceback.format_exc()))
+            except Exception:
+                pass
             raise
         if mid is not None:
             write("ACTIVATE_DRAW_ONE_DONE", "active={} mark={}".format(mid, mark_id))
