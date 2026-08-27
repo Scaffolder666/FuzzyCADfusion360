@@ -10,10 +10,6 @@ def install(m):
     old_redraw = m._redraw_marks
     old_run = m.run
 
-    ghost = float(getattr(m, "GHOST_OPACITY", 0.5))
-    LO = 0.015
-    HI = min(0.70, ghost + 0.10)
-
     EPHEMERAL_GROUPS = [
         getattr(m, "GROUP_PREVIEW", "FuzzyCAD_Preview"),
         "FuzzyCAD_DepCheck",
@@ -75,19 +71,46 @@ def install(m):
                 except Exception:
                     continue
 
+    def known_visual_opacity(value):
+        try:
+            op = float(value)
+        except Exception:
+            return False
+        vals = [
+            float(getattr(m, "GHOST_OPACITY", 0.5)),
+            float(getattr(m, "_VISUAL_COMIC_SOURCE_OPACITY", 0.02)),
+            float(getattr(m, "_VISUAL_SEMITRANSPARENT_SOURCE_OPACITY", 0.50)),
+        ]
+        return any(abs(op - v) < 0.025 for v in vals)
+
     def reclaim_orphan_visual_opacity(design):
         """Repair stale display opacity left by a dead/rebuilt graphics session.
 
-        Fillet/Hole Editing are included in desired_visual_tokens, so their 0.50
-        source body is never mistaken for an orphan ghost.
+        Fillet/Hole Editing remain in desired_visual_tokens, so their intentional
+        0.50 source body is never reclaimed. Once a mark is accepted/rejected (or
+        an interrupted edit no longer owns the body), both the comic opacity and
+        the 0.50 Editing opacity are eligible for restoration.
         """
         want = desired_visual_tokens()
+        restore = getattr(m, "_restore_orphan_visual_body", None)
         for body in iter_live_bodies(design):
+            btok = tok(body)
+            if btok in want:
+                continue
             try:
                 op = float(body.opacity)
             except Exception:
                 continue
-            if LO <= op <= HI and tok(body) not in want:
+            # The opacity runtime has the persisted/original value when available.
+            # Call it for any known FuzzyCAD visual opacity; legacy fallback there
+            # restores to 1.0 only when no original record exists.
+            if known_visual_opacity(op):
+                if restore is not None:
+                    try:
+                        if restore(body):
+                            continue
+                    except Exception:
+                        pass
                 try:
                     body.opacity = 1.0
                 except Exception:
@@ -98,8 +121,14 @@ def install(m):
         if design is None:
             return
 
-        # Apply the authoritative target first. This makes Confirm -> Proposed an
-        # immediate presentation switch on the same redraw that changes phase.
+        # First recover any original opacity records left by a previous interrupted
+        # session, then apply today's authoritative visual target.
+        try:
+            recover = getattr(m, "_recover_visual_opacity", None)
+            if recover is not None:
+                recover()
+        except Exception:
+            pass
         try:
             sync = getattr(m, "_sync_visual_opacity", None)
             if sync is not None:
