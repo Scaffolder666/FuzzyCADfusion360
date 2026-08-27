@@ -1,16 +1,18 @@
 """Progressive proposal-detail visibility.
 
-This file owns one visualization layer: optional proposal detail (wireframe,
-operation cue, replay destination). Baseline comic uncertainty is independent and
-comes from the central visual authority.
+This file owns one visualization layer: optional persistent proposal detail
+(wireframe / operation cue shown after an explicit focus). Baseline comic
+uncertainty is independent and comes from the central visual authority.
 
 The authority also decides the reveal mode:
-- `reveal`: hover or focus may expand detail (transforms / Extrude)
+- `reveal`: explicit focus may expand detail; hover replay itself stays temporary
 - `focus`: explicit focus may expand, hover must not (Compare)
 - `none`: Proposed never expands (Fillet / Hole / Rough)
 
-Ignoring unsupported reveal events here avoids needless whole-view redraws for
-baseline-only tools.
+Hover animation is deliberately NOT represented by a persistent reveal state.
+Move / operation animation renderers already own temporary CustomGraphics groups,
+so rebuilding all persistent marks on hover start/end only duplicates work and
+makes card controls feel sluggish.
 """
 
 
@@ -131,6 +133,8 @@ def install(m):
             except Exception:
                 pass
 
+    # Kept as compatibility helpers for any older caller, but the current HTML
+    # hover path intentionally bypasses them. Hover replay uses temporary groups.
     def hover_reveal(mid):
         try:
             mid = int(mid)
@@ -180,11 +184,12 @@ def install(m):
             except Exception:
                 pass
 
-            if action in ("hoverMoveStart", "hoverOpStart"):
-                hover_reveal(data.get("id"))
-
-            elif action in ("hoverMoveEnd", "hoverOpEnd"):
-                hover_collapse(data.get("id"))
+            if action in ("hoverMoveStart", "hoverOpStart", "hoverMoveEnd", "hoverOpEnd"):
+                # Performance invariant: hover replay is ephemeral. The dedicated
+                # animation renderer will create/transform/clear its own temporary
+                # group, so do not mutate persistent reveal state and do not call
+                # _redraw_marks() here.
+                pass
 
             elif action in ("focus", "editManipulator", "edit", "compare_choice"):
                 reveal(data.get("id"), True, hover=False)
