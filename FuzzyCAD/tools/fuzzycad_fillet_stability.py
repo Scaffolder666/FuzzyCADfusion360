@@ -10,12 +10,19 @@ The exact solid uses the runtime render registry and stores no long-lived Fusion
 CustomGraphics wrapper objects.
 """
 
+import threading
 import time
 
 FILLET_MIN_CM = 0.01
 EXACT_REFRESH_SEC = 0.55
 MAX_STATIONS = 10
 ARC_STEPS = 8
+# Debounce: after the last radius change, wait this long with no further change
+# before running the real fillet kernel. A sustained manipulator drag keeps
+# resetting the timer, so the kernel runs only when the drag SETTLES (mouse
+# released) or a value is typed -- never per-frame during the drag.
+SETTLE_DELAY_SEC = 0.20
+FILLET_SETTLE_EVENT = "FuzzyCADFilletSettle"
 
 
 def install(m):
@@ -27,6 +34,10 @@ def install(m):
     old_stop = m.stop
     state = {"last_exact": 0.0, "busy_exact": False, "last_amount": None,
              "candidate_epoch": {}}
+    # Debounce bookkeeping for the settle-only kernel. `token` supersedes stale
+    # timers; `timer` is a threading.Timer that only marshals back to the main
+    # thread via a custom event (the kernel never runs off the UI thread).
+    settle = {"token": 0, "timer": None}
 
     if LegacyPreview is not None:
         m.FuzzyPreview = LegacyPreview
@@ -341,6 +352,66 @@ def install(m):
         finally:
             state["busy_exact"] = False
 
+    def cancel_settle():
+        t = settle.get("timer")
+        if t is not None:
+            try:
+                t.cancel()
+            except Exception:
+                pass
+        settle["timer"] = None
+
+    def schedule_settle():
+        """(Re)arm the debounce. Each radius change during a drag calls this and
+        pushes the fire time out, so the kernel runs only once the drag stops."""
+        settle["token"] += 1
+        tok = settle["token"]
+        cancel_settle()
+
+        def fire():
+            # Runs on a timer thread -- do NO Fusion work here except marshal to
+            # the main thread through the custom event.
+            try:
+                m._app.fireCustomEvent(FILLET_SETTLE_EVENT, str(tok))
+            except Exception:
+                pass
+
+        try:
+            t = threading.Timer(SETTLE_DELAY_SEC, fire)
+            t.daemon = True
+            settle["timer"] = t
+            t.start()
+        except Exception:
+            # If a timer can't be created, fall back to computing inline so the
+            # exact solid still appears (throttled) rather than never.
+            mark = live_mark()
+            if mark is not None:
+                maybe_refresh_exact(mark, force=False)
+                draw_live(mark)
+
+    class FilletSettle(adsk.core.CustomEventHandler):
+        """Fires ~SETTLE_DELAY_SEC after the last radius change (drag released or
+        value typed). This is the ONLY place the real fillet kernel runs during a
+        toolbar fillet edit -- never per drag frame."""
+        def notify(self, args):
+            try:
+                tok = int(args.additionalInfo or "0")
+            except Exception:
+                tok = -1
+            # A newer change superseded this settle -> ignore (debounce).
+            if tok != settle.get("token"):
+                return
+            if getattr(m, "_active_cmd", None) != "fillet":
+                return
+            mark = live_mark()
+            if mark is None:
+                return
+            try:
+                maybe_refresh_exact(mark, force=True)
+                draw_live(mark)
+            except Exception:
+                pass
+
     class FuzzyInputChanged(BaseInputChanged):
         def notify(self, args):
             cid = None
@@ -362,6 +433,7 @@ def install(m):
                             pass
                     mark = live_mark()
                     if mark is not None:
+                        # Selecting the edge is a one-time settle point: compute now.
                         maybe_refresh_exact(mark, force=True)
                         draw_live(mark)
                     return
@@ -373,8 +445,10 @@ def install(m):
                 amount = max(float(m._val("d")), FILLET_MIN_CM)
                 mark["amount"] = amount
                 m._geom.get(mark.get("id"), {}).pop("real", None)
-                maybe_refresh_exact(mark, force=False)
+                # NO kernel during the drag. Draw only the cheap arc/ghost now and
+                # debounce the exact kernel to fire when the drag settles.
                 draw_live(mark)
+                schedule_settle()
             except Exception:
                 pass
 
@@ -382,6 +456,17 @@ def install(m):
 
     def run(context):
         result = old_run(context)
+        try:
+            m._app.unregisterCustomEvent(FILLET_SETTLE_EVENT)
+        except Exception:
+            pass
+        try:
+            evt = m._app.registerCustomEvent(FILLET_SETTLE_EVENT)
+            h = FilletSettle()
+            evt.add(h)
+            m._handlers.append(h)
+        except Exception:
+            pass
         try:
             if hasattr(m, "_runtime_reset_graphics"):
                 m._runtime_reset_graphics("FuzzyCAD_Runtime_fillet_exact_")
@@ -393,6 +478,11 @@ def install(m):
     m.run = run
 
     def stop(context):
+        cancel_settle()
+        try:
+            m._app.unregisterCustomEvent(FILLET_SETTLE_EVENT)
+        except Exception:
+            pass
         try:
             if hasattr(m, "_runtime_reset_graphics"):
                 m._runtime_reset_graphics("FuzzyCAD_Runtime_fillet_exact_")

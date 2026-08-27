@@ -425,50 +425,10 @@ def install(m):
 
     m._draw_label = draw_label
 
-    class RealFilletPreview(adsk.core.CommandEventHandler):
-        def notify(self, args):
-            try:
-                m._clear(m.GROUP_PREVIEW)
-                group = m._group(m.GROUP_PREVIEW)
-                if m._pending:
-                    cats = m.CMD_CATS[m._active_cmd]
-                    if "rotate" in cats:
-                        rop = m._category_raw("rotate")
-                        active = None if m._is_default("rotate", rop) else m._dominant_axis(rop["rot"])
-                        m._draw_rotate_guides(group, m._pending["anchor"],
-                                              m._pending["size"], active)
-                    for cat in cats:
-                        if cat == "fillet":
-                            mid = m._live.get(cat)
-                            mark = m._find(mid) if mid is not None else None
-                            if mark is None:
-                                continue
-                            if not ensure_limits(mark):
-                                args.isValidResult = False
-                                return
-                            if abs(m._val("d")) > 1e-9:
-                                mark = m._sync_category(cat)
-                            if mark is not None:
-                                draw_fillet(group, mark, *m._style(mark))
-                        elif cat == "extrude":
-                            if abs(m._val("d")) > 1e-6:
-                                m._sync_category(cat)
-                            mid = m._live.get(cat)
-                            mark = m._find(mid) if mid is not None else None
-                            if mid is not None:
-                                m._geom[mid].pop("real", None)
-                            if mark is not None:
-                                m._draw_one(group, mark)
-                        else:
-                            mark = m._sync_category(cat)
-                            if mark is not None:
-                                m._draw_one(group, mark)
-                    m._refresh_ghost()
-                    m._send_state()
-                args.isValidResult = True
-            except Exception:
-                if m._ui:
-                    m._ui.messageBox("FuzzyCAD preview failed:\n{}".format(
-                        m.traceback.format_exc()))
-
-    m.FuzzyPreview = RealFilletPreview
+    # NOTE: the former RealFilletPreview handler (an executePreview that rebuilt a
+    # real FilletFeature every drag frame) was removed. It was dead at runtime --
+    # fuzzycad_fillet_stability.py restores the lightweight LegacyPreview over
+    # m.FuzzyPreview -- but it was a per-frame kernel crash path that a load-order
+    # change could have reactivated. The exact fillet solid is now built only at
+    # the debounced settle point (see fuzzycad_fillet_stability.py). Do NOT
+    # reintroduce a per-frame executePreview that adds/deletes a FilletFeature.

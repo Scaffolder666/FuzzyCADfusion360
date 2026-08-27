@@ -85,6 +85,16 @@ def install(m):
             pass
 
     def log(msg):
+        # Route card-edit lifecycle edges into the always-on crash log so the
+        # manual risk sweep sees the reopen timeline (LAUNCH / CREATE / DESTROY /
+        # EDIT OPEN|CLOSED) alongside the toolbar and safe-confirm traces. These
+        # are edge events (never per-frame), so the synchronous write is cheap.
+        try:
+            ct = getattr(m, "_crash_trace", None)
+            if ct is not None:
+                ct("REOPEN", str(msg))
+        except Exception:
+            pass
         # Crash-survival file log -- DEV only. It flushes to disk per line so the
         # last step survives a hard crash, but that synchronous I/O has no place on
         # the UI thread in the research build, so it is gated on DEV_MODE.

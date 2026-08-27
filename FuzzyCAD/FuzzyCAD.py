@@ -280,5 +280,11 @@ _crash_trace.install(_legacy)
 _safe_confirm = _load("fuzzycad_safe_confirm", "core/fuzzycad_safe_confirm.py")
 _safe_confirm.install(_legacy)
 
+# Outermost, always-on flow trace for the manual risk sweep: logs every palette
+# action and toolbar command lifecycle edge into %TEMP%/fuzzycad_crash.log. Edge
+# only -- no per-frame I/O. Installed last so it sees every action first.
+_flow_trace = _load("fuzzycad_flow_trace", "core/fuzzycad_flow_trace.py")
+_flow_trace.install(_legacy)
+
 run = _legacy.run
 stop = _legacy.stop
