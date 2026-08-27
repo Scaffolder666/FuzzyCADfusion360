@@ -167,7 +167,7 @@
     hint.className = "compare__hint";
     hint.textContent = m.selected === 0 || m.selected === 1
       ? "Previewing the selected alternative at " + (m.target_label || "the target")
-      : "Unresolved — both alternatives are visible at " + (m.target_label || "the target");
+      : "Unresolved — choose one of the alternatives below";
     wrap.appendChild(hint);
 
     var grid = document.createElement("div");
@@ -194,17 +194,6 @@
       grid.appendChild(card);
     });
     wrap.appendChild(grid);
-
-    var unresolved = document.createElement("button");
-    unresolved.type = "button";
-    unresolved.className = "compare__unresolved" + (m.selected === null || typeof m.selected === "undefined" ? " active" : "");
-    unresolved.textContent = "Keep unresolved";
-    unresolved.disabled = !!m.reference_lost;
-    unresolved.addEventListener("click", function (ev) {
-      stop(ev);
-      if (!m.reference_lost) send("compare_choice", { id: m.id, choice: null });
-    });
-    wrap.appendChild(unresolved);
     return wrap;
   }
 
