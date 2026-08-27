@@ -10,6 +10,11 @@ needed. This tool covers that case:
   * it becomes a Conflict card with the same A / B toggle and "Confirm choice";
   * accepting keeps the chosen option in place and deletes the other's bodies.
 
+The native Fusion command panel remains the primary selection surface. FuzzyCAD's
+left rail only mirrors progress and tells the user what to select next. After the
+first option is picked, focus advances to Option 2. Either Fusion's Done button or
+the FuzzyCAD Confirm button creates the comparison.
+
 It reuses the compare mark shape and the panel card. Loaded after the other
 compare patches so its _accept / _DRAW["compare"] wrappers are outermost; both
 delegate to the normal (target-aligned) Compare for non-in-place marks.
@@ -19,17 +24,23 @@ delegate to the normal (target-aligned) Compare for non-in-place marks.
 def install(m):
     adsk = m.adsk
     CMD_HERE = "FuzzyCAD_CompareHere"
+    FINISH_EVENT_ID = "FuzzyCADCompareHereFinish"
     m.CMD_ID["compare_here"] = CMD_HERE
 
     old_run = m.run
     old_stop = m.stop
     old_accept = m._accept
     old_draw = m._DRAW.get("compare")
+    CurrentPaletteHTMLHandler = m.PaletteHTMLHandler
 
     CONF_RGB = (128, 90, 180)   # conflict purple (unresolved)
     KEEP_RGB = (46, 160, 90)    # the chosen option
     DROP_RGB = (200, 60, 50)    # the option that would be removed
-    state = {"inputs": None}
+    state = {
+        "inputs": None,
+        "finishing": False,
+        "pending_finish": None,
+    }
 
     def log(msg):
         try:
@@ -221,6 +232,19 @@ def install(m):
         except Exception:
             return 0
 
+    def set_focus(cid):
+        """Advance Fusion's native selection input without replacing its UI."""
+        inputs = state.get("inputs")
+        if inputs is None:
+            return
+        for key in ("chere_a", "chere_b"):
+            try:
+                it = inputs.itemById(key)
+                if it is not None:
+                    it.hasFocus = (key == cid)
+            except Exception:
+                pass
+
     def stage():
         if not hasattr(m, "_set_tool_stage"):
             return
@@ -229,12 +253,13 @@ def install(m):
         active = 0 if not a else (1 if not b else 2)
         try:
             m._set_tool_stage("compare_here", [
-                {"label": "Select Option 1 bodies", "done": a,
-                 "hint": "every body of the first option"},
-                {"label": "Select Option 2 bodies", "done": b,
-                 "hint": "every body of the second option"},
-                {"label": "Create, then pick in the card", "done": False},
-            ], active, "Compare here")
+                {"label": "Select Option 1 in Fusion", "done": a,
+                 "hint": "click the first object/body in the viewport"},
+                {"label": "Select Option 2 in Fusion", "done": b,
+                 "hint": "after Option 1, Fusion moves to this selection"},
+                {"label": "Finish the comparison", "done": False,
+                 "hint": "click Done in Fusion, or Confirm here"},
+            ], active, "Compare two options")
         except Exception:
             pass
 
@@ -280,8 +305,48 @@ def install(m):
         log("CREATED in-place id={} A={} B={}".format(mid, len(a_toks), len(b_toks)))
         return mid
 
+    def selected_tokens(cid):
+        return [token(b) for b in bodies_from(cid) if token(b)]
+
+    def request_finish():
+        """Finish from the FuzzyCAD rail while preserving Fusion selections.
+
+        Generic Confirm merely terminates the active Fusion command. Compare is
+        different because the conflict mark is created on Execute. Capture the
+        selected body tokens first and finish on a deferred main-thread event, so
+        Confirm and Fusion's native Done have equivalent semantics.
+        """
+        if state.get("inputs") is None:
+            return False
+        if state.get("finishing"):
+            return True
+
+        a_toks = selected_tokens("chere_a")
+        b_toks = selected_tokens("chere_b")
+        if not a_toks:
+            set_focus("chere_a")
+            stage()
+            return True
+        if not b_toks:
+            set_focus("chere_b")
+            stage()
+            return True
+
+        state["pending_finish"] = {"a": list(a_toks), "b": list(b_toks)}
+        state["finishing"] = True
+        try:
+            m._app.fireCustomEvent(FINISH_EVENT_ID, "done")
+        except Exception:
+            state["finishing"] = False
+            state["pending_finish"] = None
+        return True
+
     class Execute(adsk.core.CommandEventHandler):
         def notify(self, args):
+            # A custom Confirm terminates the command and creates from captured
+            # tokens in Finish; do not also create here if Fusion emits Execute.
+            if state.get("finishing"):
+                return
             try:
                 a = bodies_from("chere_a")
                 b = bodies_from("chere_b")
@@ -304,7 +369,13 @@ def install(m):
         def notify(self, args):
             try:
                 state["inputs"] = args.inputs
+                cid = args.input.id
                 stage()
+                # The native Fusion command panel remains visible; this simply
+                # advances its active selection box after the first object.
+                if cid == "chere_a" and count("chere_a") > 0 and count("chere_b") == 0:
+                    set_focus("chere_b")
+                    stage()
             except Exception:
                 pass
 
@@ -317,21 +388,69 @@ def install(m):
             except Exception:
                 pass
 
+    class Finish(adsk.core.CustomEventHandler):
+        def notify(self, args):
+            pending = state.get("pending_finish")
+            state["pending_finish"] = None
+            if not pending:
+                state["finishing"] = False
+                return
+            try:
+                # Close the modal Fusion command first. The selected tokens were
+                # already captured, so Destroy is free to release CommandInputs.
+                try:
+                    m._ui.terminateActiveCommand()
+                except Exception:
+                    pass
+
+                design = m._design()
+                a = [resolve_body(design, tok) for tok in pending.get("a", [])]
+                b = [resolve_body(design, tok) for tok in pending.get("b", [])]
+                a = [body for body in a if body is not None]
+                b = [body for body in b if body is not None]
+                if a and b:
+                    create_inplace_mark(a, b)
+                    log("CONFIRM created in-place comparison")
+            except Exception:
+                log("confirm finish failed\n{}".format(m.traceback.format_exc()))
+            finally:
+                state["finishing"] = False
+
+    class PaletteHTMLHandler(adsk.core.HTMLEventHandler):
+        def __init__(self):
+            super().__init__()
+            self._delegate = CurrentPaletteHTMLHandler()
+
+        def notify(self, args):
+            action = None
+            try:
+                e = adsk.core.HTMLEventArgs.cast(args)
+                action = e.action
+            except Exception:
+                pass
+            if action == "confirm" and request_finish():
+                return
+            self._delegate.notify(args)
+
+    m.PaletteHTMLHandler = PaletteHTMLHandler
+
     class Created(adsk.core.CommandCreatedEventHandler):
         def notify(self, args):
             try:
+                state["pending_finish"] = None
+                state["finishing"] = False
                 cmd = args.command
                 cmd.isRepeatable = False
                 try:
-                    cmd.okButtonText = "Create comparison"
+                    cmd.okButtonText = "Done"
                     cmd.cancelButtonText = "Cancel"
                 except Exception:
                     pass
                 inputs = cmd.commandInputs
                 a = inputs.addSelectionInput(
-                    "chere_a", "1. Option 1 bodies", "Select every body of the first option")
+                    "chere_a", "1. Option 1", "Select the first object/body")
                 b = inputs.addSelectionInput(
-                    "chere_b", "2. Option 2 bodies", "Select every body of the second option")
+                    "chere_b", "2. Option 2", "Select the second object/body")
                 for it in (a, b):
                     it.addSelectionFilter("SolidBodies")
                     it.setSelectionLimits(1, 0)   # at least one, unlimited
@@ -340,6 +459,7 @@ def install(m):
                     except Exception:
                         pass
                 state["inputs"] = inputs
+                set_focus("chere_a")
                 for handler, event in (
                     (InputChanged(), cmd.inputChanged),
                     (Execute(), cmd.execute),
@@ -380,6 +500,17 @@ def install(m):
     def run(context):
         result = old_run(context)
         try:
+            m._app.unregisterCustomEvent(FINISH_EVENT_ID)
+        except Exception:
+            pass
+        try:
+            evt = m._app.registerCustomEvent(FINISH_EVENT_ID)
+            h = Finish()
+            evt.add(h)
+            m._handlers.append(h)
+        except Exception:
+            log("finish event registration failed\n{}".format(m.traceback.format_exc()))
+        try:
             register_command()
         except Exception:
             log("command registration failed\n{}".format(m.traceback.format_exc()))
@@ -398,6 +529,10 @@ def install(m):
                     except Exception:
                         pass
             hidden.clear()
+        except Exception:
+            pass
+        try:
+            m._app.unregisterCustomEvent(FINISH_EVENT_ID)
         except Exception:
             pass
         return old_stop(context)
