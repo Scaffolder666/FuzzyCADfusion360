@@ -63,6 +63,29 @@ def install(m):
         except Exception:
             return None
 
+    def sync_fillet_exact(reason, mid=None):
+        """Reconcile the cached translucent Fillet candidate with mark lifecycle.
+
+        The exact Fillet solid lives in its own runtime graphics group. The new
+        central persistent renderer intentionally bypasses the old redraw-wrapper
+        chain, so terminal card actions must explicitly let the Fillet layer hide
+        or delete that group. This function never rebuilds the kernel candidate;
+        it only reconciles the already-cached graphics against current phase/marks.
+        """
+        try:
+            fn = getattr(m, "_sync_fillet_solids", None)
+            if fn is None:
+                return False
+            fn()
+            trace("FILLET_EXACT_SYNC", "reason={} id={}".format(reason, mid))
+            return True
+        except Exception:
+            try:
+                trace("FILLET_EXACT_SYNC_EXCEPTION", m.traceback.format_exc())
+            except Exception:
+                pass
+            return False
+
     def request_finish(reason="confirm", mid=None):
         payload = {"reason": str(reason or "confirm")}
         if mid is not None:
@@ -108,13 +131,23 @@ def install(m):
             "reason={} active_edit={}".format(reason, mid))
 
     def verify_confirm_visual(mid):
-        """Validate the comic baseline after Fusion has fully closed the command."""
+        """Validate the Proposed baseline after Fusion has fully closed the command."""
         # Destroy normally clears GROUP_PREVIEW, but clear it once more after
         # doExecute returns so a late native preview cannot survive the handoff.
         try:
             m._clear(m.GROUP_PREVIEW)
         except Exception:
             pass
+
+        # Fillet's translucent exact BRep is an editing-only layer. Reconcile it
+        # after ownership is gone so Confirm immediately hides it in Proposed.
+        try:
+            mark = m._find(mid) if mid is not None else None
+        except Exception:
+            mark = None
+        if mark is not None and mark.get("tool") == "fillet":
+            sync_fillet_exact("confirm", mid)
+
         repaired = False
         try:
             repair = getattr(m, "_repair_comic_integrity", None)
@@ -177,6 +210,7 @@ def install(m):
             trace("SAFE_TERMINAL_MARK_GONE", "action={} id={}".format(action, mid))
             return True
 
+        is_fillet = mark.get("tool") == "fillet"
         trace("SAFE_TERMINAL_RESOLVE_BEGIN", "action={} id={} tool={}".format(
             action, mid, mark.get("tool")))
         try:
@@ -191,6 +225,12 @@ def install(m):
             # The edit command is already destroyed here, so _remove_mark's
             # persistence wrapper is allowed to save immediately.
             m._remove_mark(mid)
+
+            # The exact Fillet candidate is a separate runtime group; deleting the
+            # mark must delete that group too, otherwise rolling back the committed
+            # Fusion feature reveals a faint translucent filleted body in place.
+            if is_fillet:
+                sync_fillet_exact(action, mid)
 
             try:
                 cancel = getattr(m, "_animation_cancel", None)
@@ -351,7 +391,28 @@ def install(m):
                     request_finish(action, tid)
                     return
 
+            # Normal (already-Proposed) Fillet terminal actions pass through the
+            # legacy resolver. Remember the tool before delegation, then reconcile
+            # its separate exact-candidate group after the mark has been removed.
+            terminal_fillet_id = None
+            if action in ("accept", "reject"):
+                try:
+                    tid = int(data.get("id"))
+                    mark = m._find(tid)
+                    if mark is not None and mark.get("tool") == "fillet":
+                        terminal_fillet_id = tid
+                except Exception:
+                    terminal_fillet_id = None
+
             self._delegate.notify(args)
+
+            if terminal_fillet_id is not None:
+                sync_fillet_exact(action, terminal_fillet_id)
+                try:
+                    if m._app and m._app.activeViewport:
+                        m._app.activeViewport.refresh()
+                except Exception:
+                    pass
 
     m.PaletteHTMLHandler = PaletteHTMLHandler
     m._safe_finish_reopen = request_finish
