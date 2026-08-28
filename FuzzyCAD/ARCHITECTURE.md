@@ -30,7 +30,7 @@ must not be the primary dependency path.
 | comic self-repair | `visuals/fuzzycad_comic_integrity.py` | repair a visible group that lost lines |
 | reopened manipulators | `visuals/fuzzycad_card_manipulator_reopen.py` | native edit command + session ownership |
 | reopened Confirm/Accept/Reject | `core/fuzzycad_safe_confirm.py` | close edit via `Command.doExecute(True)` |
-| shared-subject uncertainty | `core/fuzzycad_subject_decisions.py` | compatible same-body marks + post-Accept rebase |
+| shared-subject uncertainty | `core/fuzzycad_subject_decisions.py` | same-body compatibility + post-Accept rebase/relink |
 | persistence | `core/fuzzycad_persistence.py` | document attribute snapshot + backup |
 | final viewport repair | `core/fuzzycad_state_reconcile.py` | targeted redraw reconcile; full scan only startup/Repair |
 | Hole semantics | `tools/fuzzycad_hole.py` | face-local U/V position + diameter + depth + Hole reopen additions |
@@ -60,16 +60,24 @@ Current compatibility policy:
 - Move / Rotate / Uniform Scale / Directional Scale / Axis Rotate may coexist on
   one body.
 - Rough may coexist with any geometric decision.
-- one topology-changing decision (Extrude / Fillet / Hole) may coexist with
-  transform decisions.
-- two topology-changing decisions on the same body are temporarily blocked until
-  automatic topology-reference relinking is reliable.
+- Extrude / Fillet / Hole may coexist with transforms and with one another.
+- Accepting one topology-changing decision may invalidate another decision's
+  face/edge token. `core/fuzzycad_subject_decisions.py` captures a pure-Python
+  geometric fingerprint before the commit and conservatively relinks the surviving
+  decision to the closest unambiguous face/edge on the same body afterwards.
+- If relinking is ambiguous or no credible match exists, the surviving card stays
+  open with `reference_lost`; it is never silently rebound to a guessed entity.
 
 Accepting one decision commits only that decision. The surviving marks on the
 same subject are then rebased onto the current body geometry while preserving
-their own uncertain values. This rebase is owned only by
+their own uncertain values. This rebase/relink is owned only by
 `core/fuzzycad_subject_decisions.py`; individual tools should not invent their own
 same-body lock or peer-update rule.
+
+`FuzzyCAD_legacy.py::_body_locked` is historical compatibility code. It is not the
+product rule. The installed runtime replaces it with the shared-subject policy
+above; new code must not infer one-question-per-body semantics from the legacy
+implementation.
 
 ## 4. Visual lifecycle
 
