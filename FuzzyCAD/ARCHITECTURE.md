@@ -30,8 +30,10 @@ must not be the primary dependency path.
 | comic self-repair | `visuals/fuzzycad_comic_integrity.py` | repair a visible group that lost lines |
 | reopened manipulators | `visuals/fuzzycad_card_manipulator_reopen.py` | native edit command + session ownership |
 | reopened Confirm/Accept/Reject | `core/fuzzycad_safe_confirm.py` | close edit via `Command.doExecute(True)` |
+| shared-subject uncertainty | `core/fuzzycad_subject_decisions.py` | compatible same-body marks + post-Accept rebase |
 | persistence | `core/fuzzycad_persistence.py` | document attribute snapshot + backup |
 | final viewport repair | `core/fuzzycad_state_reconcile.py` | targeted redraw reconcile; full scan only startup/Repair |
+| Hole semantics | `tools/fuzzycad_hole.py` | face-local U/V position + diameter + depth + Hole reopen additions |
 | Compare mark semantics | `compare/fuzzycad_compare_inplace.py` + existing Compare renderer stack | keep/drop alternatives |
 | Compare creation flow | `compare/fuzzycad_compare_selection_flow.py` | first body -> second body -> Confirm |
 | Compare card camera focus | `compare/fuzzycad_compare_card_focus.py` | camera only |
@@ -46,6 +48,28 @@ graphics group ids. Resolve Fusion objects fresh when an event needs them.
 The legacy dictionaries (`_body`, `_entity`, command inputs) still contain live
 objects for the active runtime. They are compatibility state, not a pattern to
 extend into new caches/controllers.
+
+### Shared-subject decisions
+
+One body may carry more than one unresolved decision. The body-level comic state
+means "this geometry still contains unresolved decisions"; the individual cards
+encode what each decision is.
+
+Current compatibility policy:
+
+- Move / Rotate / Uniform Scale / Directional Scale / Axis Rotate may coexist on
+  one body.
+- Rough may coexist with any geometric decision.
+- one topology-changing decision (Extrude / Fillet / Hole) may coexist with
+  transform decisions.
+- two topology-changing decisions on the same body are temporarily blocked until
+  automatic topology-reference relinking is reliable.
+
+Accepting one decision commits only that decision. The surviving marks on the
+same subject are then rebased onto the current body geometry while preserving
+their own uncertain values. This rebase is owned only by
+`core/fuzzycad_subject_decisions.py`; individual tools should not invent their own
+same-body lock or peer-update rule.
 
 ## 4. Visual lifecycle
 
@@ -62,6 +86,11 @@ mark data
 
 Renderers may draw geometry, but they must not redefine whether a mark is
 Editing/Proposed/Resolved. Proposed baseline visibility must not depend on hover.
+
+When several marks share one body, `visuals/fuzzycad_uncertainty_visual.py`
+aggregates them into one body presentation. A non-comic Editing mark temporarily
+owns the viewport and suppresses the Proposed comic baseline; Confirm returns the
+body to the comic baseline if any unresolved mark remains.
 
 ### Global redraw invariant
 
