@@ -9,9 +9,15 @@ Position is stored in a face-local basis instead of world X/Y/Z so the same
 interaction works on arbitrarily oriented planar faces. The hole is still cut
 with a temporary cylinder + boolean Cut because native HoleFeatures/construction
 geometry are not supported reliably in imported/direct-modeling designs.
+
+This file is the authoritative Hole owner, including first-create and card-reopen
+manipulators. The generic reopen module still owns the shared edit command; Hole
+only attaches its two additional U/V inputs to that command after it exists.
 """
 
 import math
+
+EDIT_CMD_ID = "FuzzyCAD_EditExistingProposal"
 
 
 def install(m):
@@ -34,8 +40,11 @@ def install(m):
     old_apply_edit = m._apply_edit
     old_summary = m._summary
     old_accept = m._accept
+    old_run = m.run
     CurrentInputChanged = m.FuzzyInputChanged
     CurrentCommandCreated = m.FuzzyCommandCreated
+    CurrentPaletteHTMLHandler = m.PaletteHTMLHandler
+    reopen_state = {"updating": False}
 
     def log(msg):
         try:
@@ -86,12 +95,9 @@ def install(m):
         return [base[i] + u[i] * du + v[i] * dv for i in range(3)]
 
     def update_anchor(mark):
-        if mark is None:
-            return
-        mark["anchor"] = hole_center(mark)
+        if mark is not None:
+            mark["anchor"] = hole_center(mark)
 
-    # Expose these pure helpers so the generic reopen module can use the exact
-    # same face-local semantics without re-defining how Hole position is encoded.
     m._hole_basis = mark_basis
     m._hole_center = hole_center
     m._hole_update_anchor = update_anchor
@@ -233,8 +239,6 @@ def install(m):
             m._sketchy(group, [top[k], bot[k]], rgb, amp,
                        mark["id"] * 47 + k, weight=1, strokes=1)
 
-        # Position uncertainty is visible while Editing as two short face-local
-        # construction axes. Orange communicates locus/control, not proposal mass.
         try:
             span = max(float(mark.get("size", 1.0)) * 0.16, r * 1.4, 0.15)
             pu0 = tuple(c[i] - u[i] * span for i in range(3))
@@ -430,5 +434,179 @@ def install(m):
         return old_accept(mark)
 
     m._accept = accept
+
+    # ---- card reopen: add the two tool-specific position inputs -----------
+    def active_reopened_hole():
+        if getattr(m, "_active_cmd", None) != "edit_existing":
+            return None
+        mid = getattr(m, "_active_edit_id", None)
+        if mid is None:
+            return None
+        try:
+            mark = m._find(mid)
+        except Exception:
+            mark = None
+        if mark is None or mark.get("tool") != "hole" or mark.get("status", "open") != "open":
+            return None
+        return mark
+
+    def base_anchor(mark):
+        geom = (getattr(m, "_geom", None) or {}).get(mark.get("id"), {}) or {}
+        return list(mark.get("base_anchor") or geom.get("base_anchor") or
+                    mark.get("anchor") or [0.0, 0.0, 0.0])
+
+    def reposition_reopen_handles(mark):
+        inputs = getattr(m, "_inputs", None)
+        if inputs is None:
+            return
+        try:
+            n, u, v = mark_basis(mark)
+            base = base_anchor(mark)
+            center = hole_center(mark)
+            pbase = adsk.core.Point3D.create(*base)
+            pcenter = adsk.core.Point3D.create(*center)
+
+            ehu = inputs.itemById("ehu")
+            if ehu is not None:
+                ehu.setManipulator(pbase, adsk.core.Vector3D.create(*u))
+                ehu.isVisible = True
+                ehu.isEnabled = True
+            ehv = inputs.itemById("ehv")
+            if ehv is not None:
+                ehv.setManipulator(pbase, adsk.core.Vector3D.create(*v))
+                ehv.isVisible = True
+                ehv.isEnabled = True
+            ehd = inputs.itemById("ehd")
+            if ehd is not None:
+                ehd.setManipulator(pcenter, adsk.core.Vector3D.create(*u))
+                ehd.isVisible = True
+                ehd.isEnabled = True
+            ehp = inputs.itemById("ehp")
+            if ehp is not None:
+                ehp.setManipulator(
+                    pcenter, adsk.core.Vector3D.create(-n[0], -n[1], -n[2]))
+                ehp.isVisible = True
+                ehp.isEnabled = True
+        except Exception:
+            pass
+
+    def redraw_reopen_position(mark):
+        try:
+            m._clear(m.GROUP_PREVIEW)
+            group = m._group(m.GROUP_PREVIEW)
+            if group is not None:
+                m._draw_one(group, mark)
+            m._refresh_ghost()
+            (getattr(m, "_send_state_throttled", None) or m._send_state)()
+        except Exception:
+            pass
+
+    class ReopenPositionChanged(adsk.core.InputChangedEventHandler):
+        def notify(self, args):
+            if reopen_state.get("updating"):
+                return
+            try:
+                cid = args.input.id
+            except Exception:
+                return
+            if cid not in ("ehu", "ehv"):
+                return
+            mark = active_reopened_hole()
+            if mark is None:
+                return
+            try:
+                inputs = getattr(m, "_inputs", None)
+                if inputs is None:
+                    return
+                mark["offset_u"] = float(inputs.itemById("ehu").value)
+                mark["offset_v"] = float(inputs.itemById("ehv").value)
+                update_anchor(mark)
+                reposition_reopen_handles(mark)
+                redraw_reopen_position(mark)
+            except Exception:
+                pass
+
+    class ReopenCreated(adsk.core.CommandCreatedEventHandler):
+        def notify(self, args):
+            mark = active_reopened_hole()
+            if mark is None:
+                return
+            try:
+                inputs = args.command.commandInputs
+                if inputs.itemById("ehu") is None:
+                    inputs.addDistanceValueCommandInput(
+                        "ehu", "Position U",
+                        adsk.core.ValueInput.createByReal(float(mark.get("offset_u", 0.0))))
+                if inputs.itemById("ehv") is None:
+                    inputs.addDistanceValueCommandInput(
+                        "ehv", "Position V",
+                        adsk.core.ValueInput.createByReal(float(mark.get("offset_v", 0.0))))
+                reposition_reopen_handles(mark)
+                handler = ReopenPositionChanged()
+                args.command.inputChanged.add(handler)
+                m._handlers.append(handler)
+            except Exception:
+                pass
+
+    class PaletteHTMLHandler(adsk.core.HTMLEventHandler):
+        def __init__(self):
+            super().__init__()
+            self._delegate = CurrentPaletteHTMLHandler()
+
+        def notify(self, args):
+            action = None
+            data = {}
+            try:
+                import json
+                e = adsk.core.HTMLEventArgs.cast(args)
+                action = e.action
+                data = json.loads(e.data) if e.data else {}
+            except Exception:
+                pass
+
+            self._delegate.notify(args)
+
+            if action != "edit":
+                return
+            mark = active_reopened_hole()
+            if mark is None:
+                return
+            try:
+                if int(data.get("id")) != int(mark.get("id")):
+                    return
+            except Exception:
+                return
+            try:
+                inputs = getattr(m, "_inputs", None)
+                if inputs is None:
+                    return
+                reopen_state["updating"] = True
+                ehu = inputs.itemById("ehu")
+                ehv = inputs.itemById("ehv")
+                if ehu is not None:
+                    ehu.value = float(mark.get("offset_u", 0.0))
+                if ehv is not None:
+                    ehv.value = float(mark.get("offset_v", 0.0))
+                reposition_reopen_handles(mark)
+            except Exception:
+                pass
+            finally:
+                reopen_state["updating"] = False
+
+    m.PaletteHTMLHandler = PaletteHTMLHandler
+
+    def run(context):
+        result = old_run(context)
+        try:
+            cd = m._ui.commandDefinitions.itemById(EDIT_CMD_ID)
+            if cd is not None:
+                handler = ReopenCreated()
+                cd.commandCreated.add(handler)
+                m._handlers.append(handler)
+        except Exception:
+            pass
+        return result
+
+    m.run = run
 
     log("HOLE READY: face-local U/V position + diameter + depth")
