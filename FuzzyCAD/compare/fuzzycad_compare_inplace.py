@@ -4,7 +4,8 @@ This module owns only what happens *after* an in-place Compare Conflict mark
 exists:
 
 - hide the real alternatives while the conflict is unresolved;
-- draw the currently shown alternative with proposal strokes;
+- draw the selected alternative as the primary proposal while keeping the other
+  alternative visible as a translucent comparison reference;
 - accept by keeping the selected alternative and removing the other;
 - restore hidden alternatives when the mark is resolved or the add-in stops.
 
@@ -30,6 +31,8 @@ def install(m):
     old_draw = m._DRAW.get("compare")
 
     MAX_DRAW_EDGES = 180
+    UNSELECTED_RGB = (156, 158, 156)
+    UNSELECTED_OPACITY = 0.20
 
     def log(msg):
         try:
@@ -266,20 +269,8 @@ def install(m):
                 pass
 
     # ---- renderer ---------------------------------------------------------
-    def draw_compare(group, mark, rgb, amp):
-        if not mark.get("inplace"):
-            if old_draw is not None:
-                return old_draw(group, mark, rgb, amp)
-            return
-
-        subjects = subjects_for_mark(mark)
-        selected = mark.get("selected")
-        shown = selected if selected in (0, 1) else 0
-        if not (0 <= shown < len(subjects)):
-            return
-
-        subject = subjects[shown]
-        seed = mark["id"] * 700
+    def draw_subject_edges(group, mark, subject, seed_offset=0):
+        seed = mark["id"] * 700 + seed_offset
         size = mark.get("size", 3.0)
         line_index = 0
         remaining = MAX_DRAW_EDGES
@@ -305,8 +296,8 @@ def install(m):
                         m._sketchy(
                             group,
                             poly,
-                            rgb,
-                            amp,
+                            (150, 150, 150),
+                            0.0,
                             seed + line_index,
                             weight=1,
                             strokes=2,
@@ -315,6 +306,51 @@ def install(m):
                 remaining -= edge_count
             except Exception:
                 continue
+
+    def draw_subject_translucent(group, subject):
+        """Draw the non-selected option without mutating the real body's opacity."""
+        rgb = UNSELECTED_RGB
+        opacity = UNSELECTED_OPACITY
+        try:
+            st = getattr(m, "VISUAL_TOKENS", {}).get("conflict_unselected", {})
+            rgb = tuple(st.get("rgb", rgb))
+            opacity = float(st.get("opacity", opacity))
+        except Exception:
+            pass
+
+        for body in subject.get("bodies") or []:
+            try:
+                cg = group.addBRepBody(body)
+                if cg is None:
+                    continue
+                cg.color = m._solid(rgb)
+                cg.setOpacity(opacity, True)
+            except Exception:
+                continue
+
+    def draw_compare(group, mark, rgb, amp):
+        if not mark.get("inplace"):
+            if old_draw is not None:
+                return old_draw(group, mark, rgb, amp)
+            return
+
+        subjects = subjects_for_mark(mark)
+        selected = mark.get("selected")
+        if len(subjects) < 1:
+            return
+
+        if selected in (0, 1) and int(selected) < len(subjects):
+            primary = int(selected)
+            secondary = 1 - primary
+            draw_subject_edges(group, mark, subjects[primary], seed_offset=0)
+            if 0 <= secondary < len(subjects):
+                draw_subject_translucent(group, subjects[secondary])
+            return
+
+        # Before a choice is made, preserve the compact unresolved baseline used
+        # by the current UI: show Option 1 as the proposal subject. Choosing either
+        # card option then adds the other one back as a translucent comparison.
+        draw_subject_edges(group, mark, subjects[0], seed_offset=0)
 
     m._DRAW["compare"] = draw_compare
 
