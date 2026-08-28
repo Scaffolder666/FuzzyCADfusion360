@@ -1,10 +1,10 @@
-"""Expose degraded geometry references without adding another Fusion command lifecycle.
+"""Expose degraded geometry references without another Fusion command lifecycle.
 
-The persistence layer already retains rows whose entity token cannot be resolved.
-For the stability build, surface that state in the sidebar and block geometry-
-changing actions. Recovery stays explicit: reject/recreate the question after the
-model has changed. This avoids registering a Relink command/custom event in the
-critical runtime path.
+Persistence and shared-subject rebasing keep collaboration cards even when a
+face/edge token can no longer be resolved. Surface that state in the sidebar and
+block geometry-changing actions. Automatic same-body topology relinking happens
+inside `core/fuzzycad_subject_decisions.py`; if that conservative relink cannot
+find an unambiguous match, recovery stays explicit: reject/recreate the question.
 """
 
 import json
@@ -35,6 +35,23 @@ def install(m):
             try:
                 alts = (geom or {}).get("alternatives") or []
                 return valid(ent) and len([b for b in alts if valid(b)]) >= 2
+            except Exception:
+                return False
+        if tool in ("extrude", "hole"):
+            # These decisions depend on a specific face, not merely on the host
+            # body. A healthy body plus stale cached geometry must not silently
+            # clear `reference_lost` after topology changed.
+            try:
+                return (valid(body) and valid(ent)
+                        and adsk.fusion.BRepFace.cast(ent) is not None
+                        and isinstance(geom, dict) and bool(geom))
+            except Exception:
+                return False
+        if tool == "fillet":
+            try:
+                return (valid(body) and valid(ent)
+                        and adsk.fusion.BRepEdge.cast(ent) is not None
+                        and isinstance(geom, dict) and bool(geom))
             except Exception:
                 return False
         return valid(body) and isinstance(geom, dict) and bool(geom)
