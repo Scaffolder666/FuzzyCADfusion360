@@ -201,8 +201,8 @@ _silhouette_visibility.install(_legacy)
 _layout = _load("fuzzycad_layout_lock", "core/fuzzycad_layout_lock.py")
 _layout.install(_legacy)
 
-# Hole tool: diameter and depth are Need Inputs. Loaded before the dependency
-# layer so its _accept handles the hole directly.
+# Hole tool: face-local U/V position, diameter, and depth are Need Inputs. Loaded
+# before the dependency layer so its _accept handles the hole directly.
 _hole = _load("fuzzycad_hole", "tools/fuzzycad_hole.py")
 _hole.install(_legacy)
 
@@ -232,6 +232,12 @@ _scale_scope.install(_legacy)
 # scale/extrude plus any dependent parts that followed) has finished.
 _dependency = _load("fuzzycad_dependency_prompts", "tools/fuzzycad_dependency_prompts.py")
 _dependency.install(_legacy)
+
+# Shared-subject decisions: replace the old one-question-per-body lock with an
+# explicit compatibility policy and rebase surviving decisions after Accept.
+_subject_decisions = _load(
+    "fuzzycad_subject_decisions", "core/fuzzycad_subject_decisions.py")
+_subject_decisions.install(_legacy)
 
 # State reconciliation: outermost redraw wrapper. Reclaims ghost bodies left
 # semi-transparent after a rebuild invalidated their restore proxy, and clears
