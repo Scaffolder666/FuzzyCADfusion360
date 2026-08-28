@@ -3,11 +3,15 @@
 This module owns only what happens *after* an in-place Compare Conflict mark
 exists:
 
+- keep both alternatives at their original model positions;
 - hide the real alternatives while the conflict is unresolved;
 - draw the selected alternative as the primary proposal while keeping the other
-  alternative visible as a translucent comparison reference;
+  alternative visible only as a faint translucent comparison reference;
 - accept by keeping the selected alternative and removing the other;
 - restore hidden alternatives when the mark is resolved or the add-in stops.
+
+Compare is a visualization/decision layer only. It never moves, aligns, or
+transforms either alternative.
 
 Creation/selection is intentionally not implemented here. The authoritative
 command flow is compare/fuzzycad_compare_selection_flow.py.
@@ -31,8 +35,11 @@ def install(m):
     old_draw = m._DRAW.get("compare")
 
     MAX_DRAW_EDGES = 180
+    PRIMARY_RGB = (92, 96, 104)
+    PRIMARY_OPACITY = 0.68
     UNSELECTED_RGB = (156, 158, 156)
-    UNSELECTED_OPACITY = 0.20
+    UNSELECTED_OPACITY = 0.08
+    UNRESOLVED_OPACITY = 0.14
 
     def log(msg):
         try:
@@ -307,26 +314,48 @@ def install(m):
             except Exception:
                 continue
 
-    def draw_subject_translucent(group, subject):
-        """Draw the non-selected option without mutating the real body's opacity."""
-        rgb = UNSELECTED_RGB
-        opacity = UNSELECTED_OPACITY
-        try:
-            st = getattr(m, "VISUAL_TOKENS", {}).get("conflict_unselected", {})
-            rgb = tuple(st.get("rgb", rgb))
-            opacity = float(st.get("opacity", opacity))
-        except Exception:
-            pass
-
+    def draw_subject_fill(group, subject, rgb, opacity):
+        """Render a visual copy at the source body's existing model position."""
         for body in subject.get("bodies") or []:
             try:
                 cg = group.addBRepBody(body)
                 if cg is None:
                     continue
-                cg.color = m._solid(rgb)
-                cg.setOpacity(opacity, True)
+                cg.color = m._solid(tuple(rgb))
+                cg.setOpacity(float(opacity), True)
             except Exception:
                 continue
+
+    def token_style(name, fallback_rgb, fallback_opacity):
+        rgb = fallback_rgb
+        opacity = fallback_opacity
+        try:
+            st = getattr(m, "VISUAL_TOKENS", {}).get(name, {})
+            rgb = tuple(st.get("rgb", rgb))
+            opacity = float(st.get("opacity", opacity))
+        except Exception:
+            pass
+        return rgb, opacity
+
+    def draw_subject_primary(group, mark, subject):
+        rgb, _token_opacity = token_style("conflict_selected", PRIMARY_RGB, PRIMARY_OPACITY)
+        # In-place Compare intentionally makes the chosen option read as the one
+        # currently under consideration, not as a second ghost. Keep the opacity
+        # substantially above the legacy target-aligned Compare preview.
+        draw_subject_fill(group, subject, rgb, PRIMARY_OPACITY)
+        draw_subject_edges(group, mark, subject, seed_offset=0)
+
+    def draw_subject_unselected(group, subject):
+        rgb, _token_opacity = token_style("conflict_unselected", UNSELECTED_RGB, UNSELECTED_OPACITY)
+        # This is the mutually-exclusive alternative: visible for comparison, but
+        # faint enough that it cannot read as simultaneously installed geometry.
+        draw_subject_fill(group, subject, rgb, UNSELECTED_OPACITY)
+
+    def draw_subject_unresolved(group, subject, index):
+        role = "conflict_alt_a" if index == 0 else "conflict_alt_b"
+        fallback = (126, 104, 180) if index == 0 else (92, 118, 170)
+        rgb, _opacity = token_style(role, fallback, UNRESOLVED_OPACITY)
+        draw_subject_fill(group, subject, rgb, UNRESOLVED_OPACITY)
 
     def draw_compare(group, mark, rgb, amp):
         if not mark.get("inplace"):
@@ -342,15 +371,16 @@ def install(m):
         if selected in (0, 1) and int(selected) < len(subjects):
             primary = int(selected)
             secondary = 1 - primary
-            draw_subject_edges(group, mark, subjects[primary], seed_offset=0)
+            draw_subject_primary(group, mark, subjects[primary])
             if 0 <= secondary < len(subjects):
-                draw_subject_translucent(group, subjects[secondary])
+                draw_subject_unselected(group, subjects[secondary])
             return
 
-        # Before a choice is made, preserve the compact unresolved baseline used
-        # by the current UI: show Option 1 as the proposal subject. Choosing either
-        # card option then adds the other one back as a translucent comparison.
-        draw_subject_edges(group, mark, subjects[0], seed_offset=0)
+        # Explicit Compare focus before a choice shows both alternatives in their
+        # own original positions as equally weak Conflict options. No transform or
+        # alignment is ever applied by this in-place renderer.
+        for i, subject in enumerate(subjects[:2]):
+            draw_subject_unresolved(group, subject, i)
 
     m._DRAW["compare"] = draw_compare
 
@@ -497,11 +527,20 @@ def install(m):
     old_redraw = m._redraw_marks
 
     def redraw(*args, **kwargs):
-        result = old_redraw(*args, **kwargs)
+        # Hide the real alternatives BEFORE the persistent Compare graphics are
+        # rebuilt. This prevents an opaque source body from reading underneath a
+        # translucent CustomGraphics copy during the same redraw transaction.
         try:
             reconcile_visibility()
         except Exception:
-            log("visibility reconcile failed\n{}".format(m.traceback.format_exc()))
+            log("pre-draw visibility reconcile failed\n{}".format(m.traceback.format_exc()))
+        result = old_redraw(*args, **kwargs)
+        try:
+            # Run once more to restore any subjects whose mark disappeared during
+            # the delegated redraw/resolve path. Normally this is a cheap no-op.
+            reconcile_visibility()
+        except Exception:
+            log("post-draw visibility reconcile failed\n{}".format(m.traceback.format_exc()))
         try:
             m._app.activeViewport.refresh()
         except Exception:
