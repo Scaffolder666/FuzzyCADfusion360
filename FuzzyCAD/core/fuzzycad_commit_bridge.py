@@ -18,6 +18,7 @@ The bridge makes Accept asynchronous:
 """
 
 import json
+import time
 
 COMMIT_CMD_ID = "FuzzyCAD_Commit"
 COMMIT_CMD_NAME = "FuzzyCAD Commit"
@@ -61,6 +62,70 @@ def install(m):
             except Exception:
                 pass
 
+    def study_values(mark):
+        """Return the same compact, human-readable values used by the study log."""
+        if not mark or mark.get("tool") == "compare":
+            return {}
+        out = {}
+        try:
+            fields = m._fields(mark) or []
+        except Exception:
+            fields = []
+        for field in fields:
+            if not isinstance(field, dict):
+                continue
+            key = str(field.get("key", "") or "")
+            if not key:
+                continue
+            value = field.get("value")
+            if not isinstance(value, (str, int, float, bool)) and value is not None:
+                value = str(value)
+            out[key] = {
+                "label": str(field.get("label", key)),
+                "value": value,
+                "unit": str(field.get("unit", "") or ""),
+            }
+        return out
+
+    def log_study_accept(mark):
+        """Record Accept only after the dedicated Fusion commit succeeds.
+
+        Palette Accept is asynchronous, so the outer study logger cannot know
+        during the HTML callback whether the commit later succeeded. The commit
+        command is the authoritative success point; append the study event here.
+        """
+        try:
+            study = getattr(m, "_study_logger_state", None)
+            if not isinstance(study, dict) or not study.get("active"):
+                return
+            mid = mark.get("id")
+            # Defensive de-duplication in case another future logger layer also
+            # records this successful commit.
+            for row in reversed(study.get("events") or []):
+                if row.get("event") == "proposal_accepted" and row.get("mark_id") == mid:
+                    return
+            started = study.get("started_mono")
+            elapsed = 0.0 if started is None else max(0.0, time.monotonic() - started)
+            study.setdefault("events", []).append({
+                "event": "proposal_accepted",
+                "elapsed_sec": round(elapsed, 3),
+                "mark_id": mid,
+                "tool": mark.get("tool"),
+                "type": mark.get("mtype", "need_input"),
+                "values": study_values(mark),
+            })
+            try:
+                study.get("last_values", {}).pop(int(mid), None)
+            except Exception:
+                pass
+            try:
+                study.get("pending", {}).pop(int(mid), None)
+            except Exception:
+                pass
+        except Exception:
+            # Study instrumentation must never affect the commit path.
+            pass
+
     class CommitExecute(adsk.core.CommandEventHandler):
         def notify(self, args):
             mid = getattr(m, "_pending_commit_id", None)
@@ -84,6 +149,9 @@ def install(m):
 
                 # The geometry mutation above happened inside THIS command's
                 # execute event, so Fusion owns it in this command transaction.
+                # Study logging belongs here too: this is the first point at which
+                # we know the asynchronous Accept actually succeeded.
+                log_study_accept(mark)
                 m._remove_mark(mid)
                 try:
                     m._clear(m.GROUP_PREVIEW)
