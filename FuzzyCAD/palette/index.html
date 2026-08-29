@@ -35,6 +35,17 @@
     .irow__b:hover{background:#eef1f4}
     .irow__b--del{border-color:#e2b6b0;color:#d92f1c}.irow__b--del:hover{background:#fbece9}
     .insp__none{font-size:12px;color:#9aa4af;text-align:center;padding:14px}
+
+    .studylog{position:sticky;bottom:0;z-index:20;display:flex;align-items:center;gap:8px;padding:9px 12px;border-top:1px solid #e6eaef;background:rgba(251,252,253,.97);font:11px/1.2 -apple-system,'Segoe UI',Roboto,sans-serif;color:#5a6672}
+    .studylog__label{font-weight:800;color:#2b3440;flex:none}
+    .studylog__status{min-width:28px;color:#8a94a0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+    .studylog__status--on{color:#1c7a4a;font-weight:700}
+    .studylog__timer{font-variant-numeric:tabular-nums;margin-left:auto;color:#5a6672;font-weight:700}
+    .studylog__button{border:1px solid #b9d5c4;background:#eef7f1;color:#1c7a4a;font-weight:700;font-size:11px;padding:6px 9px;border-radius:7px;cursor:pointer;white-space:nowrap}
+    .studylog__button:hover{background:#1c7a4a;color:#fff;border-color:#1c7a4a}
+    .studylog__button:disabled{opacity:.55;cursor:default}
+    .studylog__button--stop{border-color:#e2b6b0;background:#fbece9;color:#b43b2e}
+    .studylog__button--stop:hover{background:#b43b2e;color:#fff;border-color:#b43b2e}
   </style>
 </head>
 <body>
@@ -66,6 +77,13 @@
     </p>
   </section>
 
+  <section class="studylog" aria-label="Study Log">
+    <span class="studylog__label">Study Log</span>
+    <span id="studyLogStatus" class="studylog__status">Off</span>
+    <span id="studyLogTimer" class="studylog__timer">00:00</span>
+    <button id="studyLogButton" class="studylog__button" type="button">Start Logging</button>
+  </section>
+
   <div id="inspector" class="insp" aria-hidden="true">
     <div class="insp__head">
       <span class="insp__title">FuzzyCAD Inspector</span>
@@ -87,5 +105,6 @@
   <script src="panel_resync.js"></script>
   <script src="hover_ops.js"></script>
   <script src="panel_inspector.js"></script>
+  <script src="study_log.js"></script>
 </body>
 </html>
