@@ -397,32 +397,37 @@ def install(m):
         if mark is None:
             return
 
-        stage(
-            [{"label": "Choose the image", "done": False, "hint": "shown by the object"}],
-            0,
-            "Floating image",
-        )
+        # Two guided steps in the left rail: pick where (a face on the object), then
+        # choose the image. The image floats just off that face, so picking the face
+        # is how you choose which side the image sits on.
+        steps = [
+            {"label": "Pick a face on the object", "done": False,
+             "hint": "the image floats just off it"},
+            {"label": "Choose the image", "done": False},
+        ]
+        stage(steps, 0, "Floating image")
 
         try:
+            try:
+                sel = m._ui.selectEntity(
+                    "Pick a planar face — the image will float just off it",
+                    "PlanarFaces")
+                face = sel.entity if sel else None
+            except Exception:
+                face = None
+            if face is None:
+                log("floating image: no face picked; aborted")
+                return
+
+            steps[0]["done"] = True
+            stage(steps, 1, "Floating image")
+
             path = pick_image()
             if not path:
                 return
 
             anchor = mark.get("anchor", [0.0, 0.0, 0.0])
             body = m._body.get(mark.get("id"))
-            face = nearest_planar_face(body, anchor)
-            if face is None:
-                # No planar face on the body -> let the user pick one.
-                try:
-                    sel = m._ui.selectEntity(
-                        "Pick a planar face to place the image near the object",
-                        "PlanarFaces")
-                    face = sel.entity if sel else None
-                except Exception:
-                    face = None
-            if face is None:
-                log("floating image: no planar face available; aborted")
-                return
 
             try:
                 comp = face.body.parentComponent
@@ -680,7 +685,7 @@ def install(m):
                         LEADER_RGB,
                         0.0,
                         int(mark.get("id", 0)) * 17,
-                        weight=1,
+                        weight=4,
                         strokes=1,
                     )
                     drew += 1
@@ -893,6 +898,47 @@ def install(m):
                                     m._redraw_marks()
                                 except Exception:
                                     pass
+                            try:
+                                m._send_state()
+                            except Exception:
+                                pass
+                    try:
+                        e.returnData = json.dumps({"ok": True})
+                    except Exception:
+                        pass
+                    return
+
+                if act == "removeImageNode":
+                    # Delete one attached image: remove the native Canvas (if any)
+                    # and drop it from the mark, then redraw + refresh the card.
+                    data = json.loads(e.data) if e.data else {}
+                    mark = m._find(data.get("id"))
+                    idx = data.get("index")
+                    if mark is not None and idx is not None:
+                        imgs = mark.get("images") or []
+                        try:
+                            i = int(idx)
+                        except Exception:
+                            i = -1
+                        if 0 <= i < len(imgs):
+                            im = imgs.pop(i)
+                            if im.get("mode") == "face":
+                                c = resolve_canvas(im.get("canvas_token"))
+                                if c is not None:
+                                    try:
+                                        c.deleteMe()
+                                    except Exception:
+                                        pass
+                                try:
+                                    lst = canvases_by_mark.get(mark["id"])
+                                    if lst and c in lst:
+                                        lst.remove(c)
+                                except Exception:
+                                    pass
+                            try:
+                                m._redraw_marks()
+                            except Exception:
+                                pass
                             try:
                                 m._send_state()
                             except Exception:

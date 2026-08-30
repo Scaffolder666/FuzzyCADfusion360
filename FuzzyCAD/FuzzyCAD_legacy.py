@@ -1535,6 +1535,18 @@ class PaletteHTMLHandler(adsk.core.HTMLEventHandler):
                     if txt:
                         m.setdefault("comments", []).append({"text": txt})
                         _send_state()
+            elif action == "removeComment":
+                m = _find(data.get("id"))
+                idx = data.get("index")
+                if m and idx is not None:
+                    cs = m.get("comments") or []
+                    try:
+                        i = int(idx)
+                    except Exception:
+                        i = -1
+                    if 0 <= i < len(cs):
+                        cs.pop(i)
+                        _send_state()
             elif action == "accept":
                 # Accept == apply to the real model (geometry ops) + resolve.
                 # For a note there's nothing to bake, so accept just resolves it.

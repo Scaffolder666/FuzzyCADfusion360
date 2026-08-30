@@ -349,10 +349,20 @@
 
       var cwrap = document.createElement("div");
       cwrap.className = "mark__comments";
-      (m.comments || []).forEach(function (c) {
+      (m.comments || []).forEach(function (c, ci) {
         var cm = document.createElement("div");
         cm.className = "cmt";
-        cm.textContent = c.text;
+        cm.style.cssText = "display:flex;align-items:flex-start;gap:6px;justify-content:space-between";
+        var ctext = document.createElement("span");
+        ctext.textContent = c.text;
+        ctext.style.cssText = "flex:1;min-width:0;word-break:break-word";
+        cm.appendChild(ctext);
+        var cx = btn("✕", "cmt__del", (function (index) {
+          return function (ev) { stop(ev); send("removeComment", { id: m.id, index: index }); };
+        })(ci));
+        cx.title = "Delete comment";
+        cx.style.cssText = "border:none;background:transparent;color:#a0a8b2;cursor:pointer;font-size:12px;line-height:1;padding:0 2px";
+        cm.appendChild(cx);
         cwrap.appendChild(cm);
       });
       var crow = document.createElement("div");
@@ -410,6 +420,12 @@
           tgl.title = im.hidden ? "Show in viewport" : "Hide in viewport";
           tgl.style.cssText = "border:1px solid #d3d8df;background:" + (im.hidden ? "#eef2f6" : "#fff") + ";color:#5a6672;font:600 10px/1 -apple-system,sans-serif;padding:4px 7px;border-radius:6px;cursor:pointer";
           chip.appendChild(tgl);
+          var del = btn("✕", "img__del", (function (index) {
+            return function (ev) { stop(ev); send("removeImageNode", { id: m.id, index: index }); };
+          })(im.index));
+          del.title = "Delete image";
+          del.style.cssText = "border:none;background:transparent;color:#a0a8b2;cursor:pointer;font-size:12px;line-height:1;padding:0 2px";
+          chip.appendChild(del);
           thumbrow.appendChild(chip);
         });
         cwrap.appendChild(thumbrow);
