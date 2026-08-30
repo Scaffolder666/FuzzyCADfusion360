@@ -272,13 +272,95 @@ def install(m):
             log("file dialog failed\n{}".format(m.traceback.format_exc()))
         return None
 
-    # ---- attach: floating billboard ("node") -----------------------------
+    # ---- attach: small Canvas near the object ("node") -------------------
+    # No Pillow in Fusion's Python -> the old screen-facing billboard rendered the
+    # full-size image (huge) and always faced the camera. A native Canvas needs no
+    # Pillow, renders at a controllable world size, and stays fixed in space (you
+    # orbit around it). We auto-place it on the object's planar face nearest the
+    # mark, small; if the body has no planar face we fall back to letting the user
+    # pick one, same as Image-on-face.
+    def nearest_planar_face(body, anchor):
+        if body is None:
+            return None
+        try:
+            a = adsk.core.Point3D.create(
+                float(anchor[0]), float(anchor[1]), float(anchor[2]))
+        except Exception:
+            return None
+        best = None
+        best_d = None
+        try:
+            for f in body.faces:
+                try:
+                    if not isinstance(f.geometry, adsk.core.Plane):
+                        continue
+                    d = a.distanceTo(f.pointOnFace)
+                    if best_d is None or d < best_d:
+                        best_d = d
+                        best = f
+                except Exception:
+                    continue
+        except Exception:
+            return None
+        return best
+
+    def place_small_canvas(ci, anchor, target_cm):
+        """Scale the Canvas down to ~target_cm and center it near the anchor, with
+        image-up along world-up. The Canvas transform is a Matrix2D in the plane's
+        own U/V system (same system orient_canvas_to_view uses)."""
+        try:
+            plane = ci.plane
+            if plane is None:
+                return False
+            u = unit3(plane.uDirection)
+            v = unit3(plane.vDirection)
+            n = unit3(plane.normal)
+            if u is None or v is None or n is None:
+                return False
+            world_up = adsk.core.Vector3D.create(0.0, 0.0, 1.0)
+            up = unit3(sub3(world_up, scaled3(n, dot3(world_up, n))))
+            if up is None:
+                up = v  # horizontal face: no in-plane world-up, use plane V
+            up2 = adsk.core.Vector2D.create(dot3(up, u), dot3(up, v))
+            L = up2.length or 1.0
+            up2 = adsk.core.Vector2D.create(up2.x / L, up2.y / L)
+            x2 = adsk.core.Vector2D.create(up2.y, -up2.x)  # rightward, no mirror
+
+            _o, dx0, dy0 = ci.transform.getAsCoordinateSystem()
+            w0 = dx0.length or 1.0
+            h0 = dy0.length or 1.0
+            aspect = (w0 / h0) if h0 else 1.0
+            th = float(target_cm)
+            tw = th * aspect
+
+            po = plane.origin
+            ax = float(anchor[0]) - po.x
+            ay = float(anchor[1]) - po.y
+            az = float(anchor[2]) - po.z
+            cu = ax * u.x + ay * u.y + az * u.z
+            cv = ax * v.x + ay * v.y + az * v.z
+
+            x_dir = adsk.core.Vector2D.create(x2.x * tw, x2.y * tw)
+            y_dir = adsk.core.Vector2D.create(up2.x * th, up2.y * th)
+            origin = adsk.core.Point2D.create(
+                cu - 0.5 * x_dir.x - 0.5 * y_dir.x,
+                cv - 0.5 * x_dir.y - 0.5 * y_dir.y,
+            )
+            mat = adsk.core.Matrix2D.create()
+            if not mat.setWithCoordinateSystem(origin, x_dir, y_dir):
+                return False
+            ci.transform = mat
+            return True
+        except Exception:
+            log("place_small_canvas failed\\n{}".format(m.traceback.format_exc()))
+            return False
+
     def attach_node(mark):
         if mark is None:
             return
 
         stage(
-            [{"label": "Choose the image", "done": False, "hint": "any picture file"}],
+            [{"label": "Choose the image", "done": False, "hint": "shown by the object"}],
             0,
             "Floating image",
         )
@@ -288,26 +370,49 @@ def install(m):
             if not path:
                 return
 
-            thumb = _make_thumb(path)
-            mark.setdefault("images", []).append(
-                {
-                    "mode": "node",
-                    "path": path,
-                    "sprite_path": thumb or path,
-                }
-            )
-
-            if not thumb:
-                log("no thumbnail (Pillow missing?) — floating image may render large")
-
-            log("attached node image to mark {}".format(mark.get("id")))
+            anchor = mark.get("anchor", [0.0, 0.0, 0.0])
+            body = m._body.get(mark.get("id"))
+            face = nearest_planar_face(body, anchor)
+            if face is None:
+                # No planar face on the body -> let the user pick one.
+                try:
+                    sel = m._ui.selectEntity(
+                        "Pick a planar face to place the image near the object",
+                        "PlanarFaces")
+                    face = sel.entity if sel else None
+                except Exception:
+                    face = None
+            if face is None:
+                log("floating image: no planar face available; aborted")
+                return
 
             try:
-                m._redraw_marks()
+                comp = face.body.parentComponent
+                ci = comp.canvases.createInput(path, face)
+                target = max(1.0, min(float(mark.get("size", 3.0)) * 0.6, 6.0))
+                if not place_small_canvas(ci, anchor, target):
+                    orient_canvas_to_view(ci, face)  # at least orient it
+                canvas = comp.canvases.add(ci)
+                canvases_by_mark.setdefault(mark["id"], []).append(canvas)
+                tok = None
+                try:
+                    tok = canvas.entityToken
+                except Exception:
+                    pass
+                mark.setdefault("images", []).append(
+                    {
+                        "mode": "face",
+                        "floating": True,
+                        "path": path,
+                        "canvas_token": tok,
+                    }
+                )
+                log("placed floating canvas near mark {}".format(mark.get("id")))
+                m._send_state()
             except Exception:
-                pass
-
-            m._send_state()
+                m._ui.messageBox(
+                    "FuzzyCAD couldn't place the floating image:\\n{}".format(
+                        m.traceback.format_exc()))
 
         finally:
             clear_stage()
@@ -583,8 +688,15 @@ def install(m):
         try:
             if os.path.exists(path):
                 import base64
+                ext = os.path.splitext(path)[1].lower()
+                mime = {
+                    ".jpg": "image/jpeg", ".jpeg": "image/jpeg",
+                    ".png": "image/png", ".bmp": "image/bmp",
+                    ".gif": "image/gif", ".tif": "image/tiff",
+                    ".tiff": "image/tiff", ".webp": "image/webp",
+                }.get(ext, "image/png")
                 with open(path, "rb") as fh:
-                    uri = "data:image/png;base64," + base64.b64encode(
+                    uri = "data:{};base64,".format(mime) + base64.b64encode(
                         fh.read()).decode("ascii")
                 _thumb_uri_cache[path] = uri
                 return uri
@@ -600,13 +712,13 @@ def install(m):
                 entry = {
                     "index": i,
                     "mode": im.get("mode"),
-                    "callout": bool(im.get("callout")),
+                    "floating": bool(im.get("floating")),
                     "hidden": bool(im.get("hidden")),
+                    # A base64 thumbnail so the card can show the picture (the
+                    # webview can't read local file paths; CSS shrinks it, so this
+                    # works even without Pillow).
+                    "thumb_uri": image_thumb_uri(im),
                 }
-                if im.get("mode") == "node":
-                    # A small base64 thumbnail so the card can show the picture
-                    # (the webview can't read local file paths).
-                    entry["thumb_uri"] = image_thumb_uri(im)
                 imgs.append(entry)
             out["images"] = imgs
         except Exception:
@@ -614,6 +726,20 @@ def install(m):
         return out
 
     m._public = public
+
+    def resolve_canvas(token):
+        if not token:
+            return None
+        try:
+            des = m._design()
+            if des is None:
+                return None
+            for ent in des.findEntityByToken(str(token)):
+                if isinstance(ent, adsk.fusion.Canvas):
+                    return ent
+        except Exception:
+            pass
+        return None
 
     # ---- palette actions --------------------------------------------------
     class PaletteHTMLHandler(adsk.core.HTMLEventHandler):
@@ -644,8 +770,9 @@ def install(m):
                     return
 
                 if act == "toggleImageNode":
-                    # Per-card show/hide for one floating image. Flips hidden, then
-                    # redraws (draw_nodes skips hidden) and refreshes the card.
+                    # Per-card show/hide for one image. Canvas images flip the native
+                    # Canvas visibility; legacy billboard images flip a hidden flag
+                    # that draw_nodes honors.
                     data = json.loads(e.data) if e.data else {}
                     mark = m._find(data.get("id"))
                     idx = data.get("index")
@@ -656,11 +783,24 @@ def install(m):
                         except Exception:
                             i = -1
                         if 0 <= i < len(imgs):
-                            imgs[i]["hidden"] = not imgs[i].get("hidden")
-                            try:
-                                m._redraw_marks()
-                            except Exception:
-                                pass
+                            im = imgs[i]
+                            im["hidden"] = not im.get("hidden")
+                            show = not im["hidden"]
+                            if im.get("mode") == "face":
+                                c = resolve_canvas(im.get("canvas_token"))
+                                if c is not None:
+                                    try:
+                                        c.isVisible = show
+                                    except Exception:
+                                        try:
+                                            c.opacity = 1.0 if show else 0.0
+                                        except Exception:
+                                            pass
+                            else:
+                                try:
+                                    m._redraw_marks()
+                                except Exception:
+                                    pass
                             try:
                                 m._send_state()
                             except Exception:

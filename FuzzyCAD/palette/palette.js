@@ -385,13 +385,13 @@
       imgrow.appendChild(bFace); imgrow.appendChild(bNode);
       cwrap.appendChild(imgrow);
 
-      // Thumbnails for floating ("node") images, each with a show/hide toggle.
+      // Thumbnail + show/hide toggle for every attached image (floating Canvas
+      // near the object, or Canvas on a face). Toggle flips the Canvas visibility.
       var allImgs = m.images || [];
-      var nodeImgs = allImgs.filter(function (im) { return im.mode === "node"; });
-      if (nodeImgs.length) {
+      if (allImgs.length) {
         var thumbrow = document.createElement("div");
         thumbrow.style.cssText = "display:flex;gap:8px;align-items:center;margin-top:7px;flex-wrap:wrap";
-        nodeImgs.forEach(function (im) {
+        allImgs.forEach(function (im) {
           var chip = document.createElement("div");
           chip.style.cssText = "display:flex;align-items:center;gap:5px;border:1px solid #d3d8df;border-radius:7px;padding:3px 5px;background:#fff";
           if (im.thumb_uri) {
@@ -402,7 +402,7 @@
           }
           var lbl = document.createElement("span");
           lbl.style.cssText = "font:600 10px/1 -apple-system,sans-serif;color:#8a94a0";
-          lbl.textContent = im.callout ? "callout" : "image";
+          lbl.textContent = im.floating ? "by object" : (im.mode === "face" ? "on face" : "image");
           chip.appendChild(lbl);
           var tgl = btn(im.hidden ? "Show" : "Hide", "img__tgl", (function (index) {
             return function (ev) { stop(ev); send("toggleImageNode", { id: m.id, index: index }); };
@@ -413,15 +413,6 @@
           thumbrow.appendChild(chip);
         });
         cwrap.appendChild(thumbrow);
-      }
-
-      // Face images (native Canvas) -- just a small count, no viewport toggle.
-      var nFace = allImgs.filter(function (im) { return im.mode === "face"; }).length;
-      if (nFace) {
-        var cnt = document.createElement("span");
-        cnt.style.cssText = "font:600 10.5px/1 -apple-system,sans-serif;color:#2f7d55;margin-top:4px;display:inline-block";
-        cnt.textContent = nFace + " on face";
-        cwrap.appendChild(cnt);
       }
 
       li.appendChild(cwrap);

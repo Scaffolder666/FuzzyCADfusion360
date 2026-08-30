@@ -246,7 +246,12 @@ def install(m):
                 event = adsk.core.HTMLEventArgs.cast(args)
                 action = event.action if event is not None else None
 
-                if action == "attachImageNode":
+                # NOTE: attachImageNode is no longer intercepted here. Floating
+                # images are now native Canvases (fuzzycad_image_attach.attach_node),
+                # because Fusion's Python has no Pillow to build the panel PNG and
+                # the billboard rendered full-size + always faced the camera. The
+                # callout panel path is retained only for any legacy node images.
+                if False and action == "attachImageNode":
                     data = json.loads(event.data) if event.data else {}
                     attach_callout(m._find(data.get("id")))
                     try:
