@@ -257,11 +257,13 @@ _clear_all.install(_legacy)
 _inspector = _load("fuzzycad_inspector", "core/fuzzycad_inspector.py")
 _inspector.install(_legacy)
 
-# Image attach: part of the comment layer on ANY mark. Attach a reference picture
-# either as a floating leader'd billboard ("node") or a native Canvas pasted onto a
-# picked face. Picks the file via the OS dialog -- no upload.
+# Image attach: part of the comment layer on ANY mark. Keep native face Canvas
+# support here; the callout module loaded immediately after this intercepts new
+# floating-image requests and renders them as camera-facing annotation panels.
 _image = _load("fuzzycad_image_attach", "tools/fuzzycad_image_attach.py")
 _image.install(_legacy)
+_image_callout = _load("fuzzycad_image_callout", "tools/fuzzycad_image_callout.py")
+_image_callout.install(_legacy)
 
 # Comic uncertainty renderer. It owns only the shared proposed baseline
 # (paper/putty fill + sketchy boundary) and consumes fuzzycad_uncertainty_visual;
