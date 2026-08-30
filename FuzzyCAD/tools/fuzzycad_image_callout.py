@@ -1,20 +1,13 @@
-"""Camera-facing image callouts for FuzzyCAD marks.
+"""Image callout attachment built on FuzzyCAD's proven node renderer.
 
-This module replaces the old floating-image attachment path with a compact
-annotation-style callout:
+The existing image-attach module already has the stable Fusion CustomGraphics path
+for a screen-facing image plus leader line. This module changes only what image
+that path receives: new floating-image attachments are pre-rendered as a small
+white annotation panel and stored as ordinary mode="node" images.
 
-    mark/object anchor ---- leader line ---- [ white image panel ]
-
-The panel is a screen-facing CustomGraphics point sprite, so its on-screen size
-stays readable as the camera moves. Its PNG already contains the white panel,
-border, padding, and the user's image. The panel position is derived from the
-mark anchor and the current camera basis on every persistent redraw; we do not
-store world-space panel corners or any Fusion native graphics wrapper.
-
-The existing "Image on face" path remains owned by fuzzycad_image_attach.py.
-This module intercepts only the palette's attachImageNode action so existing
-files with legacy node images still render through the old implementation while
-new attachments use mode="callout".
+Keeping the renderer unchanged avoids a second CustomGraphics group / point-set
+path. A small redraw wrapper only regenerates a temporary panel PNG when Fusion
+has restarted or the temp directory has been cleaned.
 """
 
 import os
@@ -26,13 +19,13 @@ PANEL_RADIUS_PX = 10
 PANEL_BORDER_PX = 2
 PANEL_BG = (255, 255, 255, 248)
 PANEL_BORDER = (148, 153, 161, 255)
-LEADER_RGB = (112, 117, 126)
-GID = "FuzzyCAD_ImageCallout"
 _panel_seq = [0]
 
 
 def _make_panel(path):
-    """Create one padded callout-panel PNG around the source image."""
+    """Create a padded white callout-panel PNG around the source image."""
+    if not path:
+        return None
     try:
         from PIL import Image, ImageDraw
     except Exception:
@@ -46,8 +39,8 @@ def _make_panel(path):
         height = image.size[1] + 2 * PANEL_PAD_PX
         panel = Image.new("RGBA", (width, height), (0, 0, 0, 0))
         draw = ImageDraw.Draw(panel)
-
         bounds = [0, 0, width - 1, height - 1]
+
         try:
             draw.rounded_rectangle(
                 bounds,
@@ -57,7 +50,6 @@ def _make_panel(path):
                 width=PANEL_BORDER_PX,
             )
         except Exception:
-            # Older Pillow fallback used by some Fusion Python builds.
             draw.rectangle(
                 bounds,
                 fill=PANEL_BG,
@@ -82,7 +74,6 @@ def install(m):
     adsk = m.adsk
     old_redraw = m._redraw_marks
     old_remove_mark = m._remove_mark
-    old_stop = m.stop
     CurrentPaletteHTMLHandler = m.PaletteHTMLHandler
 
     def log(msg):
@@ -91,48 +82,6 @@ def install(m):
                 "[FuzzyCAD IMAGE CALLOUT] " + msg)
         except Exception:
             pass
-
-    def add3(a, b):
-        return (a[0] + b[0], a[1] + b[1], a[2] + b[2])
-
-    def mul3(v, s):
-        return (v[0] * s, v[1] * s, v[2] * s)
-
-    def camera_basis():
-        try:
-            right, up = m._camera_xy()
-            return tuple(right), tuple(up)
-        except Exception:
-            return (1.0, 0.0, 0.0), (0.0, 1.0, 0.0)
-
-    def callout_layout(mark, index=0):
-        """Return anchor, leader end, and panel center for one callout.
-
-        The sprite itself has fixed pixel dimensions. World-space placement only
-        needs to keep the panel visibly off the part and stack multiple callouts.
-        """
-        anchor = tuple(mark.get("anchor", [0.0, 0.0, 0.0]))
-        try:
-            size = float(mark.get("size", 3.0) or 3.0)
-        except Exception:
-            size = 3.0
-
-        right, up = camera_basis()
-
-        # Keep the annotation outside small parts without sending it too far away
-        # from large assemblies. `size` is the mark's existing bbox-derived scale.
-        distance = max(3.0, min(size * 1.05, 10.0))
-        vertical = distance * (0.35 - 0.70 * float(index))
-
-        panel_center = add3(
-            add3(anchor, mul3(right, distance * 1.25)),
-            mul3(up, vertical),
-        )
-
-        # End the 3D leader under the camera-facing sprite. The opaque panel hides
-        # the final portion, so the visible line reads as terminating at its edge.
-        leader_end = panel_center
-        return anchor, leader_end, panel_center
 
     def pick_image():
         try:
@@ -158,8 +107,11 @@ def install(m):
             try:
                 stage(
                     "image",
-                    [{"label": "Choose the image", "done": False,
-                      "hint": "shown beside the CAD part"}],
+                    [{
+                        "label": "Choose the image",
+                        "done": False,
+                        "hint": "shown beside the CAD part",
+                    }],
                     0,
                     "Image callout",
                 )
@@ -173,20 +125,26 @@ def install(m):
 
             panel_path = _make_panel(path)
             if not panel_path:
-                # Still show the original image if Pillow is unavailable; the
-                # leader/placement remain useful and the feature never blocks work.
+                # The original node renderer can still display the source image.
+                # Do not block the attachment if Pillow is unavailable.
                 panel_path = path
-                log("panel thumbnail unavailable; using source image")
+                log("panel PNG unavailable; using source image")
 
+            # IMPORTANT: use mode="node". fuzzycad_image_attach.py already owns
+            # the stable CustomGraphics point-sprite + leader-line renderer.
             mark.setdefault("images", []).append({
-                "mode": "callout",
+                "mode": "node",
+                "callout": True,
                 "path": path,
-                "panel_path": panel_path,
+                "sprite_path": panel_path,
             })
 
+            # The original node renderer is inside old_redraw, so this immediately
+            # renders the panel through the same path that worked before callouts.
             m._redraw_marks()
             m._send_state()
-            log("attached callout image to mark {}".format(mark.get("id")))
+            log("attached callout through node renderer mark={}".format(
+                mark.get("id")))
         finally:
             if stage:
                 try:
@@ -194,100 +152,52 @@ def install(m):
                 except Exception:
                     pass
 
-    def draw_callouts():
-        try:
-            m._clear(GID)
-        except Exception:
-            pass
-
-        grp = m._group(GID)
-        if grp is None:
-            return
-
-        drew = 0
+    def ensure_panel_paths():
+        """Rebuild temp panel PNGs before the original node renderer runs."""
         for mark in list(getattr(m, "_marks", None) or []):
-            if mark.get("status", "open") != "open":
-                continue
-
-            callouts = [
-                image for image in (mark.get("images") or [])
-                if image.get("mode") == "callout"
-            ]
-            if not callouts:
-                continue
-
-            for index, image in enumerate(callouts):
-                anchor, leader_end, panel_center = callout_layout(mark, index)
-
-                try:
-                    m._sketchy(
-                        grp,
-                        [anchor, leader_end],
-                        LEADER_RGB,
-                        0.0,
-                        int(mark.get("id", 0)) * 37 + index,
-                        weight=1,
-                        strokes=1,
-                    )
-                except Exception:
-                    pass
-
-                panel_path = image.get("panel_path")
-                if not panel_path or not os.path.exists(panel_path):
-                    panel_path = _make_panel(image.get("path")) or image.get("path")
-                    image["panel_path"] = panel_path
-                if not panel_path:
+            for image in (mark.get("images") or []):
+                if image.get("mode") != "node" or not image.get("callout"):
                     continue
 
-                try:
-                    coords = adsk.fusion.CustomGraphicsCoordinates.create(
-                        list(panel_center))
-                    grp.addPointSet(
-                        coords,
-                        [0],
-                        adsk.fusion.CustomGraphicsPointTypes.UserDefinedCustomGraphicsPointType,
-                        panel_path,
-                    )
-                    drew += 1
-                except Exception:
-                    log("callout sprite failed\n{}".format(
-                        m.traceback.format_exc()))
+                sprite_path = image.get("sprite_path")
+                if sprite_path and os.path.exists(sprite_path):
+                    continue
 
-        if drew:
-            log("drew {} callout image(s)".format(drew))
-
-        try:
-            m._app.activeViewport.refresh()
-        except Exception:
-            pass
+                panel_path = _make_panel(image.get("path"))
+                if panel_path:
+                    image["sprite_path"] = panel_path
 
     def redraw(*args, **kwargs):
-        result = old_redraw(*args, **kwargs)
+        # Prepare the panel first, then delegate all drawing to the established
+        # image_attach node renderer captured when this module was installed.
         try:
-            draw_callouts()
+            ensure_panel_paths()
         except Exception:
-            log("draw callouts failed\n{}".format(m.traceback.format_exc()))
-        return result
+            log("panel refresh failed\n{}".format(m.traceback.format_exc()))
+        return old_redraw(*args, **kwargs)
 
     m._redraw_marks = redraw
 
     def remove_mark(mid):
-        # Only delete generated temp panel PNGs. Never touch the user's source file.
+        # Delete only generated temp panel files; never the user's source image.
         try:
             mark = m._find(mid)
         except Exception:
             mark = None
+
         if mark:
             for image in (mark.get("images") or []):
-                if image.get("mode") != "callout":
+                if image.get("mode") != "node" or not image.get("callout"):
                     continue
-                panel_path = image.get("panel_path")
-                if panel_path and panel_path != image.get("path"):
+                sprite_path = image.get("sprite_path")
+                source_path = image.get("path")
+                if sprite_path and sprite_path != source_path:
                     try:
-                        if os.path.exists(panel_path):
-                            os.remove(panel_path)
+                        if os.path.exists(sprite_path):
+                            os.remove(sprite_path)
                     except Exception:
                         pass
+
         return old_remove_mark(mid)
 
     m._remove_mark = remove_mark
@@ -300,8 +210,10 @@ def install(m):
         def notify(self, args):
             try:
                 import json
+
                 event = adsk.core.HTMLEventArgs.cast(args)
                 action = event.action if event is not None else None
+
                 if action == "attachImageNode":
                     data = json.loads(event.data) if event.data else {}
                     attach_callout(m._find(data.get("id")))
@@ -316,13 +228,4 @@ def install(m):
             self._delegate.notify(args)
 
     m.PaletteHTMLHandler = PaletteHTMLHandler
-
-    def stop(context):
-        try:
-            m._clear(GID)
-        except Exception:
-            pass
-        return old_stop(context)
-
-    m.stop = stop
-    log("IMAGE CALLOUT READY (camera-facing panel + leader)")
+    log("IMAGE CALLOUT READY (panel uses stable node renderer)")
