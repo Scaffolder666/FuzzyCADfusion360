@@ -38,6 +38,7 @@ must not be the primary dependency path.
 | Compare creation flow | `compare/fuzzycad_compare_selection_flow.py` | first body -> second body -> Confirm |
 | Compare card camera focus | `compare/fuzzycad_compare_card_focus.py` | camera only |
 | Image attachments on marks | `tools/fuzzycad_image_attach.py` | native face/floating Canvases + leader lines; tokens only |
+| Resolved-decision archive | `core/fuzzycad_decision_archive.py` | JSON-safe history of Accepted/Rejected cards + their comments |
 
 ## 3. Data boundaries
 
@@ -132,6 +133,22 @@ runs each overlay inside its own transaction, after the silhouette pass and befo
 the viewport refresh. Overlays clear their own graphics group first so a redundant
 run is harmless; they follow §3 and resolve native objects fresh from stored tokens
 rather than closing over live wrappers.
+
+### Resolved-decision archive
+
+Accepting or Rejecting a card resolves it and drops the mark. `core/fuzzycad_decision_archive.py`
+keeps a minimal, read-only trail of what was there so a downstream collaborator can
+still see which decisions were made and read their discussion. Both resolution paths
+(the legacy palette handler and `core/fuzzycad_safe_confirm.resolve_terminal`) funnel
+through `_remove_mark`; the archive records the reason at the palette-action edge
+(keyed by mark id) and snapshots the card the instant before `_remove_mark` drops it.
+Each row is JSON-safe -- id, tool, title, resolution, comments, timestamp only; no
+geometry, field history, images, or native wrappers (§3). The trail persists on the
+same save/load lifecycle as the marks (wrapping `_persist_state` / `_reload_persisted_state`)
+in its own document attribute, and is pushed to the palette as a separate `archive`
+message so `palette/panel_archive.js` renders the resolved section without touching
+the live card render or the incremental-patch path. Removals that are not resolutions
+(Clear all, deleting an unresolved card) set no reason and are not archived.
 
 ## 5. Command lifecycle
 

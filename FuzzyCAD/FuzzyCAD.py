@@ -296,6 +296,15 @@ _crash_trace.install(_legacy)
 _safe_confirm = _load("fuzzycad_safe_confirm", "core/fuzzycad_safe_confirm.py")
 _safe_confirm.install(_legacy)
 
+# Decision archive: a minimal, Overleaf-style history of resolved cards. Accept and
+# Reject both resolve through _remove_mark; this records the card identity + its
+# comments the instant before the mark is dropped, and rides the persistence
+# save/load lifecycle so the trail travels with the document. Loaded after
+# persistence and safe_confirm so its _remove_mark wrapper and palette-action
+# handler are outermost (it must see the resolution before the card is removed).
+_archive = _load("fuzzycad_decision_archive", "core/fuzzycad_decision_archive.py")
+_archive.install(_legacy)
+
 # Outermost, always-on flow trace for the manual risk sweep: logs every palette
 # action and toolbar command lifecycle edge into %TEMP%/fuzzycad_crash.log. Edge
 # only -- no per-frame I/O. Installed last so it sees every action first.
