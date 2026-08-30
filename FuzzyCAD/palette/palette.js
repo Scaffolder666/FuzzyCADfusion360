@@ -352,16 +352,14 @@
       (m.comments || []).forEach(function (c, ci) {
         var cm = document.createElement("div");
         cm.className = "cmt";
-        cm.style.cssText = "display:flex;align-items:flex-start;gap:6px;justify-content:space-between";
         var ctext = document.createElement("span");
+        ctext.className = "cmt__text";
         ctext.textContent = c.text;
-        ctext.style.cssText = "flex:1;min-width:0;word-break:break-word";
         cm.appendChild(ctext);
         var cx = btn("✕", "cmt__del", (function (index) {
           return function (ev) { stop(ev); send("removeComment", { id: m.id, index: index }); };
         })(ci));
         cx.title = "Delete comment";
-        cx.style.cssText = "border:none;background:transparent;color:#a0a8b2;cursor:pointer;font-size:12px;line-height:1;padding:0 2px";
         cm.appendChild(cx);
         cwrap.appendChild(cm);
       });
@@ -385,51 +383,51 @@
       });
       crow.appendChild(cin); crow.appendChild(post); cwrap.appendChild(crow);
 
-      // Reference images — part of the comment layer, on any mark.
-      var imgrow = document.createElement("div");
-      imgrow.style.cssText = "display:flex;gap:6px;align-items:center;margin-top:6px;flex-wrap:wrap";
-      var imgBtnCss = "border:1px solid #d3d8df;background:#fff;color:#5a6672;font:600 10.5px/1 -apple-system,'Segoe UI',Roboto,sans-serif;padding:5px 8px;border-radius:6px;cursor:pointer";
-      var bFace = btn("📎 Image on face", "img__btn", function (ev) { stop(ev); send("attachImageFace", { id: m.id }); });
-      var bNode = btn("📎 Floating image", "img__btn", function (ev) { stop(ev); send("attachImageNode", { id: m.id }); });
-      bFace.style.cssText = imgBtnCss; bNode.style.cssText = imgBtnCss;
-      imgrow.appendChild(bFace); imgrow.appendChild(bNode);
-      cwrap.appendChild(imgrow);
-
       // Thumbnail + show/hide toggle for every attached image (floating Canvas
       // near the object, or Canvas on a face). Toggle flips the Canvas visibility.
       var allImgs = m.images || [];
       if (allImgs.length) {
         var thumbrow = document.createElement("div");
-        thumbrow.style.cssText = "display:flex;gap:8px;align-items:center;margin-top:7px;flex-wrap:wrap";
+        thumbrow.className = "img__list";
         allImgs.forEach(function (im) {
           var chip = document.createElement("div");
-          chip.style.cssText = "display:flex;align-items:center;gap:5px;border:1px solid #d3d8df;border-radius:7px;padding:3px 5px;background:#fff";
+          chip.className = "img__chip" + (im.hidden ? " img__chip--hidden" : "");
           if (im.thumb_uri) {
             var thumb = document.createElement("img");
             thumb.src = im.thumb_uri;
-            thumb.style.cssText = "width:34px;height:34px;object-fit:cover;border-radius:4px;opacity:" + (im.hidden ? "0.3" : "1");
+            thumb.className = "img__thumb";
             chip.appendChild(thumb);
           }
           var lbl = document.createElement("span");
-          lbl.style.cssText = "font:600 10px/1 -apple-system,sans-serif;color:#8a94a0";
+          lbl.className = "img__tag";
           lbl.textContent = im.floating ? "by object" : (im.mode === "face" ? "on face" : "image");
           chip.appendChild(lbl);
           var tgl = btn(im.hidden ? "Show" : "Hide", "img__tgl", (function (index) {
             return function (ev) { stop(ev); send("toggleImageNode", { id: m.id, index: index }); };
           })(im.index));
           tgl.title = im.hidden ? "Show in viewport" : "Hide in viewport";
-          tgl.style.cssText = "border:1px solid #d3d8df;background:" + (im.hidden ? "#eef2f6" : "#fff") + ";color:#5a6672;font:600 10px/1 -apple-system,sans-serif;padding:4px 7px;border-radius:6px;cursor:pointer";
           chip.appendChild(tgl);
           var del = btn("✕", "img__del", (function (index) {
             return function (ev) { stop(ev); send("removeImageNode", { id: m.id, index: index }); };
           })(im.index));
           del.title = "Delete image";
-          del.style.cssText = "border:none;background:transparent;color:#a0a8b2;cursor:pointer;font-size:12px;line-height:1;padding:0 2px";
           chip.appendChild(del);
           thumbrow.appendChild(chip);
         });
         cwrap.appendChild(thumbrow);
       }
+
+      // Reference-image attach — a compact, secondary control group so it does
+      // not compete with Accept / Reject above.
+      var imgrow = document.createElement("div");
+      imgrow.className = "img__attach";
+      var imgLabel = document.createElement("span");
+      imgLabel.className = "img__attach-label";
+      imgLabel.textContent = "📎 Reference";
+      imgrow.appendChild(imgLabel);
+      imgrow.appendChild(btn("On face", "img__btn", function (ev) { stop(ev); send("attachImageFace", { id: m.id }); }));
+      imgrow.appendChild(btn("Floating", "img__btn", function (ev) { stop(ev); send("attachImageNode", { id: m.id }); }));
+      cwrap.appendChild(imgrow);
 
       li.appendChild(cwrap);
 
