@@ -304,10 +304,10 @@ def install(m):
             return None
         return best
 
-    def place_small_canvas(ci, anchor, target_cm):
-        """Scale the Canvas down to ~target_cm and center it near the anchor, with
-        image-up along world-up. The Canvas transform is a Matrix2D in the plane's
-        own U/V system (same system orient_canvas_to_view uses)."""
+    def place_small_canvas(ci, body, anchor, larger_cm):
+        """Size the Canvas so its LARGER side is ~larger_cm, and push its center OUT
+        of the body's bounding box (along in-plane world-up) instead of sitting on
+        the object's center. Transform is a Matrix2D in the plane's own U/V system."""
         try:
             plane = ci.plane
             if plane is None:
@@ -330,15 +330,42 @@ def install(m):
             w0 = dx0.length or 1.0
             h0 = dy0.length or 1.0
             aspect = (w0 / h0) if h0 else 1.0
-            th = float(target_cm)
-            tw = th * aspect
+            larger = float(larger_cm)
+            if aspect >= 1.0:          # wide image
+                tw = larger
+                th = larger / aspect
+            else:                      # tall image
+                th = larger
+                tw = larger * aspect
 
+            # Base center = the body's bbox center projected onto the plane; then
+            # push OUTSIDE the bbox along 'up' by half the object + half the image.
             po = plane.origin
-            ax = float(anchor[0]) - po.x
-            ay = float(anchor[1]) - po.y
-            az = float(anchor[2]) - po.z
-            cu = ax * u.x + ay * u.y + az * u.z
-            cv = ax * v.x + ay * v.y + az * v.z
+            cx = float(anchor[0])
+            cy = float(anchor[1])
+            cz = float(anchor[2])
+            half_up = 0.0
+            try:
+                bb = body.boundingBox
+                mn = bb.minPoint
+                mx = bb.maxPoint
+                cx = (mn.x + mx.x) / 2.0
+                cy = (mn.y + mx.y) / 2.0
+                cz = (mn.z + mx.z) / 2.0
+                proj = []
+                for X in (mn.x, mx.x):
+                    for Y in (mn.y, mx.y):
+                        for Z in (mn.z, mx.z):
+                            proj.append(X * up.x + Y * up.y + Z * up.z)
+                half_up = (max(proj) - min(proj)) / 2.0
+            except Exception:
+                pass
+
+            bcu = (cx - po.x) * u.x + (cy - po.y) * u.y + (cz - po.z) * u.z
+            bcv = (cx - po.x) * v.x + (cy - po.y) * v.y + (cz - po.z) * v.z
+            push = half_up + th * 0.5 + max(th * 0.35, 0.5)
+            cu = bcu + up2.x * push
+            cv = bcv + up2.y * push
 
             x_dir = adsk.core.Vector2D.create(x2.x * tw, x2.y * tw)
             y_dir = adsk.core.Vector2D.create(up2.x * th, up2.y * th)
@@ -389,8 +416,9 @@ def install(m):
             try:
                 comp = face.body.parentComponent
                 ci = comp.canvases.createInput(path, face)
-                target = max(1.0, min(float(mark.get("size", 3.0)) * 0.6, 6.0))
-                if not place_small_canvas(ci, anchor, target):
+                # Larger side ~1.5x the object size, and pushed outside the bbox.
+                larger = max(3.0, min(float(mark.get("size", 3.0)) * 1.5, 40.0))
+                if not place_small_canvas(ci, body, anchor, larger):
                     orient_canvas_to_view(ci, face)  # at least orient it
                 canvas = comp.canvases.add(ci)
                 canvases_by_mark.setdefault(mark["id"], []).append(canvas)
@@ -678,6 +706,13 @@ def install(m):
     _thumb_uri_cache = {}   # sprite/panel path -> base64 data URI (in-memory only,
                             #   never persisted, so the saved document stays small)
 
+    # Cap the base64 embedded in the card state. Without Pillow we can't shrink the
+    # file, and a multi-MB data URI inside the broadcast state payload can exceed
+    # what palette.sendInfoToHTML delivers -> the whole card update (including the
+    # toggle) is dropped. Over this size we skip the preview but still show the chip
+    # + Show/Hide toggle (which don't need the image).
+    THUMB_MAX_BYTES = 160 * 1024
+
     def image_thumb_uri(im):
         path = im.get("sprite_path") or im.get("path")
         if not path:
@@ -687,6 +722,8 @@ def install(m):
             return uri
         try:
             if os.path.exists(path):
+                if os.path.getsize(path) > THUMB_MAX_BYTES:
+                    return None
                 import base64
                 ext = os.path.splitext(path)[1].lower()
                 mime = {
