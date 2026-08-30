@@ -77,11 +77,26 @@ def install(m):
     CurrentPaletteHTMLHandler = m.PaletteHTMLHandler
 
     def log(msg):
+        # Route into the always-on crash log so we can actually see the callout
+        # path during a manual test (app.log alone is invisible there).
+        try:
+            ct = getattr(m, "_crash_trace", None)
+            if ct is not None:
+                ct("CALLOUT", str(msg))
+        except Exception:
+            pass
         try:
             (m._app or adsk.core.Application.get()).log(
                 "[FuzzyCAD IMAGE CALLOUT] " + msg)
         except Exception:
             pass
+
+    def pillow_available():
+        try:
+            from PIL import Image, ImageDraw  # noqa: F401
+            return True
+        except Exception:
+            return False
 
     def pick_image():
         try:
@@ -177,6 +192,16 @@ def install(m):
         return old_redraw(*args, **kwargs)
 
     m._redraw_marks = redraw
+
+    # The authoritative render owner bypasses the _redraw_marks wrapper above, so
+    # also register panel preparation as a persistent overlay -- inserted BEFORE
+    # image_attach's draw_nodes (registered earlier) so the panel PNGs exist when
+    # the billboard is drawn.
+    overlays = getattr(m, "_persistent_overlays", None)
+    if overlays is None:
+        overlays = []
+        m._persistent_overlays = overlays
+    overlays.insert(0, ensure_panel_paths)
 
     def remove_mark(mid):
         # Delete only generated temp panel files; never the user's source image.

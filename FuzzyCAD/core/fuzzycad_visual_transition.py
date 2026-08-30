@@ -280,6 +280,18 @@ def install(m):
         apply_opacity()
         comic_changed = apply_comic()
         apply_silhouette()
+        # Non-authoritative persistent overlays that are not part of the core
+        # mark/comic/silhouette state but must be redrawn on every transaction
+        # (e.g. the floating-image billboard + leader line). Renderers register a
+        # zero-arg callable on m._persistent_overlays; they run inside the same
+        # transaction so the single viewport refresh below picks them up. Before
+        # this hook they wrapped _redraw_marks and were silently bypassed when the
+        # authoritative render replaced it -- which is why floating images vanished.
+        for overlay in list(getattr(m, "_persistent_overlays", None) or []):
+            try:
+                overlay()
+            except Exception:
+                trace("OVERLAY_EXCEPTION", "")
         refresh_viewport()
 
         state["last_snapshot"] = snap

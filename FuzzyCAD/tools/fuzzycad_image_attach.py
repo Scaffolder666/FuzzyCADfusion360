@@ -486,6 +486,20 @@ def install(m):
 
     m._redraw_marks = redraw
 
+    # Also register the floating-image billboard as a persistent OVERLAY. The
+    # authoritative render owner (fuzzycad_visual_transition.py) replaces
+    # _redraw_marks with a single transaction that does NOT call the historical
+    # wrappers, so the redraw wrapper above is bypassed whenever that owner is
+    # installed -- which made floating images disappear. The overlay hook runs
+    # draw_nodes inside that transaction. (The wrapper stays as a fallback for
+    # builds without the render owner; draw_nodes clears its own group first, so
+    # running twice is harmless.)
+    overlays = getattr(m, "_persistent_overlays", None)
+    if overlays is None:
+        overlays = []
+        m._persistent_overlays = overlays
+    overlays.append(draw_nodes)
+
     # ---- delete a mark's images when it is accepted OR rejected ----------
     def delete_mark_images(mid):
         # Native face canvases created this session.
