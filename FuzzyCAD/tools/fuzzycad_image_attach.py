@@ -436,8 +436,11 @@ def install(m):
                 # Canvas defaults to a translucent overlay; make it fully opaque.
                 try:
                     canvas.opacity = 1.0
+                    log("canvas opacity set -> {}".format(
+                        getattr(canvas, "opacity", "?")))
                 except Exception:
-                    pass
+                    log("canvas opacity set FAILED\\n{}".format(
+                        m.traceback.format_exc()))
                 canvases_by_mark.setdefault(mark["id"], []).append(canvas)
                 tok = None
                 try:
@@ -453,7 +456,14 @@ def install(m):
                         "leader_end": leader_end,
                     }
                 )
-                log("placed floating canvas near mark {}".format(mark.get("id")))
+                log("placed floating canvas near mark {} (images now={})".format(
+                    mark.get("id"), len(mark.get("images") or [])))
+                # Redraw so the persistent overlay draws the leader line NOW (not
+                # just on the next redraw), then push the card state.
+                try:
+                    m._redraw_marks()
+                except Exception:
+                    pass
                 m._send_state()
             except Exception:
                 m._ui.messageBox(
