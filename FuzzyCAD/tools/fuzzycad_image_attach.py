@@ -307,7 +307,9 @@ def install(m):
     def place_small_canvas(ci, body, anchor, larger_cm):
         """Size the Canvas so its LARGER side is ~larger_cm, and push its center OUT
         of the body's bounding box (along in-plane world-up) instead of sitting on
-        the object's center. Transform is a Matrix2D in the plane's own U/V system."""
+        the object's center. Returns the 3D point at the image's bottom-center (the
+        leader-line target nearest the object), or None on failure. Transform is a
+        Matrix2D in the plane's own U/V system."""
         try:
             plane = ci.plane
             if plane is None:
@@ -363,7 +365,7 @@ def install(m):
 
             bcu = (cx - po.x) * u.x + (cy - po.y) * u.y + (cz - po.z) * u.z
             bcv = (cx - po.x) * v.x + (cy - po.y) * v.y + (cz - po.z) * v.z
-            push = half_up + th * 0.5 + max(th * 0.35, 0.5)
+            push = half_up + th * 0.5 + max(th * 0.15, 0.3)
             cu = bcu + up2.x * push
             cv = bcv + up2.y * push
 
@@ -375,12 +377,21 @@ def install(m):
             )
             mat = adsk.core.Matrix2D.create()
             if not mat.setWithCoordinateSystem(origin, x_dir, y_dir):
-                return False
+                return None
             ci.transform = mat
-            return True
+
+            # Leader target = image bottom-center (the edge nearest the object), in
+            # 3D world coords, so draw_nodes can connect a line from the object to it.
+            bu = cu - 0.5 * th * up2.x
+            bv = cv - 0.5 * th * up2.y
+            return [
+                po.x + bu * u.x + bv * v.x,
+                po.y + bu * u.y + bv * v.y,
+                po.z + bu * u.z + bv * v.z,
+            ]
         except Exception:
             log("place_small_canvas failed\\n{}".format(m.traceback.format_exc()))
-            return False
+            return None
 
     def attach_node(mark):
         if mark is None:
@@ -418,9 +429,15 @@ def install(m):
                 ci = comp.canvases.createInput(path, face)
                 # Larger side ~1.5x the object size, and pushed outside the bbox.
                 larger = max(3.0, min(float(mark.get("size", 3.0)) * 1.5, 40.0))
-                if not place_small_canvas(ci, body, anchor, larger):
+                leader_end = place_small_canvas(ci, body, anchor, larger)
+                if leader_end is None:
                     orient_canvas_to_view(ci, face)  # at least orient it
                 canvas = comp.canvases.add(ci)
+                # Canvas defaults to a translucent overlay; make it fully opaque.
+                try:
+                    canvas.opacity = 1.0
+                except Exception:
+                    pass
                 canvases_by_mark.setdefault(mark["id"], []).append(canvas)
                 tok = None
                 try:
@@ -433,6 +450,7 @@ def install(m):
                         "floating": True,
                         "path": path,
                         "canvas_token": tok,
+                        "leader_end": leader_end,
                     }
                 )
                 log("placed floating canvas near mark {}".format(mark.get("id")))
@@ -631,6 +649,34 @@ def install(m):
                     drew += 1
                 except Exception:
                     log("sprite failed\n{}".format(m.traceback.format_exc()))
+
+        # Leader lines from the object to floating Canvas images (the Canvas itself
+        # is native geometry; here we only draw the connecting line to it).
+        for mark in list(getattr(m, "_marks", None) or []):
+            if mark.get("status", "open") != "open":
+                continue
+            a = mark.get("anchor", [0.0, 0.0, 0.0])
+            for im in (mark.get("images") or []):
+                if im.get("mode") != "face" or not im.get("floating"):
+                    continue
+                if im.get("hidden"):
+                    continue
+                end = im.get("leader_end")
+                if not end:
+                    continue
+                try:
+                    m._sketchy(
+                        grp,
+                        [tuple(a), tuple(end)],
+                        LEADER_RGB,
+                        0.0,
+                        int(mark.get("id", 0)) * 17,
+                        weight=1,
+                        strokes=1,
+                    )
+                    drew += 1
+                except Exception:
+                    pass
 
         if drew:
             log("drew {} floating image(s)".format(drew))
