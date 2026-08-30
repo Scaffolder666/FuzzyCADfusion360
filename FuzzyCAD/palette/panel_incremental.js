@@ -27,7 +27,13 @@
           return [a.name || "", (a.thumb || []).length];
         }) : null,
         comments: (m.comments || []).map(function (c) { return c.text || ""; }),
-        fields: (m.fields || []).map(function (f) { return [f.key, f.kind || "number", f.unit || ""]; })
+        fields: (m.fields || []).map(function (f) { return [f.key, f.kind || "number", f.unit || ""]; }),
+        // Include images so attaching / toggling / removing one changes the
+        // signature and forces a full render (the incremental field patch does not
+        // rebuild the image thumbnail + Show/Hide chips).
+        images: (m.images || []).map(function (im) {
+          return [im.index, im.mode, !!im.hidden, !!im.floating, im.thumb_uri ? 1 : 0];
+        })
       };
     }));
   }

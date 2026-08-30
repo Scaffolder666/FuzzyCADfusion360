@@ -434,10 +434,9 @@ def install(m):
                     orient_canvas_to_view(ci, face)  # at least orient it
                 canvas = comp.canvases.add(ci)
                 # Canvas defaults to a translucent overlay; make it fully opaque.
+                # Canvas.opacity is an INT percent (0-100), not a 0-1 float.
                 try:
-                    canvas.opacity = 1.0
-                    log("canvas opacity set -> {}".format(
-                        getattr(canvas, "opacity", "?")))
+                    canvas.opacity = 100
                 except Exception:
                     log("canvas opacity set FAILED\\n{}".format(
                         m.traceback.format_exc()))
