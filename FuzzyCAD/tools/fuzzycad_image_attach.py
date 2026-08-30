@@ -53,7 +53,9 @@ def install(m):
 
     GID = "FuzzyCAD_ImageNode"
     LEADER_RGB = (120, 124, 132)
-    canvases_by_mark = {}   # mark id -> [Canvas objects created this session]
+    # No long-lived native Canvas wrappers are kept (ARCHITECTURE.md §3). Each
+    # attached image stores only its Canvas entityToken; Canvases are resolved
+    # fresh via findEntityByToken when a card toggles, deletes, or resolves.
 
     def log(msg):
         try:
@@ -276,34 +278,8 @@ def install(m):
     # No Pillow in Fusion's Python -> the old screen-facing billboard rendered the
     # full-size image (huge) and always faced the camera. A native Canvas needs no
     # Pillow, renders at a controllable world size, and stays fixed in space (you
-    # orbit around it). We auto-place it on the object's planar face nearest the
-    # mark, small; if the body has no planar face we fall back to letting the user
-    # pick one, same as Image-on-face.
-    def nearest_planar_face(body, anchor):
-        if body is None:
-            return None
-        try:
-            a = adsk.core.Point3D.create(
-                float(anchor[0]), float(anchor[1]), float(anchor[2]))
-        except Exception:
-            return None
-        best = None
-        best_d = None
-        try:
-            for f in body.faces:
-                try:
-                    if not isinstance(f.geometry, adsk.core.Plane):
-                        continue
-                    d = a.distanceTo(f.pointOnFace)
-                    if best_d is None or d < best_d:
-                        best_d = d
-                        best = f
-                except Exception:
-                    continue
-        except Exception:
-            return None
-        return best
-
+    # orbit around it). The user picks the face to place it on (two guided
+    # left-rail steps), same selection flow as Image-on-face.
     def place_small_canvas(ci, body, anchor, larger_cm):
         """Size the Canvas so its LARGER side is ~larger_cm, and push its center OUT
         of the body's bounding box (along in-plane world-up) instead of sitting on
@@ -445,7 +421,6 @@ def install(m):
                 except Exception:
                     log("canvas opacity set FAILED\\n{}".format(
                         m.traceback.format_exc()))
-                canvases_by_mark.setdefault(mark["id"], []).append(canvas)
                 tok = None
                 try:
                     tok = canvas.entityToken
@@ -535,10 +510,9 @@ def install(m):
 
                 canvas = comp.canvases.add(ci)
 
-                # Remember it so accept/reject can delete it (it's a native doc
-                # entity, not tied to the mark on its own).
-                canvases_by_mark.setdefault(mark["id"], []).append(canvas)
-
+                # ARCHITECTURE.md §3: long-lived state stores only the entity
+                # token, never the live Canvas wrapper. Accept/reject/delete
+                # resolve the Canvas fresh via design.findEntityByToken(tok).
                 tok = None
                 try:
                     tok = canvas.entityToken
@@ -628,7 +602,8 @@ def install(m):
                 # (Re)generate the thumbnail when it is missing OR was made at a
                 # different target size than the current THUMB_MAX, so an oversized
                 # sprite from before a size change shrinks WITHOUT re-attaching.
-                # Callout panels are owned by image_callout (skip here).
+                # (The `callout` flag only appears on legacy node images saved by
+                # the retired image_callout module; those keep their own panel PNG.)
                 sprite = im.get("sprite_path")
                 if not im.get("callout"):
                     stale = (im.get("thumb_px") != THUMB_MAX
@@ -726,14 +701,8 @@ def install(m):
 
     # ---- delete a mark's images when it is accepted OR rejected ----------
     def delete_mark_images(mid):
-        # Native face canvases created this session.
-        for cv in canvases_by_mark.pop(mid, []):
-            try:
-                cv.deleteMe()
-            except Exception:
-                pass
-
-        # Any still resolvable by token (e.g. after a reopen).
+        # ARCHITECTURE.md §3: resolve each Canvas fresh from its stored token.
+        # No live Canvas wrappers are retained between commands.
         try:
             mark = m._find(mid)
         except Exception:
@@ -929,12 +898,6 @@ def install(m):
                                         c.deleteMe()
                                     except Exception:
                                         pass
-                                try:
-                                    lst = canvases_by_mark.get(mark["id"])
-                                    if lst and c in lst:
-                                        lst.remove(c)
-                                except Exception:
-                                    pass
                             try:
                                 m._redraw_marks()
                             except Exception:

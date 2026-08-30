@@ -37,6 +37,7 @@ must not be the primary dependency path.
 | Compare mark semantics | `compare/fuzzycad_compare_inplace.py` + existing Compare renderer stack | keep/drop alternatives |
 | Compare creation flow | `compare/fuzzycad_compare_selection_flow.py` | first body -> second body -> Confirm |
 | Compare card camera focus | `compare/fuzzycad_compare_card_focus.py` | camera only |
+| Image attachments on marks | `tools/fuzzycad_image_attach.py` | native face/floating Canvases + leader lines; tokens only |
 
 ## 3. Data boundaries
 
@@ -119,6 +120,18 @@ value is applied, never once before and once after.
 Full-document recovery work (for example scanning `design.allComponents` to find
 legacy orphan opacity) is not part of ordinary redraw. It runs at startup or from
 Inspector Repair.
+
+### Persistent overlays
+
+`core/fuzzycad_visual_transition.py` replaces `_redraw_marks` with an authoritative
+render transaction that does not call the historical draw wrappers. Visual work that
+must run on every authoritative redraw but is not owned by that transaction (for
+example `tools/fuzzycad_image_attach.py` drawing floating-image leader lines)
+registers a zero-argument callable on `m._persistent_overlays`. The render owner
+runs each overlay inside its own transaction, after the silhouette pass and before
+the viewport refresh. Overlays clear their own graphics group first so a redundant
+run is harmless; they follow §3 and resolve native objects fresh from stored tokens
+rather than closing over live wrappers.
 
 ## 5. Command lifecycle
 

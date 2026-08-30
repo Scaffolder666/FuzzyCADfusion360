@@ -9,5 +9,8 @@ kept out of the live patch stack but retained for reference. Superseded by:
 - opacity_guard, opacity_finalize → core/fuzzycad_opacity_runtime.py + core/fuzzycad_state_reconcile.py
 - reference_health, reference_relink → references/fuzzycad_reference_warning.py
 - incremental_render → superseded by the throttled candidate refresh in the fillet path
+- image_callout → superseded by tools/fuzzycad_image_attach.py (floating images are
+  native Canvases; the Pillow-based camera-facing panel renderer never worked in
+  Fusion's Pillow-less Python)
 
 Nothing here is imported. Safe to delete permanently once no longer needed.

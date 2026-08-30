@@ -257,13 +257,14 @@ _clear_all.install(_legacy)
 _inspector = _load("fuzzycad_inspector", "core/fuzzycad_inspector.py")
 _inspector.install(_legacy)
 
-# Image attach: part of the comment layer on ANY mark. Keep native face Canvas
-# support here; the callout module loaded immediately after this intercepts new
-# floating-image requests and renders them as camera-facing annotation panels.
+# Image attach: part of the comment layer on ANY mark. It owns both native
+# face Canvases and the floating-image Canvas (small, world-fixed, with a leader
+# line) plus the card thumbnail/show-hide/delete chips. (The former
+# fuzzycad_image_callout module -- a Pillow-based camera-facing panel renderer --
+# is retired to _attic/: Fusion's Python has no Pillow and floating images are now
+# native Canvases.)
 _image = _load("fuzzycad_image_attach", "tools/fuzzycad_image_attach.py")
 _image.install(_legacy)
-_image_callout = _load("fuzzycad_image_callout", "tools/fuzzycad_image_callout.py")
-_image_callout.install(_legacy)
 
 # Comic uncertainty renderer. It owns only the shared proposed baseline
 # (paper/putty fill + sketchy boundary) and consumes fuzzycad_uncertainty_visual;
