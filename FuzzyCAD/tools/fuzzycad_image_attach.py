@@ -20,7 +20,8 @@ import tempfile
 # The floating image is shown as a screen-facing sprite, which renders at the
 # image's pixel size -- a big photo would fill the screen. So it is downscaled to
 # a small thumbnail first (needs Pillow, which Fusion's Python ships).
-THUMB_MAX = 220     # longest side of the floating thumbnail, in pixels
+THUMB_MAX = 96      # longest side of the floating thumbnail, in pixels (small: the
+                    #   sprite renders at pixel size, so this is its on-screen size)
 _thumb_seq = [0]
 
 

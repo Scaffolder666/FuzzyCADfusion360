@@ -13,8 +13,8 @@ has restarted or the temp directory has been cleaned.
 import os
 import tempfile
 
-CONTENT_MAX_PX = 180
-PANEL_PAD_PX = 14
+CONTENT_MAX_PX = 84
+PANEL_PAD_PX = 8
 PANEL_BORDER_PX = 2
 # FULLY OPAQUE (alpha 255). The floating-image node renderer draws the sprite as a
 # screen-facing point billboard, and Fusion billboards do NOT blend partial/edge
