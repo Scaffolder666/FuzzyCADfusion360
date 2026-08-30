@@ -148,7 +148,16 @@ same save/load lifecycle as the marks (wrapping `_persist_state` / `_reload_pers
 in its own document attribute, and is pushed to the palette as a separate `archive`
 message so `palette/panel_archive.js` renders the resolved section without touching
 the live card render or the incremental-patch path. Removals that are not resolutions
-(Clear all, deleting an unresolved card) set no reason and are not archived.
+(Clear all, deleting an unresolved card) set no reason and are not archived. A row can
+be dropped from the trail with `removeArchived` (handled in the archive module, not
+delegated to the resolution chain).
+
+Persistence completeness: every state-mutating palette action writes the snapshot so
+the document is self-contained for an asynchronous handoff. Comment add/remove,
+image attach/toggle/remove, edits, resolutions, and Compare choices each trigger
+`_persist_state`; `DocumentDeactivating` flushes once more before a document switch or
+close. Image handlers persist explicitly because they return before persistence's own
+palette handler runs.
 
 ## 5. Command lifecycle
 

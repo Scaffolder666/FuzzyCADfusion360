@@ -372,7 +372,7 @@ def install(m):
             except Exception:
                 pass
             self._delegate.notify(args)
-            if action in ("comment", "reject"):
+            if action in ("comment", "removeComment", "reject"):
                 save_state("palette-" + str(action))
     m.PaletteHTMLHandler = PaletteHTMLHandler
 

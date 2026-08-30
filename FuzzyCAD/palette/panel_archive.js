@@ -8,6 +8,15 @@
 
   var previous = window.fusionJavaScriptHandler;
 
+  function sendAction(action, data) {
+    try {
+      if (window.adsk && typeof window.adsk.fusionSendData === "function") {
+        return window.adsk.fusionSendData(action, JSON.stringify(data || {}));
+      }
+    } catch (e) { /* ignore */ }
+    return null;
+  }
+
   // ---- one-time styles ----------------------------------------------------
   function ensureStyle() {
     if (document.getElementById("archiveStyle")) return;
@@ -29,6 +38,8 @@
       ".arow__res{font-size:9px;font-weight:800;letter-spacing:.3px;padding:2px 6px;border-radius:5px;color:#fff;flex:none}",
       ".arow__res--accepted{background:#1c7a4a}",
       ".arow__res--rejected{background:#b43b2e}",
+      ".arow__del{flex:none;border:1px solid #e2b6b0;background:#fff;color:#d92f1c;font-size:11px;line-height:1;font-weight:700;width:20px;height:20px;border-radius:5px;cursor:pointer;padding:0}",
+      ".arow__del:hover{background:#fbece9}",
       ".arow__cmts{margin-top:6px;display:flex;flex-direction:column;gap:4px}",
       ".acmt{background:#f4f6f8;border-radius:6px;padding:5px 8px;font-size:11px;color:#4a5560}",
       ".arow__none{margin-top:5px;font-size:10px;color:#aab2bc;font-style:italic}"
@@ -129,9 +140,21 @@
       res.textContent = (resolution === "rejected" ? "Rejected" : "Accepted") +
         (r.ts ? " · " + shortDate(r.ts) : "");
 
+      var del = document.createElement("button");
+      del.type = "button";
+      del.className = "arow__del";
+      del.textContent = "✕";
+      del.title = "Remove from archive";
+      (function (arrayIndex) {
+        del.addEventListener("click", function () {
+          sendAction("removeArchived", { index: arrayIndex });
+        });
+      })(i);
+
       top.appendChild(title);
       top.appendChild(sum);
       top.appendChild(res);
+      top.appendChild(del);
       row.appendChild(top);
 
       var comments = r.comments || [];

@@ -207,6 +207,27 @@ def install(m):
             try:
                 event = adsk.core.HTMLEventArgs.cast(args)
                 action = event.action if event is not None else None
+
+                # Delete one archived row. This is our own action -- handle it and
+                # do not fall through to the resolution chain.
+                if action == "removeArchived":
+                    data = json.loads(event.data) if event.data else {}
+                    idx = data.get("index")
+                    try:
+                        i = int(idx)
+                    except Exception:
+                        i = -1
+                    if 0 <= i < len(m._archive):
+                        del m._archive[i]
+                        save_archive()
+                        send_archive()
+                        log("removed archived row index={}".format(i))
+                    try:
+                        event.returnData = json.dumps({"ok": True})
+                    except Exception:
+                        pass
+                    return
+
                 if action in ("accept", "reject"):
                     data = json.loads(event.data) if event.data else {}
                     mid = data.get("id")

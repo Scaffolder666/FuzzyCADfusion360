@@ -807,6 +807,18 @@ def install(m):
             pass
         return None
 
+    # Image actions are handled here and return before persistence's own palette
+    # handler runs, so the mark's image metadata would not be saved. Persist
+    # explicitly after each image mutation so attachments survive a reopen and a
+    # handoff to another machine.
+    def persist_image(reason):
+        try:
+            fn = getattr(m, "_persist_state", None)
+            if fn:
+                fn(reason)
+        except Exception:
+            pass
+
     # ---- palette actions --------------------------------------------------
     class PaletteHTMLHandler(adsk.core.HTMLEventHandler):
         def __init__(self):
@@ -828,6 +840,13 @@ def install(m):
                         attach_node(mark)
                     else:
                         attach_face(mark)
+
+                    # Image metadata lives on the mark (canvas_token, mode,
+                    # leader_end); it must be written to the document so another
+                    # machine that opens the file still sees the attachment. This
+                    # handler returns before persistence's handler runs, so persist
+                    # explicitly here.
+                    persist_image("image-attach")
 
                     try:
                         e.returnData = json.dumps({"ok": True})
@@ -859,7 +878,8 @@ def install(m):
                                         c.isVisible = show
                                     except Exception:
                                         try:
-                                            c.opacity = 1.0 if show else 0.0
+                                            # Canvas.opacity is an int percent 0-100.
+                                            c.opacity = 100 if show else 0
                                         except Exception:
                                             pass
                             else:
@@ -871,6 +891,8 @@ def install(m):
                                 m._send_state()
                             except Exception:
                                 pass
+                            # The hidden flag is card state on the mark -> persist it.
+                            persist_image("image-toggle")
                     try:
                         e.returnData = json.dumps({"ok": True})
                     except Exception:
@@ -906,6 +928,9 @@ def install(m):
                                 m._send_state()
                             except Exception:
                                 pass
+                            # Removal must persist too, or the image reappears on
+                            # the next open.
+                            persist_image("image-remove")
                     try:
                         e.returnData = json.dumps({"ok": True})
                     except Exception:
