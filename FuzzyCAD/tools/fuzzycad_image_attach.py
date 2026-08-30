@@ -20,7 +20,7 @@ import tempfile
 # The floating image is shown as a screen-facing sprite, which renders at the
 # image's pixel size -- a big photo would fill the screen. So it is downscaled to
 # a small thumbnail first (needs Pillow, which Fusion's Python ships).
-THUMB_MAX = 96      # longest side of the floating thumbnail, in pixels (small: the
+THUMB_MAX = 64      # longest side of the floating thumbnail, in pixels (small: the
                     #   sprite renders at pixel size, so this is its on-screen size)
 _thumb_seq = [0]
 
@@ -57,9 +57,22 @@ def install(m):
 
     def log(msg):
         try:
+            ct = getattr(m, "_crash_trace", None)
+            if ct is not None:
+                ct("IMAGE", str(msg))
+        except Exception:
+            pass
+        try:
             (m._app or adsk.core.Application.get()).log("[FuzzyCAD IMAGE] " + msg)
         except Exception:
             pass
+
+    try:
+        from PIL import Image as _PILProbe  # noqa: F401
+        log("Pillow available -- floating images downscale to THUMB_MAX px")
+    except Exception:
+        log("Pillow NOT available -- floating images render FULL SIZE (huge); "
+            "resize impossible without Pillow")
 
     # ---- small vector helpers --------------------------------------------
     def dot3(a, b):
@@ -447,12 +460,29 @@ def install(m):
                 pass
 
             for im in nodes:
-                sprite = im.get("sprite_path") or im.get("path")
-
-                # Regenerate the thumbnail if the temp file was cleaned up.
+                # (Re)generate the thumbnail when it is missing OR was made at a
+                # different target size than the current THUMB_MAX, so an oversized
+                # sprite from before a size change shrinks WITHOUT re-attaching.
+                # Callout panels are owned by image_callout (skip here).
+                sprite = im.get("sprite_path")
+                if not im.get("callout"):
+                    stale = (im.get("thumb_px") != THUMB_MAX
+                             or not sprite or not os.path.exists(sprite))
+                    if stale:
+                        made = _make_thumb(im.get("path"))
+                        if made:
+                            sprite = made
+                            im["sprite_path"] = made
+                            im["thumb_px"] = THUMB_MAX
+                        else:
+                            # No Pillow -> cannot resize; use the full image once and
+                            # stop retrying every redraw. It renders large; the log
+                            # above says Pillow is missing.
+                            sprite = im.get("path")
+                            im["thumb_px"] = THUMB_MAX
+                            log("floating image using FULL-SIZE source (no resize)")
                 if sprite and not os.path.exists(sprite):
-                    sprite = _make_thumb(im.get("path")) or im.get("path")
-                    im["sprite_path"] = sprite
+                    sprite = im.get("path")
 
                 if not sprite:
                     continue

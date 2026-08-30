@@ -13,8 +13,8 @@ has restarted or the temp directory has been cleaned.
 import os
 import tempfile
 
-CONTENT_MAX_PX = 84
-PANEL_PAD_PX = 8
+CONTENT_MAX_PX = 60
+PANEL_PAD_PX = 7
 PANEL_BORDER_PX = 2
 # FULLY OPAQUE (alpha 255). The floating-image node renderer draws the sprite as a
 # screen-facing point billboard, and Fusion billboards do NOT blend partial/edge
@@ -168,19 +168,26 @@ def install(m):
                     pass
 
     def ensure_panel_paths():
-        """Rebuild temp panel PNGs before the original node renderer runs."""
+        """Rebuild temp panel PNGs before the node renderer runs -- when the temp
+        file is gone OR the panel was built at a different content size (so an
+        oversized panel from before a size change shrinks without re-attaching)."""
         for mark in list(getattr(m, "_marks", None) or []):
             for image in (mark.get("images") or []):
                 if image.get("mode") != "node" or not image.get("callout"):
                     continue
 
                 sprite_path = image.get("sprite_path")
-                if sprite_path and os.path.exists(sprite_path):
+                fresh = (sprite_path and os.path.exists(sprite_path)
+                         and image.get("panel_px") == CONTENT_MAX_PX)
+                if fresh:
                     continue
 
                 panel_path = _make_panel(image.get("path"))
                 if panel_path:
                     image["sprite_path"] = panel_path
+                    image["panel_px"] = CONTENT_MAX_PX
+                else:
+                    log("callout using full-size source (Pillow missing)")
 
     def redraw(*args, **kwargs):
         # Prepare the panel first, then delegate all drawing to the established
