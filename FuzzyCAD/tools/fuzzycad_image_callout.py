@@ -15,15 +15,20 @@ import tempfile
 
 CONTENT_MAX_PX = 180
 PANEL_PAD_PX = 14
-PANEL_RADIUS_PX = 10
 PANEL_BORDER_PX = 2
-PANEL_BG = (255, 255, 255, 248)
+# FULLY OPAQUE (alpha 255). The floating-image node renderer draws the sprite as a
+# screen-facing point billboard, and Fusion billboards do NOT blend partial/edge
+# alpha well -- a transparent base or a semi-transparent fill renders with black or
+# torn edges. FI's plain thumbnail works because it is an opaque photo, so the
+# callout panel matches that: an opaque white card, image composited on top, no
+# transparency anywhere in the PNG.
+PANEL_BG = (255, 255, 255, 255)
 PANEL_BORDER = (148, 153, 161, 255)
 _panel_seq = [0]
 
 
 def _make_panel(path):
-    """Create a padded white callout-panel PNG around the source image."""
+    """Create a padded, FULLY OPAQUE white callout-panel PNG around the image."""
     if not path:
         return None
     try:
@@ -37,34 +42,29 @@ def _make_panel(path):
 
         width = image.size[0] + 2 * PANEL_PAD_PX
         height = image.size[1] + 2 * PANEL_PAD_PX
-        panel = Image.new("RGBA", (width, height), (0, 0, 0, 0))
-        draw = ImageDraw.Draw(panel)
-        bounds = [0, 0, width - 1, height - 1]
-
-        try:
-            draw.rounded_rectangle(
-                bounds,
-                radius=PANEL_RADIUS_PX,
-                fill=PANEL_BG,
-                outline=PANEL_BORDER,
-                width=PANEL_BORDER_PX,
-            )
-        except Exception:
-            draw.rectangle(
-                bounds,
-                fill=PANEL_BG,
-                outline=PANEL_BORDER,
-                width=PANEL_BORDER_PX,
-            )
-
+        # Opaque white base -- no transparent regions for the billboard to mishandle.
+        panel = Image.new("RGBA", (width, height), PANEL_BG)
+        # Composite the picture onto the white card (its own transparency, if any,
+        # falls back to white -- still opaque overall).
         panel.alpha_composite(image, (PANEL_PAD_PX, PANEL_PAD_PX))
+        # A thin border rectangle, drawn last so it sits on top of the edges.
+        draw = ImageDraw.Draw(panel)
+        draw.rectangle(
+            [0, 0, width - 1, height - 1],
+            outline=PANEL_BORDER,
+            width=PANEL_BORDER_PX,
+        )
 
         _panel_seq[0] += 1
         out = os.path.join(
             tempfile.gettempdir(),
             "fuzzycad_callout_{}.png".format(_panel_seq[0]),
         )
-        panel.save(out, "PNG")
+        # Match FI's save exactly: convert("RGBA") -> PNG. Flatten any lingering
+        # alpha onto white so every pixel is opaque, like the working thumbnail.
+        flattened = Image.new("RGBA", panel.size, (255, 255, 255, 255))
+        flattened.alpha_composite(panel)
+        flattened.convert("RGBA").save(out, "PNG")
         return out
     except Exception:
         return None
