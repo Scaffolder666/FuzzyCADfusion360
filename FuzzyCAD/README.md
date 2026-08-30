@@ -68,17 +68,17 @@ The code should move toward one owner per concern:
 
 | Concern | Owner |
 |---|---|
-| lifecycle phase | `core/fuzzycad_mark_phase.py` |
-| visual policy | `visuals/fuzzycad_uncertainty_visual.py` |
-| visual styling | `visuals/fuzzycad_visual_system.py` |
-| replay animation ownership | `visuals/fuzzycad_animation_controller.py` |
-| geometry/render cache | `core/fuzzycad_runtime_store.py` |
-| source-body opacity | `core/fuzzycad_opacity_runtime.py` |
-| comic fill + sketch boundary | `visuals/fuzzycad_fuzzy_boundary.py` |
-| reopened native manipulator | `visuals/fuzzycad_card_manipulator_reopen.py` |
-| reopened Confirm/Accept/Reject | `core/fuzzycad_safe_confirm.py` |
-| persistence | `core/fuzzycad_persistence.py` |
-| final visual drift repair | `core/fuzzycad_state_reconcile.py` |
+| lifecycle phase | `core/state/fuzzycad_mark_phase.py` |
+| visual policy | `visuals/state/fuzzycad_uncertainty_visual.py` |
+| visual styling | `visuals/state/fuzzycad_visual_system.py` |
+| replay animation ownership | `visuals/manipulator/fuzzycad_animation_controller.py` |
+| geometry/render cache | `core/state/fuzzycad_runtime_store.py` |
+| source-body opacity | `core/render/fuzzycad_opacity_runtime.py` |
+| comic fill + sketch boundary | `visuals/comic/fuzzycad_fuzzy_boundary.py` |
+| reopened native manipulator | `visuals/manipulator/fuzzycad_card_manipulator_reopen.py` |
+| reopened Confirm/Accept/Reject | `core/lifecycle/fuzzycad_safe_confirm.py` |
+| persistence | `core/persistence/fuzzycad_persistence.py` |
+| final visual drift repair | `core/state/fuzzycad_state_reconcile.py` |
 
 Individual renderers draw one layer. They should not invent their own lifecycle
 rules.
@@ -121,7 +121,7 @@ reference still exists.
 Do not close `edit_existing` with `UserInterface.terminateActiveCommand()` from a
 custom event. That path has produced native Fusion crashes.
 
-`core/fuzzycad_safe_confirm.py` closes the current edit with
+`core/lifecycle/fuzzycad_safe_confirm.py` closes the current edit with
 `Command.doExecute(True)`, allowing Fusion to run its own Execute/Destroy
 lifecycle. Accept/Reject then resolves the plain proposal only after the native
 edit command has closed.

@@ -41,34 +41,34 @@ if not DEV_MODE:
 _legacy._fuzzycad_legacy_preview = _legacy.FuzzyPreview
 _legacy._fuzzycad_legacy_draw_fillet = _legacy._DRAW.get("fillet")
 
-_patch = _load("fuzzycad_real_fillet", "tools/fuzzycad_real_fillet.py")
+_patch = _load("fuzzycad_real_fillet", "tools/feature/fuzzycad_real_fillet.py")
 _patch.install(_legacy)
-_guard = _load("fuzzycad_sync_guard", "core/fuzzycad_sync_guard.py")
+_guard = _load("fuzzycad_sync_guard", "core/lifecycle/fuzzycad_sync_guard.py")
 _guard.install(_legacy)
-_commit = _load("fuzzycad_commit_bridge", "core/fuzzycad_commit_bridge.py")
+_commit = _load("fuzzycad_commit_bridge", "core/lifecycle/fuzzycad_commit_bridge.py")
 _commit.install(_legacy)
 
 # Interaction phase is the first source of truth: editing / proposed / resolved.
-_phase = _load("fuzzycad_mark_phase", "core/fuzzycad_mark_phase.py")
+_phase = _load("fuzzycad_mark_phase", "core/state/fuzzycad_mark_phase.py")
 _phase.install(_legacy)
 
 # Runtime data/render registry stores only pure-Python data, tokens, signatures,
 # and graphics-group ids. It never retains long-lived Fusion native wrappers.
-_runtime_store = _load("fuzzycad_runtime_store", "core/fuzzycad_runtime_store.py")
+_runtime_store = _load("fuzzycad_runtime_store", "core/state/fuzzycad_runtime_store.py")
 _runtime_store.install(_legacy)
 
 # Central visual authority derives every uncertainty layer from the interaction
 # phase. Individual visual files render one layer and consume this policy; tool
 # variations (e.g. Fillet) add detail without redefining the baseline lifecycle.
 _uncertainty_visual = _load(
-    "fuzzycad_uncertainty_visual", "visuals/fuzzycad_uncertainty_visual.py")
+    "fuzzycad_uncertainty_visual", "visuals/state/fuzzycad_uncertainty_visual.py")
 _uncertainty_visual.install(_legacy)
 
 # Animation ownership is also a first-class runtime service. Install it here
 # before any Move/operation replay renderer so those modules only provide
 # operation-specific geometry and never own dependency loading.
 _animation_controller = _load(
-    "fuzzycad_animation_controller", "visuals/fuzzycad_animation_controller.py")
+    "fuzzycad_animation_controller", "visuals/manipulator/fuzzycad_animation_controller.py")
 _animation_controller.install(_legacy)
 
 if DEV_MODE:
@@ -81,70 +81,70 @@ if DEV_MODE:
     _handle_events = _load("fuzzycad_handle_event_trace", "dev/fuzzycad_handle_event_trace.py")
     _handle_events.install(_legacy)
 
-_visuals = _load("fuzzycad_unified_visuals", "visuals/fuzzycad_unified_visuals.py")
+_visuals = _load("fuzzycad_unified_visuals", "visuals/state/fuzzycad_unified_visuals.py")
 _visuals.install(_legacy)
-_move_hover = _load("fuzzycad_move_hover_animation", "tools/fuzzycad_move_hover_animation.py")
+_move_hover = _load("fuzzycad_move_hover_animation", "tools/transform/fuzzycad_move_hover_animation.py")
 _move_hover.install(_legacy)
-_annotations = _load("fuzzycad_note_dimensions", "visuals/fuzzycad_note_dimensions.py")
+_annotations = _load("fuzzycad_note_dimensions", "visuals/note/fuzzycad_note_dimensions.py")
 _annotations.install(_legacy)
-_note_visual = _load("fuzzycad_note_no_ghost", "visuals/fuzzycad_note_no_ghost.py")
+_note_visual = _load("fuzzycad_note_no_ghost", "visuals/note/fuzzycad_note_no_ghost.py")
 _note_visual.install(_legacy)
-_next_tools = _load("fuzzycad_scale_axis_rotate_taxonomy", "tools/fuzzycad_scale_axis_rotate_taxonomy.py")
+_next_tools = _load("fuzzycad_scale_axis_rotate_taxonomy", "tools/transform/fuzzycad_scale_axis_rotate_taxonomy.py")
 _next_tools.install(_legacy)
 _direct = _load("fuzzycad_direct_interactions", "tools/fuzzycad_direct_interactions.py")
 _direct.install(_legacy)
-_fillet_stable = _load("fuzzycad_fillet_stability", "tools/fuzzycad_fillet_stability.py")
+_fillet_stable = _load("fuzzycad_fillet_stability", "tools/feature/fuzzycad_fillet_stability.py")
 _fillet_stable.install(_legacy)
-_scale_fix = _load("fuzzycad_scale_pending_fix", "tools/fuzzycad_scale_pending_fix.py")
+_scale_fix = _load("fuzzycad_scale_pending_fix", "tools/transform/fuzzycad_scale_pending_fix.py")
 _scale_fix.install(_legacy)
-_scale_scope = _load("fuzzycad_directional_scale_scope", "tools/fuzzycad_directional_scale_scope.py")
+_scale_scope = _load("fuzzycad_directional_scale_scope", "tools/transform/fuzzycad_directional_scale_scope.py")
 _scale_scope.install(_legacy)
-_move_scope = _load("fuzzycad_move_scope", "tools/fuzzycad_move_scope.py")
+_move_scope = _load("fuzzycad_move_scope", "tools/transform/fuzzycad_move_scope.py")
 _move_scope.install(_legacy)
 _hci = _load("fuzzycad_hci_prompts", "tools/fuzzycad_hci_prompts.py")
 _hci.install(_legacy)
-_move_polish = _load("fuzzycad_move_scope_polish", "tools/fuzzycad_move_scope_polish.py")
+_move_polish = _load("fuzzycad_move_scope_polish", "tools/transform/fuzzycad_move_scope_polish.py")
 _move_polish.install(_legacy)
-_contrast = _load("fuzzycad_visual_contrast", "visuals/fuzzycad_visual_contrast.py")
+_contrast = _load("fuzzycad_visual_contrast", "visuals/state/fuzzycad_visual_contrast.py")
 _contrast.install(_legacy)
 
-_hygiene = _load("fuzzycad_startup_hygiene", "core/fuzzycad_startup_hygiene.py")
+_hygiene = _load("fuzzycad_startup_hygiene", "core/lifecycle/fuzzycad_startup_hygiene.py")
 _hygiene.install(_legacy)
-_store = _load("fuzzycad_persistence", "core/fuzzycad_persistence.py")
+_store = _load("fuzzycad_persistence", "core/persistence/fuzzycad_persistence.py")
 _store.install(_legacy)
-_light_hydration = _load("fuzzycad_lightweight_hydration", "core/fuzzycad_lightweight_hydration.py")
+_light_hydration = _load("fuzzycad_lightweight_hydration", "core/persistence/fuzzycad_lightweight_hydration.py")
 _light_hydration.install(_legacy)
 
-_outline = _load("fuzzycad_outline_only_candidates", "visuals/fuzzycad_outline_only_candidates.py")
+_outline = _load("fuzzycad_outline_only_candidates", "visuals/silhouette/fuzzycad_outline_only_candidates.py")
 _outline.install(_legacy)
-_fillet_color = _load("fuzzycad_fillet_highlight", "tools/fuzzycad_fillet_highlight.py")
+_fillet_color = _load("fuzzycad_fillet_highlight", "tools/feature/fuzzycad_fillet_highlight.py")
 _fillet_color.install(_legacy)
-_groups = _load("fuzzycad_proposal_groups", "visuals/fuzzycad_proposal_groups.py")
+_groups = _load("fuzzycad_proposal_groups", "visuals/comic/fuzzycad_proposal_groups.py")
 _groups.install(_legacy)
-_opacity_runtime = _load("fuzzycad_opacity_runtime", "core/fuzzycad_opacity_runtime.py")
+_opacity_runtime = _load("fuzzycad_opacity_runtime", "core/render/fuzzycad_opacity_runtime.py")
 _opacity_runtime.install(_legacy)
-_stages = _load("fuzzycad_stage_ui", "core/fuzzycad_stage_ui.py")
+_stages = _load("fuzzycad_stage_ui", "core/ui/fuzzycad_stage_ui.py")
 _stages.install(_legacy)
 
 if DEV_MODE:
     _perf = _load("fuzzycad_perf_trace", "dev/fuzzycad_perf_trace.py")
     _perf.install(_legacy)
 
-_tuning = _load("fuzzycad_sketch_tuning", "visuals/fuzzycad_sketch_tuning.py")
+_tuning = _load("fuzzycad_sketch_tuning", "visuals/silhouette/fuzzycad_sketch_tuning.py")
 _tuning.install(_legacy)
-_scaffold = _load("fuzzycad_surface_scaffold", "visuals/fuzzycad_surface_scaffold.py")
+_scaffold = _load("fuzzycad_surface_scaffold", "visuals/silhouette/fuzzycad_surface_scaffold.py")
 _scaffold.install(_legacy)
-_silhouette = _load("fuzzycad_view_silhouette", "visuals/fuzzycad_view_silhouette.py")
+_silhouette = _load("fuzzycad_view_silhouette", "visuals/silhouette/fuzzycad_view_silhouette.py")
 _silhouette.install(_legacy)
-_silhouette_stable = _load("fuzzycad_silhouette_stability", "visuals/fuzzycad_silhouette_stability.py")
+_silhouette_stable = _load("fuzzycad_silhouette_stability", "visuals/silhouette/fuzzycad_silhouette_stability.py")
 _silhouette_stable.install(_legacy)
-_cues = _load("fuzzycad_operation_cues", "visuals/fuzzycad_operation_cues.py")
+_cues = _load("fuzzycad_operation_cues", "visuals/manipulator/fuzzycad_operation_cues.py")
 _cues.install(_legacy)
-_op_hover = _load("fuzzycad_operation_hover_animation", "visuals/fuzzycad_operation_hover_animation.py")
+_op_hover = _load("fuzzycad_operation_hover_animation", "visuals/manipulator/fuzzycad_operation_hover_animation.py")
 _op_hover.install(_legacy)
-_visual_system = _load("fuzzycad_visual_system", "visuals/fuzzycad_visual_system.py")
+_visual_system = _load("fuzzycad_visual_system", "visuals/state/fuzzycad_visual_system.py")
 _visual_system.install(_legacy)
-_reopen = _load("fuzzycad_card_manipulator_reopen", "visuals/fuzzycad_card_manipulator_reopen.py")
+_reopen = _load("fuzzycad_card_manipulator_reopen", "visuals/manipulator/fuzzycad_card_manipulator_reopen.py")
 _reopen.install(_legacy)
 
 _compare = _load("fuzzycad_compare_stable", "compare/fuzzycad_compare_stable.py")
@@ -162,12 +162,12 @@ _compare_full.install(_legacy)
 # wrappers sit outermost and delegate non-in-place marks down.
 _compare_here = _load("fuzzycad_compare_inplace", "compare/fuzzycad_compare_inplace.py")
 _compare_here.install(_legacy)
-_badges = _load("fuzzycad_uncertainty_badges", "visuals/fuzzycad_uncertainty_badges.py")
+_badges = _load("fuzzycad_uncertainty_badges", "visuals/state/fuzzycad_uncertainty_badges.py")
 _badges.install(_legacy)
 
-_hydrate = _load("fuzzycad_persistence_hydration", "core/fuzzycad_persistence_hydration.py")
+_hydrate = _load("fuzzycad_persistence_hydration", "core/persistence/fuzzycad_persistence_hydration.py")
 _hydrate.install(_legacy)
-_panel_resync = _load("fuzzycad_panel_state_resync", "core/fuzzycad_panel_state_resync.py")
+_panel_resync = _load("fuzzycad_panel_state_resync", "core/state/fuzzycad_panel_state_resync.py")
 _panel_resync.install(_legacy)
 _reference_warning = _load("fuzzycad_reference_warning", "references/fuzzycad_reference_warning.py")
 _reference_warning.install(_legacy)
@@ -188,41 +188,41 @@ _compare_selection.install(_legacy)
 
 _card_focus = _load(
     "fuzzycad_card_focus_zoom",
-    "visuals/fuzzycad_card_focus_zoom.py")
+    "visuals/manipulator/fuzzycad_card_focus_zoom.py")
 _card_focus.install(_legacy)
 _visibility = _load(
     "fuzzycad_progressive_visibility",
-    "visuals/fuzzycad_progressive_visibility.py")
+    "visuals/state/fuzzycad_progressive_visibility.py")
 _visibility.install(_legacy)
 _silhouette_visibility = _load(
     "fuzzycad_silhouette_visibility",
-    "visuals/fuzzycad_silhouette_visibility.py")
+    "visuals/silhouette/fuzzycad_silhouette_visibility.py")
 _silhouette_visibility.install(_legacy)
-_layout = _load("fuzzycad_layout_lock", "core/fuzzycad_layout_lock.py")
+_layout = _load("fuzzycad_layout_lock", "core/ui/fuzzycad_layout_lock.py")
 _layout.install(_legacy)
 
 # Hole tool: face-local U/V position, diameter, and depth are Need Inputs. Loaded
 # before the dependency layer so its _accept handles the hole directly.
-_hole = _load("fuzzycad_hole", "tools/fuzzycad_hole.py")
+_hole = _load("fuzzycad_hole", "tools/feature/fuzzycad_hole.py")
 _hole.install(_legacy)
 
 # Rough Shape: flag a whole body as uncertain (an open shape, not a parameter) so a
 # non-modeller can drop in a crude placeholder and hand off the intent. The body
 # renders in the comic uncertainty style; the card carries a free-text note.
-_rough = _load("fuzzycad_rough_shape", "tools/fuzzycad_rough_shape.py")
+_rough = _load("fuzzycad_rough_shape", "tools/feature/fuzzycad_rough_shape.py")
 _rough.install(_legacy)
 
 # Dependent follow: accepting a Move/Rotate on a fuzzy part carries the parts
 # built on it (detected by a shared coincident face) along, after the user
 # confirms. Wraps _accept outermost so it decides before the change is applied.
-_follow = _load("fuzzycad_dependent_follow", "tools/fuzzycad_dependent_follow.py")
+_follow = _load("fuzzycad_dependent_follow", "tools/dependency/fuzzycad_dependent_follow.py")
 _follow.install(_legacy)
 
 # Scale scope: mirror Move's selection-time question for the Scale command. Asks
 # once whether touching parts stay attached; the FLEX path in dependent_follow
 # then translates them at accept (position only, never resized). Loaded after
 # dependent_follow so m._follow_detect_dependents is available.
-_scale_scope = _load("fuzzycad_scale_scope", "tools/fuzzycad_scale_scope.py")
+_scale_scope = _load("fuzzycad_scale_scope", "tools/transform/fuzzycad_scale_scope.py")
 _scale_scope.install(_legacy)
 
 # Dependency check: after a Scale/Extrude is accepted, raise an OK messageBox --
@@ -230,31 +230,31 @@ _scale_scope.install(_legacy)
 # open. Awareness only; nothing is changed. Loaded AFTER dependent_follow so its
 # _accept sits outermost and the nudge appears once the whole operation (the
 # scale/extrude plus any dependent parts that followed) has finished.
-_dependency = _load("fuzzycad_dependency_prompts", "tools/fuzzycad_dependency_prompts.py")
+_dependency = _load("fuzzycad_dependency_prompts", "tools/dependency/fuzzycad_dependency_prompts.py")
 _dependency.install(_legacy)
 
 # Shared-subject decisions: replace the old one-question-per-body lock with an
 # explicit compatibility policy and rebase surviving decisions after Accept.
 _subject_decisions = _load(
-    "fuzzycad_subject_decisions", "core/fuzzycad_subject_decisions.py")
+    "fuzzycad_subject_decisions", "core/state/fuzzycad_subject_decisions.py")
 _subject_decisions.install(_legacy)
 
 # State reconciliation: outermost redraw wrapper. Reclaims ghost bodies left
 # semi-transparent after a rebuild invalidated their restore proxy, and clears
 # stray idle PREVIEW graphics, keeping the 3D view in sync with the open marks.
-_reconcile = _load("fuzzycad_state_reconcile", "core/fuzzycad_state_reconcile.py")
+_reconcile = _load("fuzzycad_state_reconcile", "core/state/fuzzycad_state_reconcile.py")
 _reconcile.install(_legacy)
 
 # "Clear all" panel action: permanently delete this document's stored FuzzyCAD
 # uncertainty (the persistence attributes + overlays + in-memory marks). Loaded
 # last so its palette handler is outermost and intercepts the action first.
-_clear_all = _load("fuzzycad_clear_all", "core/fuzzycad_clear_all.py")
+_clear_all = _load("fuzzycad_clear_all", "core/lifecycle/fuzzycad_clear_all.py")
 _clear_all.install(_legacy)
 
 # Inspector: a fallback admin surface in the palette -- a live status snapshot
 # (open marks by type, ghosted bodies, stray graphics) and a one-click Repair
 # that runs the visual authority (sweep + restore + redraw) by hand.
-_inspector = _load("fuzzycad_inspector", "core/fuzzycad_inspector.py")
+_inspector = _load("fuzzycad_inspector", "core/diagnostics/fuzzycad_inspector.py")
 _inspector.install(_legacy)
 
 # Image attach: part of the comment layer on ANY mark. It owns both native
@@ -263,37 +263,37 @@ _inspector.install(_legacy)
 # fuzzycad_image_callout module -- a Pillow-based camera-facing panel renderer --
 # is retired to _attic/: Fusion's Python has no Pillow and floating images are now
 # native Canvases.)
-_image = _load("fuzzycad_image_attach", "tools/fuzzycad_image_attach.py")
+_image = _load("fuzzycad_image_attach", "tools/annotation/fuzzycad_image_attach.py")
 _image.install(_legacy)
 
 # Comic uncertainty renderer. It owns only the shared proposed baseline
 # (paper/putty fill + sketchy boundary) and consumes fuzzycad_uncertainty_visual;
 # it no longer decides tool/lifecycle state itself.
-_fuzzy = _load("fuzzycad_fuzzy_boundary", "visuals/fuzzycad_fuzzy_boundary.py")
+_fuzzy = _load("fuzzycad_fuzzy_boundary", "visuals/comic/fuzzycad_fuzzy_boundary.py")
 _fuzzy.install(_legacy)
 
 # Fusion can occasionally retain the per-body comic group while dropping its
 # line graphics. Validate only visible Proposed comic bodies and rebuild that one
 # group if its sampled boundary exists but its CustomGraphicsLines do not.
-_comic_integrity = _load("fuzzycad_comic_integrity", "visuals/fuzzycad_comic_integrity.py")
+_comic_integrity = _load("fuzzycad_comic_integrity", "visuals/comic/fuzzycad_comic_integrity.py")
 _comic_integrity.install(_legacy)
 
 # Editing -> Proposed is a discrete lifecycle handoff. Install this after the
 # final comic/opacity services so it can reassert only the affected body and
 # establish the complete Proposed baseline without another global redraw.
 _visual_transition = _load(
-    "fuzzycad_visual_transition", "core/fuzzycad_visual_transition.py")
+    "fuzzycad_visual_transition", "core/render/fuzzycad_visual_transition.py")
 _visual_transition.install(_legacy)
 
 # Always-on coarse lifecycle trace for hard-crash diagnosis. It deliberately
 # excludes drag/animation frames and is independent of the heavier DEV_MODE tools.
-_crash_trace = _load("fuzzycad_crash_trace", "core/fuzzycad_crash_trace.py")
+_crash_trace = _load("fuzzycad_crash_trace", "core/diagnostics/fuzzycad_crash_trace.py")
 _crash_trace.install(_legacy)
 
 # Reopened-card Confirm must never terminate Fusion through the legacy
 # terminateActiveCommand custom-event path. Intercept that one lifecycle edge and
 # finish the active edit via Command.doExecute(True), equivalent to pressing OK.
-_safe_confirm = _load("fuzzycad_safe_confirm", "core/fuzzycad_safe_confirm.py")
+_safe_confirm = _load("fuzzycad_safe_confirm", "core/lifecycle/fuzzycad_safe_confirm.py")
 _safe_confirm.install(_legacy)
 
 # Decision archive: a minimal, Overleaf-style history of resolved cards. Accept and
@@ -302,13 +302,13 @@ _safe_confirm.install(_legacy)
 # save/load lifecycle so the trail travels with the document. Loaded after
 # persistence and safe_confirm so its _remove_mark wrapper and palette-action
 # handler are outermost (it must see the resolution before the card is removed).
-_archive = _load("fuzzycad_decision_archive", "core/fuzzycad_decision_archive.py")
+_archive = _load("fuzzycad_decision_archive", "core/persistence/fuzzycad_decision_archive.py")
 _archive.install(_legacy)
 
 # Outermost, always-on flow trace for the manual risk sweep: logs every palette
 # action and toolbar command lifecycle edge into %TEMP%/fuzzycad_crash.log. Edge
 # only -- no per-frame I/O. Installed last so it sees every action first.
-_flow_trace = _load("fuzzycad_flow_trace", "core/fuzzycad_flow_trace.py")
+_flow_trace = _load("fuzzycad_flow_trace", "core/diagnostics/fuzzycad_flow_trace.py")
 _flow_trace.install(_legacy)
 
 run = _legacy.run

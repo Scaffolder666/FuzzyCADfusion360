@@ -33,7 +33,9 @@ MAX_LINES       = 2400
 def _load_patch(m, name, relpath, installed_attr):
     if getattr(m, installed_attr, None) is not None:
         return
-    root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    # Anchor to the legacy module (always at the add-in root) so this fallback
+    # loader is independent of how deep this file is nested.
+    root = os.path.dirname(os.path.abspath(m.__file__))
     path = os.path.join(root, *relpath.split("/"))
     mod = sys.modules.get(name)
     if mod is None:
@@ -45,12 +47,12 @@ def _load_patch(m, name, relpath, installed_attr):
 
 
 def _ensure_runtime_store(m):
-    _load_patch(m, "fuzzycad_runtime_store", "core/fuzzycad_runtime_store.py", "_runtime_store")
+    _load_patch(m, "fuzzycad_runtime_store", "core/state/fuzzycad_runtime_store.py", "_runtime_store")
 
 
 def _ensure_visual_authority(m):
     _load_patch(
-        m, "fuzzycad_uncertainty_visual", "visuals/fuzzycad_uncertainty_visual.py",
+        m, "fuzzycad_uncertainty_visual", "visuals/state/fuzzycad_uncertainty_visual.py",
         "_uncertainty_visual_state")
 
 

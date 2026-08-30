@@ -28,8 +28,10 @@ MAX_POINTS_PER_POLY = 14
 def _ensure_animation_controller(m):
     if getattr(m, "_animation_begin", None) is not None:
         return
-    root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-    path = os.path.join(root, "visuals", "fuzzycad_animation_controller.py")
+    # Anchor to the legacy module (always at the add-in root) so this fallback
+    # loader is independent of how deep this file is nested.
+    root = os.path.dirname(os.path.abspath(m.__file__))
+    path = os.path.join(root, "visuals", "manipulator", "fuzzycad_animation_controller.py")
     name = "fuzzycad_animation_controller"
     mod = sys.modules.get(name)
     if mod is None:

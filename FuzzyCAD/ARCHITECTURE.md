@@ -20,25 +20,25 @@ must not be the primary dependency path.
 
 | Concern | Runtime owner | Contract |
 |---|---|---|
-| mark lifecycle | `core/fuzzycad_mark_phase.py` | `editing`, `proposed`, `resolved` |
-| visual policy | `visuals/fuzzycad_uncertainty_visual.py` | derives every layer from mark + phase |
-| visual styling | `visuals/fuzzycad_visual_system.py` | semantic colors, line weights, wobble |
-| animation ownership | `visuals/fuzzycad_animation_controller.py` | at most one replay animation |
-| proposal/runtime cache | `core/fuzzycad_runtime_store.py` | pure-Python data, tokens, group ids |
-| source-body opacity | `core/fuzzycad_opacity_runtime.py` | apply/restore exact original opacity |
-| persistent comic baseline | `visuals/fuzzycad_fuzzy_boundary.py` | paper fill + sketch boundary only |
-| comic self-repair | `visuals/fuzzycad_comic_integrity.py` | repair a visible group that lost lines |
-| reopened manipulators | `visuals/fuzzycad_card_manipulator_reopen.py` | native edit command + session ownership |
-| reopened Confirm/Accept/Reject | `core/fuzzycad_safe_confirm.py` | close edit via `Command.doExecute(True)` |
-| shared-subject uncertainty | `core/fuzzycad_subject_decisions.py` | same-body compatibility + post-Accept rebase/relink |
-| persistence | `core/fuzzycad_persistence.py` | document attribute snapshot + backup |
-| final viewport repair | `core/fuzzycad_state_reconcile.py` | targeted redraw reconcile; full scan only startup/Repair |
-| Hole semantics | `tools/fuzzycad_hole.py` | face-local U/V position + diameter + depth + Hole reopen additions |
+| mark lifecycle | `core/state/fuzzycad_mark_phase.py` | `editing`, `proposed`, `resolved` |
+| visual policy | `visuals/state/fuzzycad_uncertainty_visual.py` | derives every layer from mark + phase |
+| visual styling | `visuals/state/fuzzycad_visual_system.py` | semantic colors, line weights, wobble |
+| animation ownership | `visuals/manipulator/fuzzycad_animation_controller.py` | at most one replay animation |
+| proposal/runtime cache | `core/state/fuzzycad_runtime_store.py` | pure-Python data, tokens, group ids |
+| source-body opacity | `core/render/fuzzycad_opacity_runtime.py` | apply/restore exact original opacity |
+| persistent comic baseline | `visuals/comic/fuzzycad_fuzzy_boundary.py` | paper fill + sketch boundary only |
+| comic self-repair | `visuals/comic/fuzzycad_comic_integrity.py` | repair a visible group that lost lines |
+| reopened manipulators | `visuals/manipulator/fuzzycad_card_manipulator_reopen.py` | native edit command + session ownership |
+| reopened Confirm/Accept/Reject | `core/lifecycle/fuzzycad_safe_confirm.py` | close edit via `Command.doExecute(True)` |
+| shared-subject uncertainty | `core/state/fuzzycad_subject_decisions.py` | same-body compatibility + post-Accept rebase/relink |
+| persistence | `core/persistence/fuzzycad_persistence.py` | document attribute snapshot + backup |
+| final viewport repair | `core/state/fuzzycad_state_reconcile.py` | targeted redraw reconcile; full scan only startup/Repair |
+| Hole semantics | `tools/feature/fuzzycad_hole.py` | face-local U/V position + diameter + depth + Hole reopen additions |
 | Compare mark semantics | `compare/fuzzycad_compare_inplace.py` + existing Compare renderer stack | keep/drop alternatives |
 | Compare creation flow | `compare/fuzzycad_compare_selection_flow.py` | first body -> second body -> Confirm |
 | Compare card camera focus | `compare/fuzzycad_compare_card_focus.py` | camera only |
-| Image attachments on marks | `tools/fuzzycad_image_attach.py` | native face/floating Canvases + leader lines; tokens only |
-| Resolved-decision archive | `core/fuzzycad_decision_archive.py` | JSON-safe history of Accepted/Rejected cards + their comments |
+| Image attachments on marks | `tools/annotation/fuzzycad_image_attach.py` | native face/floating Canvases + leader lines; tokens only |
+| Resolved-decision archive | `core/persistence/fuzzycad_decision_archive.py` | JSON-safe history of Accepted/Rejected cards + their comments |
 
 ## 3. Data boundaries
 
@@ -64,7 +64,7 @@ Current compatibility policy:
 - Rough may coexist with any geometric decision.
 - Extrude / Fillet / Hole may coexist with transforms and with one another.
 - Accepting one topology-changing decision may invalidate another decision's
-  face/edge token. `core/fuzzycad_subject_decisions.py` captures a pure-Python
+  face/edge token. `core/state/fuzzycad_subject_decisions.py` captures a pure-Python
   geometric fingerprint before the commit and conservatively relinks the surviving
   decision to the closest unambiguous face/edge on the same body afterwards.
 - If relinking is ambiguous or no credible match exists, the surviving card stays
@@ -73,7 +73,7 @@ Current compatibility policy:
 Accepting one decision commits only that decision. The surviving marks on the
 same subject are then rebased onto the current body geometry while preserving
 their own uncertain values. This rebase/relink is owned only by
-`core/fuzzycad_subject_decisions.py`; individual tools should not invent their own
+`core/state/fuzzycad_subject_decisions.py`; individual tools should not invent their own
 same-body lock or peer-update rule.
 
 `FuzzyCAD_legacy.py::_body_locked` is historical compatibility code. It is not the
@@ -97,7 +97,7 @@ mark data
 Renderers may draw geometry, but they must not redefine whether a mark is
 Editing/Proposed/Resolved. Proposed baseline visibility must not depend on hover.
 
-When several marks share one body, `visuals/fuzzycad_uncertainty_visual.py`
+When several marks share one body, `visuals/state/fuzzycad_uncertainty_visual.py`
 aggregates them into one body presentation. A non-comic Editing mark temporarily
 owns the viewport and suppresses the Proposed comic baseline; Confirm returns the
 body to the comic baseline if any unresolved mark remains.
@@ -124,10 +124,10 @@ Inspector Repair.
 
 ### Persistent overlays
 
-`core/fuzzycad_visual_transition.py` replaces `_redraw_marks` with an authoritative
+`core/render/fuzzycad_visual_transition.py` replaces `_redraw_marks` with an authoritative
 render transaction that does not call the historical draw wrappers. Visual work that
 must run on every authoritative redraw but is not owned by that transaction (for
-example `tools/fuzzycad_image_attach.py` drawing floating-image leader lines)
+example `tools/annotation/fuzzycad_image_attach.py` drawing floating-image leader lines)
 registers a zero-argument callable on `m._persistent_overlays`. The render owner
 runs each overlay inside its own transaction, after the silhouette pass and before
 the viewport refresh. Overlays clear their own graphics group first so a redundant
@@ -136,7 +136,7 @@ rather than closing over live wrappers.
 
 ### Resolved-decision archive
 
-Accepting or Rejecting a card resolves it and drops the mark. `core/fuzzycad_decision_archive.py`
+Accepting or Rejecting a card resolves it and drops the mark. `core/persistence/fuzzycad_decision_archive.py`
 keeps a minimal, read-only trail of what was there so a downstream collaborator can
 still see which decisions were made and read their discussion. Both resolution paths
 (the legacy palette handler and `core/fuzzycad_safe_confirm.resolve_terminal`) funnel
@@ -164,7 +164,7 @@ palette handler runs.
 Do not call `UserInterface.terminateActiveCommand()` from a custom event to close a
 reopened proposal edit. That path has hard-crashed Fusion.
 
-For `edit_existing`, `core/fuzzycad_safe_confirm.py` owns finishing through
+For `edit_existing`, `core/lifecycle/fuzzycad_safe_confirm.py` owns finishing through
 `Command.doExecute(True)`, then terminal Accept/Reject resolves the plain mark only
 after the native command has destroyed itself.
 

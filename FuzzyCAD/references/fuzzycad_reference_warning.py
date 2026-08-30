@@ -3,7 +3,7 @@
 Persistence and shared-subject rebasing keep collaboration cards even when a
 face/edge token can no longer be resolved. Surface that state in the sidebar and
 block geometry-changing actions. Automatic same-body topology relinking happens
-inside `core/fuzzycad_subject_decisions.py`; if that conservative relink cannot
+inside `core/state/fuzzycad_subject_decisions.py`; if that conservative relink cannot
 find an unambiguous match, recovery stays explicit: reject/recreate the question.
 """
 
