@@ -424,7 +424,7 @@ def install(m):
             nodes = [
                 im
                 for im in (mark.get("images") or [])
-                if im.get("mode") == "node"
+                if im.get("mode") == "node" and not im.get("hidden")
             ]
             if not nodes:
                 continue
@@ -539,11 +539,46 @@ def install(m):
 
     m._remove_mark = remove_mark
 
-    # ---- surface the attachment count on the card ------------------------
+    # ---- surface image thumbnails + hidden state on the card -------------
+    _thumb_uri_cache = {}   # sprite/panel path -> base64 data URI (in-memory only,
+                            #   never persisted, so the saved document stays small)
+
+    def image_thumb_uri(im):
+        path = im.get("sprite_path") or im.get("path")
+        if not path:
+            return None
+        uri = _thumb_uri_cache.get(path)
+        if uri:
+            return uri
+        try:
+            if os.path.exists(path):
+                import base64
+                with open(path, "rb") as fh:
+                    uri = "data:image/png;base64," + base64.b64encode(
+                        fh.read()).decode("ascii")
+                _thumb_uri_cache[path] = uri
+                return uri
+        except Exception:
+            pass
+        return None
+
     def public(mark):
         out = old_public(mark)
         try:
-            out["images"] = list(mark.get("images") or [])
+            imgs = []
+            for i, im in enumerate(mark.get("images") or []):
+                entry = {
+                    "index": i,
+                    "mode": im.get("mode"),
+                    "callout": bool(im.get("callout")),
+                    "hidden": bool(im.get("hidden")),
+                }
+                if im.get("mode") == "node":
+                    # A small base64 thumbnail so the card can show the picture
+                    # (the webview can't read local file paths).
+                    entry["thumb_uri"] = image_thumb_uri(im)
+                imgs.append(entry)
+            out["images"] = imgs
         except Exception:
             out["images"] = []
         return out
@@ -572,6 +607,34 @@ def install(m):
                     else:
                         attach_face(mark)
 
+                    try:
+                        e.returnData = json.dumps({"ok": True})
+                    except Exception:
+                        pass
+                    return
+
+                if act == "toggleImageNode":
+                    # Per-card show/hide for one floating image. Flips hidden, then
+                    # redraws (draw_nodes skips hidden) and refreshes the card.
+                    data = json.loads(e.data) if e.data else {}
+                    mark = m._find(data.get("id"))
+                    idx = data.get("index")
+                    if mark is not None and idx is not None:
+                        imgs = mark.get("images") or []
+                        try:
+                            i = int(idx)
+                        except Exception:
+                            i = -1
+                        if 0 <= i < len(imgs):
+                            imgs[i]["hidden"] = not imgs[i].get("hidden")
+                            try:
+                                m._redraw_marks()
+                            except Exception:
+                                pass
+                            try:
+                                m._send_state()
+                            except Exception:
+                                pass
                     try:
                         e.returnData = json.dumps({"ok": True})
                     except Exception:

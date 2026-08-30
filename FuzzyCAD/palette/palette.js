@@ -383,14 +383,46 @@
       var bNode = btn("📎 Floating image", "img__btn", function (ev) { stop(ev); send("attachImageNode", { id: m.id }); });
       bFace.style.cssText = imgBtnCss; bNode.style.cssText = imgBtnCss;
       imgrow.appendChild(bFace); imgrow.appendChild(bNode);
-      var nImg = (m.images || []).length;
-      if (nImg) {
-        var cnt = document.createElement("span");
-        cnt.style.cssText = "font:600 10.5px/1 -apple-system,sans-serif;color:#2f7d55";
-        cnt.textContent = nImg + " image" + (nImg === 1 ? "" : "s") + " attached";
-        imgrow.appendChild(cnt);
-      }
       cwrap.appendChild(imgrow);
+
+      // Thumbnails for floating ("node") images, each with a show/hide toggle.
+      var allImgs = m.images || [];
+      var nodeImgs = allImgs.filter(function (im) { return im.mode === "node"; });
+      if (nodeImgs.length) {
+        var thumbrow = document.createElement("div");
+        thumbrow.style.cssText = "display:flex;gap:8px;align-items:center;margin-top:7px;flex-wrap:wrap";
+        nodeImgs.forEach(function (im) {
+          var chip = document.createElement("div");
+          chip.style.cssText = "display:flex;align-items:center;gap:5px;border:1px solid #d3d8df;border-radius:7px;padding:3px 5px;background:#fff";
+          if (im.thumb_uri) {
+            var thumb = document.createElement("img");
+            thumb.src = im.thumb_uri;
+            thumb.style.cssText = "width:34px;height:34px;object-fit:cover;border-radius:4px;opacity:" + (im.hidden ? "0.3" : "1");
+            chip.appendChild(thumb);
+          }
+          var lbl = document.createElement("span");
+          lbl.style.cssText = "font:600 10px/1 -apple-system,sans-serif;color:#8a94a0";
+          lbl.textContent = im.callout ? "callout" : "image";
+          chip.appendChild(lbl);
+          var tgl = btn(im.hidden ? "Show" : "Hide", "img__tgl", (function (index) {
+            return function (ev) { stop(ev); send("toggleImageNode", { id: m.id, index: index }); };
+          })(im.index));
+          tgl.title = im.hidden ? "Show in viewport" : "Hide in viewport";
+          tgl.style.cssText = "border:1px solid #d3d8df;background:" + (im.hidden ? "#eef2f6" : "#fff") + ";color:#5a6672;font:600 10px/1 -apple-system,sans-serif;padding:4px 7px;border-radius:6px;cursor:pointer";
+          chip.appendChild(tgl);
+          thumbrow.appendChild(chip);
+        });
+        cwrap.appendChild(thumbrow);
+      }
+
+      // Face images (native Canvas) -- just a small count, no viewport toggle.
+      var nFace = allImgs.filter(function (im) { return im.mode === "face"; }).length;
+      if (nFace) {
+        var cnt = document.createElement("span");
+        cnt.style.cssText = "font:600 10.5px/1 -apple-system,sans-serif;color:#2f7d55;margin-top:4px;display:inline-block";
+        cnt.textContent = nFace + " on face";
+        cwrap.appendChild(cnt);
+      }
 
       li.appendChild(cwrap);
 
