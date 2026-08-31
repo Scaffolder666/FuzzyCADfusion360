@@ -7,9 +7,8 @@ corresponding CustomGraphicsGroups, leaving undeletable white image/text quads.
 FuzzyCAD collaboration state already lives in Design.attributes, so viewport
 CustomGraphics are disposable presentation. Immediately before Fusion saves the
 active document this module persists the collaboration state, restores temporary
-body opacity, and removes every FuzzyCAD CustomGraphics group. While the save is
-in progress redraw is suspended. Once documentSaved fires, the current marks are
-redrawn from authoritative runtime/persisted state.
+body opacity, and removes every FuzzyCAD CustomGraphics group. Once documentSaved
+fires, the current marks are redrawn from authoritative runtime/persisted state.
 
 Native Fusion Canvases used for explicit user-attached reference images are not
 CustomGraphics and are intentionally left alone so those references still travel
@@ -18,13 +17,16 @@ with the document.
 
 
 def install(m):
+    if getattr(m, "_fuzzycad_save_clean_installed", False):
+        return
+    m._fuzzycad_save_clean_installed = True
+
     adsk = m.adsk
     old_run = m.run
     old_stop = m.stop
-    old_redraw = m._redraw_marks
 
     state = {
-        "suspended": False,
+        "saving": False,
         "saving_handler": None,
         "saved_handler": None,
         "saving_document": None,
@@ -103,16 +105,6 @@ def install(m):
 
     m._purge_fuzzycad_custom_graphics = purge_custom_graphics
 
-    def redraw(*args, **kwargs):
-        # Nothing is allowed to repopulate the OGS scene between documentSaving
-        # and documentSaved. This wrapper is installed last, so it is the
-        # outermost gate around the complete rendering stack.
-        if state["suspended"]:
-            return None
-        return old_redraw(*args, **kwargs)
-
-    m._redraw_marks = redraw
-
     class DocumentSaving(adsk.core.DocumentEventHandler):
         def __init__(self):
             super().__init__()
@@ -127,12 +119,12 @@ def install(m):
             except Exception:
                 log("persist before save failed\n{}".format(m.traceback.format_exc()))
 
-            state["suspended"] = True
+            state["saving"] = True
             state["saving_document"] = event_document(args) or active_document()
 
-            # Body opacity is also presentation state and can otherwise be saved
-            # into the .f3d. Restore it before serialization; redraw after save
-            # re-applies the visual policy for open marks.
+            # Body opacity is presentation state too and can otherwise be written
+            # into the document. Restore it before serialization; documentSaved
+            # redraw re-applies FuzzyCAD's visual policy for the open marks.
             try:
                 restore = getattr(m, "_restore_all_bodies", None)
                 if restore is not None:
@@ -149,14 +141,14 @@ def install(m):
                 (m._app or adsk.core.Application.get()).activeViewport.refresh()
             except Exception:
                 pass
-            log("DOCUMENT SAVING: suspended redraw; purged {} FuzzyCAD groups".format(removed))
+            log("DOCUMENT SAVING: purged {} FuzzyCAD groups before serialization".format(removed))
 
     class DocumentSaved(adsk.core.DocumentEventHandler):
         def __init__(self):
             super().__init__()
 
         def notify(self, args):
-            if not state["suspended"]:
+            if not state["saving"]:
                 return
             saved_doc = event_document(args)
             target = state.get("saving_document")
@@ -167,12 +159,12 @@ def install(m):
                 except Exception:
                     pass
 
-            state["suspended"] = False
+            state["saving"] = False
             state["saving_document"] = None
             try:
-                # Call the pre-gate renderer directly. It is the full rendering
-                # stack as installed before this final save-clean patch.
-                old_redraw()
+                # Resolve dynamically so every renderer installed after this module
+                # also participates in the post-save rebuild.
+                m._redraw_marks()
             except Exception:
                 log("post-save redraw failed\n{}".format(m.traceback.format_exc()))
             try:
@@ -201,19 +193,12 @@ def install(m):
     def run(context):
         result = old_run(context)
         bind_events()
-        log("READY: save strips CustomGraphics, saved event redraws them")
+        log("READY: documentSaving strips CustomGraphics; documentSaved redraws them")
         return result
 
     def stop(context):
-        # Do not leave the viewport blank if the add-in is stopped after a save
-        # event but before its paired saved event for any reason.
-        if state["suspended"]:
-            state["suspended"] = False
-            state["saving_document"] = None
-            try:
-                old_redraw()
-            except Exception:
-                pass
+        state["saving"] = False
+        state["saving_document"] = None
         return old_stop(context)
 
     m.run = run
