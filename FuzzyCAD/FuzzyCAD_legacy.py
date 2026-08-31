@@ -553,7 +553,17 @@ def _draw_badge(group, mark):
     _sketchy(group, [P(-0.05, -0.42), P(0.05, -0.42)], rgb, 0.0, seed + 1, weight=6, strokes=1)
 
 
+# Viewport name labels are off by default. addText billboards render as a white
+# placeholder box after a document reload (same failure as PNG/glyph billboards),
+# which was the white square left beside each badge. The card name already appears
+# on the right-side card, so the viewport label is redundant. Flip to True only if
+# a future Fusion build makes text billboards survive a reload.
+_VIEWPORT_LABELS = False
+
+
 def _draw_label(group, mark, rgb):
+    if not _VIEWPORT_LABELS:
+        return
     a = mark["anchor"]; off = mark.get("size", 3.0) * 0.9
     tip = adsk.core.Point3D.create(a[0], a[1] + off, a[2])
     tag = mark["label"] or "{} {}".format(mark["tool"].capitalize(), mark.get("num", 1))
