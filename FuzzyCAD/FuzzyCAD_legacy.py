@@ -66,6 +66,14 @@ try:
 except Exception:
     _ICON_DIR = None
 
+# PNG badge icons render through CustomGraphics image billboards (addPointSet with
+# a PNG). Fusion drops those sprite textures when a document is REOPENED, leaving a
+# white quad, and Inspector Repair cannot fix it because redrawing re-adds the same
+# failing billboard. The texture-free vector badge (drawn triangle + glyph) reloads
+# reliably, so it is the default. Flip this to True only if a future Fusion build
+# makes image billboards survive a document reload.
+_BADGE_USE_PNG = False
+
 
 def _icon_path(mtype):
     if not _ICON_DIR:
@@ -515,8 +523,10 @@ def _draw_badge(group, mark):
     lift = max(1.0, min(s * 0.3, 3.0)) + bs
     center = (a[0] + yx * lift, a[1] + yy * lift, a[2] + yz * lift)
 
-    # 1) real image icon — always faces the camera, constant screen size
-    img = _icon_path(mtype)
+    # 1) real image icon — always faces the camera, constant screen size.
+    # Disabled by default: PNG billboards turn into white quads after a document
+    # reload (see _BADGE_USE_PNG). Fall through to the texture-free vector badge.
+    img = _icon_path(mtype) if _BADGE_USE_PNG else None
     if img:
         try:
             coords = adsk.fusion.CustomGraphicsCoordinates.create(list(center))
