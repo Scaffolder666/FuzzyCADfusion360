@@ -544,10 +544,13 @@ def _draw_badge(group, mark):
                 center[2] + bs * (ux * xz + uy * yz))
     top, bl, br = P(0.0, 1.0), P(-0.92, -0.72), P(0.92, -0.72)
     _sketchy(group, [top, br, bl, top], rgb, 0.0, mark["id"] * 555, weight=5, strokes=1)
-    cp = adsk.core.Point3D.create(*P(0.0, -0.12))
-    text = group.addText(MTYPE_GLYPH.get(mtype, u"!"), "Arial", bs * 0.95, _label_transform(cp))
-    text.color = _solid(rgb)
-    _apply_billboard(text, cp)
+    # Symbol drawn as vector strokes, never addText. A text billboard renders as a
+    # white placeholder box after a document reload (the same failure as PNG icon
+    # billboards), which is what left a white square beside every badge. A vector
+    # "!" (vertical bar + dot) is texture-free and reloads reliably.
+    seed = mark["id"] * 777
+    _sketchy(group, [P(0.0, 0.34), P(0.0, -0.14)], rgb, 0.0, seed, weight=5, strokes=1)
+    _sketchy(group, [P(-0.05, -0.42), P(0.05, -0.42)], rgb, 0.0, seed + 1, weight=6, strokes=1)
 
 
 def _draw_label(group, mark, rgb):
