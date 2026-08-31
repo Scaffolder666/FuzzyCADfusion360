@@ -9,8 +9,8 @@ palette so it can be seen and repaired by hand:
                      any stray graphics groups), where the state is stored, and a
                      compact per-mark list.
   repairViewport  -> run the expensive recovery path deliberately: restore tracked
-                     opacity, sweep stray graphics, scan for legacy orphan opacity,
-                     then redraw the authoritative current state once.
+                     opacity, purge all FuzzyCAD-owned CustomGraphics, scan for
+                     legacy orphan opacity, then redraw authoritative state once.
 
 Per-mark Locate / Delete in the panel reuse the existing focus / reject actions,
 so this module only adds the two read/repair actions above.
@@ -87,8 +87,45 @@ def install(m):
             "storage": "Document attributes · group “FuzzyCAD”",
         }
 
+    def purge_fuzzycad_graphics():
+        """Delete every FuzzyCAD-owned CustomGraphics group.
+
+        Saved collaboration state lives in Design.attributes, not in CustomGraphics.
+        This deliberately removes legacy white placeholder quads/textures from old
+        documents so the following authoritative redraw starts from a clean slate.
+        """
+        design = None
+        try:
+            design = m._design()
+        except Exception:
+            design = None
+        if design is None:
+            return 0
+        try:
+            root = design.rootComponent
+            groups = root.customGraphicsGroups
+        except Exception:
+            return 0
+
+        removed = 0
+        for i in range(groups.count - 1, -1, -1):
+            try:
+                grp = groups.item(i)
+                gid = str(getattr(grp, "id", "") or "")
+                if gid.startswith("FuzzyCAD"):
+                    grp.deleteMe()
+                    removed += 1
+            except Exception:
+                continue
+        return removed
+
     def repair():
-        result = {"swept": False, "restored": 0, "full_scan": False}
+        result = {
+            "swept": False,
+            "restored": 0,
+            "purged_groups": 0,
+            "full_scan": False,
+        }
         try:
             n = ghost_count()
             fn = getattr(m, "_restore_all_bodies", None)
@@ -105,6 +142,14 @@ def install(m):
         except Exception:
             log("sweep failed\n{}".format(m.traceback.format_exc()))
 
+        # Old saved .f3d files may still contain broken CustomGraphicsText/image
+        # billboards. Their pixels are not state, so remove every FuzzyCAD visual
+        # group before rebuilding from persisted marks.
+        try:
+            result["purged_groups"] = purge_fuzzycad_graphics()
+        except Exception:
+            log("graphics purge failed\n{}".format(m.traceback.format_exc()))
+
         # Ordinary redraw no longer walks design.allComponents. Repair is the
         # deliberate escape hatch for that expensive legacy/orphan scan.
         try:
@@ -119,9 +164,14 @@ def install(m):
         try:
             m._redraw_marks()
         except Exception:
+            log("authoritative redraw failed\n{}".format(m.traceback.format_exc()))
+        try:
+            (m._app or adsk.core.Application.get()).activeViewport.refresh()
+        except Exception:
             pass
-        log("REPAIR swept={} restored={} full_scan={}".format(
-            result["swept"], result["restored"], result["full_scan"]))
+        log("REPAIR swept={} restored={} purged_groups={} full_scan={}".format(
+            result["swept"], result["restored"], result["purged_groups"],
+            result["full_scan"]))
         return result
 
     class PaletteHTMLHandler(adsk.core.HTMLEventHandler):
