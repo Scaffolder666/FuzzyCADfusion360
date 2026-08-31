@@ -9,7 +9,9 @@ CustomGraphicsText as white placeholder quads, so notes use a vector leader plus
 the constraint badge; the full note text remains available in the side panel.
 """
 
+import importlib.util
 import os
+import sys
 
 
 def install(m):
@@ -93,3 +95,24 @@ def install(m):
         return old_draw_badge(group, mark)
 
     m._draw_badge = draw_badge
+
+    # Fusion 2026 can serialize API CustomGraphics into OGS/DefaultScene and then
+    # reopen them as orphaned render objects that are no longer enumerable through
+    # customGraphicsGroups. Install a save lifecycle guard: persist state, remove
+    # API-visible FuzzyCAD graphics immediately before save, then redraw after the
+    # save completes. Anchor the path to the legacy module at the add-in root so
+    # this remains independent of the visuals/state folder depth.
+    try:
+        root = os.path.dirname(os.path.abspath(m.__file__))
+        path = os.path.join(root, "core", "persistence", "fuzzycad_save_clean.py")
+        spec = importlib.util.spec_from_file_location("fuzzycad_save_clean", path)
+        mod = importlib.util.module_from_spec(spec)
+        sys.modules["fuzzycad_save_clean"] = mod
+        spec.loader.exec_module(mod)
+        mod.install(m)
+    except Exception:
+        try:
+            (m._app or m.adsk.core.Application.get()).log(
+                "[FuzzyCAD BADGES] save-clean guard failed\n{}".format(m.traceback.format_exc()))
+        except Exception:
+            pass
