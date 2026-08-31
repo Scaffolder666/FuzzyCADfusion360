@@ -89,6 +89,10 @@ def install(m):
             return None
 
     def label(group, xyz, text, role, size):
+        # addText renders as a white box after a document reload; value is on the
+        # card. Shares the _VIEWPORT_LABELS switch.
+        if not getattr(m, "_VIEWPORT_LABELS", True):
+            return
         try:
             p = adsk.core.Point3D.create(*xyz)
             t = group.addText(text, "Arial", max(0.38, min(size * 0.075, 0.62)),

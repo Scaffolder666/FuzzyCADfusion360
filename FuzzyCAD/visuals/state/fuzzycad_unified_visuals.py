@@ -88,6 +88,12 @@ def install(m):
             return None
 
     def callout(group, mark, text, anchor=None):
+        # Value callouts use addText, which Fusion renders as a white placeholder
+        # box after a document reload (same failure as the badge label/glyph). The
+        # value is on the right-side card, so skip the viewport text. Shares the
+        # _VIEWPORT_LABELS switch with the badge name label.
+        if not getattr(m, "_VIEWPORT_LABELS", True):
+            return
         try:
             a = list(anchor or mark.get("anchor") or [0.0, 0.0, 0.0])
             s = mark.get("size", 3.0)

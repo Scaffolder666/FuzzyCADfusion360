@@ -219,6 +219,10 @@ def install(m):
             return ([0.0, 0.0, 0.0], 3.0)
 
     def label(group, xyz, text, size, role):
+        # addText renders as a white box after a document reload; value is on the
+        # card. Shares the _VIEWPORT_LABELS switch.
+        if not getattr(m, "_VIEWPORT_LABELS", True):
+            return
         try:
             p = adsk.core.Point3D.create(*xyz)
             t = group.addText(text, "Arial", max(0.40, min(size * 0.075, 0.65)),
@@ -245,6 +249,10 @@ def install(m):
         return "Move = ({:.2f}, {:.2f}, {:.2f}) mm".format(*mm)
 
     def callout(group, mark, anchor):
+        # addText renders as a white box after a document reload; value is on the
+        # card. Shares the _VIEWPORT_LABELS switch.
+        if not getattr(m, "_VIEWPORT_LABELS", True):
+            return
         try:
             s = mark.get("size", 3.0)
             (xx, xy, xz), (yx, yy, yz) = m._camera_xy()
