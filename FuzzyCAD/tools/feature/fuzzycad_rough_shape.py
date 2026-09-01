@@ -146,13 +146,56 @@ def install(m):
 
     m.FuzzyInputChanged = FuzzyInputChanged
 
+    # ---- lock the rough body so it can't be dragged while it is a proposal --
+    # A Rough Shape is a fixed reference envelope to build inside, so the body
+    # should not be movable until the decision is resolved. isSelectable=False
+    # stops it from being picked and dragged in the viewport.
+    def set_rough_selectable(mid, value):
+        body = m._body.get(mid)
+        if body is None:
+            return
+        try:
+            if body.isSelectable != value:   # only write on change
+                body.isSelectable = value
+        except Exception:
+            pass
+
+    # Re-assert the lock on every authoritative render (covers create, document
+    # reload, and any redraw). Registered as a persistent overlay so it runs
+    # inside the render owner's transaction rather than the bypassed redraw path.
+    def rough_lock_overlay():
+        for mark in getattr(m, "_marks", None) or []:
+            if mark.get("tool") == "rough":
+                set_rough_selectable(mark.get("id"), False)
+
+    overlays = getattr(m, "_persistent_overlays", None)
+    if overlays is None:
+        overlays = []
+        m._persistent_overlays = overlays
+    overlays.append(rough_lock_overlay)
+
+    # Unlock the body when the rough mark is resolved (Accept or Reject).
+    old_remove_mark = m._remove_mark
+
+    def remove_mark(mid):
+        try:
+            mk = m._find(mid)
+            if mk and mk.get("tool") == "rough":
+                set_rough_selectable(mid, True)
+        except Exception:
+            pass
+        return old_remove_mark(mid)
+
+    m._remove_mark = remove_mark
+
     # ---- resolving just clears the flag; the body is left as-is ------------
     def accept(mark):
         if mark.get("tool") == "rough":
+            set_rough_selectable(mark.get("id"), True)   # unlock on accept
             log("ROUGH accepted (flag cleared) id={}".format(mark.get("id")))
             return True
         return old_accept(mark)
 
     m._accept = accept
 
-    log("ROUGH SHAPE READY")
+    log("ROUGH SHAPE READY (translucent envelope, body locked while proposed)")

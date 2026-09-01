@@ -27,6 +27,8 @@ SHOW_THRU_OPACITY = 0.6
 FLAT_FILL       = True
 FILL_RGB        = (222, 220, 214)
 FILL_FLATTEN    = 0.55
+FILL_OPACITY    = 1.0     # comic paper fill: opaque for normal proposals
+ROUGH_FILL_OPACITY = 0.28  # Rough Shape reads as a translucent envelope to build inside
 MAX_LINES       = 2400
 
 
@@ -116,7 +118,7 @@ def install(m):
             m._sketchy(group, pts, rgb, max(0.01, size * 0.004), seed,
                        weight=LINE_WEIGHT, strokes=1)
 
-    def flat_material():
+    def flat_material(opacity=1.0):
         def C(r, g, b):
             return adsk.core.Color.create(int(max(0, min(255, r))),
                                           int(max(0, min(255, g))),
@@ -124,7 +126,28 @@ def install(m):
         r, g, b = FILL_RGB
         f = max(0.0, min(1.0, FILL_FLATTEN))
         return adsk.fusion.CustomGraphicsBasicMaterialColorEffect.create(
-            C(r, g, b), C(r, g, b), C(0, 0, 0), C(r * f, g * f, b * f), 0.0, 1.0)
+            C(r, g, b), C(r, g, b), C(0, 0, 0), C(r * f, g * f, b * f),
+            0.0, max(0.0, min(1.0, opacity)))
+
+    def is_rough_body(body):
+        # A Rough Shape flags a whole existing body as an uncertain envelope; its
+        # comic fill should be see-through so a collaborator can model inside it.
+        try:
+            btok = body.entityToken
+        except Exception:
+            return False
+        for mk in getattr(m, "_marks", None) or []:
+            if mk.get("tool") != "rough":
+                continue
+            rb = m._body.get(mk.get("id"))
+            if rb is None:
+                continue
+            try:
+                if rb.entityToken == btok:
+                    return True
+            except Exception:
+                pass
+        return False
 
     def draw_fill(group, tmp, body):
         if not FLAT_FILL or tmp is None:
@@ -134,7 +157,8 @@ def install(m):
             if dup is None:
                 return
             cg = group.addBRepBody(dup)
-            cg.color = flat_material()
+            opacity = ROUGH_FILL_OPACITY if is_rough_body(body) else FILL_OPACITY
+            cg.color = flat_material(opacity)
         except Exception:
             log("flat fill failed\n{}".format(m.traceback.format_exc()))
 
