@@ -130,6 +130,62 @@ def install(m):
                 pass
         return changed
 
+    # ---- edit focus: hide every OTHER mark's uncertainty while one is edited --
+    def editing_focus_mid():
+        """The mark currently owning an edit. Non-None => focus mode: suppress
+        every other mark's comic/badge until this one is confirmed. Covers both
+        a reopened proposal (_active_edit_id) and a live create/edit (_live)."""
+        mid = getattr(m, "_active_edit_id", None)
+        if mid is not None:
+            return mid
+        cmd = getattr(m, "_active_cmd", None)
+        if cmd and cmd != "edit_existing":
+            live = getattr(m, "_live", None) or {}
+            return live.get(cmd)
+        return None
+
+    def focus_body_token():
+        mid = editing_focus_mid()
+        if mid is None:
+            return None   # None => not focusing; show everything
+        body = (getattr(m, "_body", None) or {}).get(mid)
+        try:
+            return str(body.entityToken) if body is not None else "__none__"
+        except Exception:
+            return "__none__"
+
+    # In focus mode, keep only the edited body's comic + opacity rows. Other
+    # bodies then drop their comic (cleared by the sync's retained-visible pass)
+    # and their opacity override (restored to the original by opacity_runtime),
+    # so they read as ordinary solids -- present as context, but not flagged.
+    base_comic_rows = getattr(m, "_visual_comic_subject_rows", None)
+    if callable(base_comic_rows):
+        def comic_rows_focused():
+            result = base_comic_rows()
+            ftok = focus_body_token()
+            if ftok is None:
+                return result
+            try:
+                rows, retained = result
+                rows = [(t, b) for (t, b) in rows if str(t) == ftok]
+                return rows, retained
+            except Exception:
+                return result
+        m._visual_comic_subject_rows = comic_rows_focused
+
+    base_opacity_rows = getattr(m, "_visual_opacity_subject_rows", None)
+    if callable(base_opacity_rows):
+        def opacity_rows_focused():
+            rows = base_opacity_rows()
+            ftok = focus_body_token()
+            if ftok is None:
+                return rows
+            try:
+                return [r for r in rows if str(r[0]) == ftok]
+            except Exception:
+                return rows
+        m._visual_opacity_subject_rows = opacity_rows_focused
+
     def draw_persistent_marks():
         """Apply badge/detail switches into the one persistent mark group."""
         m._clear(m.GROUP_MARKS)
@@ -142,8 +198,13 @@ def install(m):
             return
 
         geom = getattr(m, "_geom", {}) or {}
+        focus = editing_focus_mid()
         for mark in marks():
             mid = mark.get("id")
+            # Focus mode: while one mark is being edited/reopened, hide every
+            # other mark's badge so the viewport stays clean until Confirm.
+            if focus is not None and mid != focus:
+                continue
             # Preserve the original renderer's safety rule: geometry-bearing marks
             # are drawn only once their geometry record exists.
             if mid not in geom:
