@@ -211,25 +211,6 @@ def install(m):
                         pass
                     state["xform_built"] = True
                 group = m._group(m.GROUP_PREVIEW)
-                # If something cleared the preview mid-drag, the outline vanishes
-                # (reopen -> drag -> empty frame). Detect the empty group and
-                # rebuild the outline once before transforming, so it can never
-                # disappear during an edit. This fires ONLY when the group is
-                # actually empty, so it is not a per-frame clear/rebuild and keeps
-                # the crash-safe fast path.
-                empty = False
-                if group is not None:
-                    try:
-                        empty = (group.count == 0)
-                    except Exception:
-                        empty = False
-                if empty:
-                    ct = getattr(m, "_crash_trace", None)
-                    if ct:
-                        ct("REOPEN_OUTLINE_REBUILD", "tool={} mark={}".format(
-                            tool, mark.get("id")))
-                    build_transform_base(mark)
-                    group = m._group(m.GROUP_PREVIEW)
                 if group is not None:
                     # Just move the already-drawn outline. NO clear/rebuild, NO
                     # per-frame _refresh_ghost (both are the crash/lag sources).
