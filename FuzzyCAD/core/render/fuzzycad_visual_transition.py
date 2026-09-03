@@ -154,6 +154,22 @@ def install(m):
         except Exception:
             return "__none__"
 
+    def rough_body_tokens():
+        # Rough Shape is a reference envelope to build inside, so it stays visible
+        # even while another mark is being edited -- you are often modeling against
+        # it. Its bodies are exempt from focus-mode hiding.
+        out = set()
+        for mark in (getattr(m, "_marks", None) or []):
+            if mark.get("tool") != "rough" or mark.get("status", "open") != "open":
+                continue
+            body = (getattr(m, "_body", None) or {}).get(mark.get("id"))
+            try:
+                if body is not None:
+                    out.add(str(body.entityToken))
+            except Exception:
+                pass
+        return out
+
     # In focus mode, keep only the edited body's comic + opacity rows. Other
     # bodies then drop their comic (cleared by the sync's retained-visible pass)
     # and their opacity override (restored to the original by opacity_runtime),
@@ -167,7 +183,8 @@ def install(m):
                 return result
             try:
                 rows, retained = result
-                rows = [(t, b) for (t, b) in rows if str(t) == ftok]
+                keep = {ftok} | rough_body_tokens()
+                rows = [(t, b) for (t, b) in rows if str(t) in keep]
                 return rows, retained
             except Exception:
                 return result
@@ -181,7 +198,8 @@ def install(m):
             if ftok is None:
                 return rows
             try:
-                return [r for r in rows if str(r[0]) == ftok]
+                keep = {ftok} | rough_body_tokens()
+                return [r for r in rows if str(r[0]) in keep]
             except Exception:
                 return rows
         m._visual_opacity_subject_rows = opacity_rows_focused
@@ -202,8 +220,9 @@ def install(m):
         for mark in marks():
             mid = mark.get("id")
             # Focus mode: while one mark is being edited/reopened, hide every
-            # other mark's badge so the viewport stays clean until Confirm.
-            if focus is not None and mid != focus:
+            # other mark's badge so the viewport stays clean until Confirm. Rough
+            # Shape is exempt -- it's a reference envelope you build against.
+            if focus is not None and mid != focus and mark.get("tool") != "rough":
                 continue
             # Preserve the original renderer's safety rule: geometry-bearing marks
             # are drawn only once their geometry record exists.

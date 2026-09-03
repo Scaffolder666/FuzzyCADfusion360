@@ -123,6 +123,14 @@ def install(m):
         if not peers:
             return False
 
+        # Rough / Note peers never lock the subject. A Rough Shape is a coexisting
+        # reference envelope, so a body that only carries Rough/Note marks always
+        # accepts a new decision (e.g. stacking Move or Extrude onto a rough
+        # envelope). This holds regardless of the requested tool, so it also covers
+        # any command whose name would otherwise fall through to the legacy lock.
+        if all(p.get("tool") in NON_BLOCKING_TOOLS for p in peers):
+            return False
+
         req = requested_tool()
         if req in TOPOLOGY_TOOLS:
             return False
