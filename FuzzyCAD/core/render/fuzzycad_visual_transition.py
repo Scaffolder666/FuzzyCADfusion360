@@ -183,12 +183,13 @@ def install(m):
         def comic_rows_focused():
             result = base_comic_rows()
             if uncertainty_hidden():
-                # Global hide: no comic at all; retained bodies get cleared.
-                try:
-                    _rows, retained = result
-                    return [], retained
-                except Exception:
-                    return result
+                # Global hide: DESTROY all comic, don't just hide it. An empty
+                # retained set makes the comic sync drop every comic group (the
+                # "not in retained -> drop" path) instead of the "retained but not
+                # visible -> hide" path. The hide-only path left retained-but-hidden
+                # groups that could resurface -- e.g. a rejected body's outline
+                # lingering after toggling. Show rebuilds comic from live marks.
+                return [], set()
             ftok = focus_body_token()
             if ftok is None:
                 return result
