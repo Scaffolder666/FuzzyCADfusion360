@@ -101,22 +101,31 @@ def install(m):
             design = None
         if design is None:
             return 0
-        try:
-            root = design.rootComponent
-            groups = root.customGraphicsGroups
-        except Exception:
-            return 0
-
+        # Sweep EVERY component, not just the root. Comic/preview groups are
+        # normally on the root, but some (e.g. a Compare preview) attach to an
+        # occurrence's component, which a root-only sweep misses -- leaving frames
+        # in the viewport with no body in the browser. Mirrors clear_all's sweep.
         removed = 0
-        for i in range(groups.count - 1, -1, -1):
+        try:
+            comps = design.allComponents
+        except Exception:
+            comps = None
+        if comps is None:
+            return 0
+        for ci in range(comps.count):
             try:
-                grp = groups.item(i)
-                gid = str(getattr(grp, "id", "") or "")
-                if gid.startswith("FuzzyCAD"):
-                    grp.deleteMe()
-                    removed += 1
+                groups = comps.item(ci).customGraphicsGroups
             except Exception:
                 continue
+            for i in range(groups.count - 1, -1, -1):
+                try:
+                    grp = groups.item(i)
+                    gid = str(getattr(grp, "id", "") or "")
+                    if gid.startswith("FuzzyCAD"):
+                        grp.deleteMe()
+                        removed += 1
+                except Exception:
+                    continue
         return removed
 
     def repair():
