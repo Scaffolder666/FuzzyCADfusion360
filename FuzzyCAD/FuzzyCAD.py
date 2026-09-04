@@ -305,6 +305,13 @@ _safe_confirm.install(_legacy)
 _archive = _load("fuzzycad_decision_archive", "core/persistence/fuzzycad_decision_archive.py")
 _archive.install(_legacy)
 
+# Global show/hide switch for all uncertainty visuals (one panel button). The
+# render owner and overlays read m._uncertainty_hidden to suppress every comic /
+# badge / silhouette / leader graphic and restore body opacity. Display-only.
+_uncertainty_toggle = _load(
+    "fuzzycad_uncertainty_toggle", "core/state/fuzzycad_uncertainty_toggle.py")
+_uncertainty_toggle.install(_legacy)
+
 # Outermost, always-on flow trace for the manual risk sweep: logs every palette
 # action and toolbar command lifecycle edge into %TEMP%/fuzzycad_crash.log. Edge
 # only -- no per-frame I/O. Installed last so it sees every action first.

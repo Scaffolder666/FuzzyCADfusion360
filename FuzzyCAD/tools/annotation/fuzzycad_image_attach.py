@@ -563,6 +563,10 @@ def install(m):
         except Exception:
             pass
 
+        # Global uncertainty hide: leave the leader-line group cleared, draw nothing.
+        if getattr(m, "_uncertainty_hidden", False):
+            return
+
         grp = m._group(GID)
         if grp is None:
             return

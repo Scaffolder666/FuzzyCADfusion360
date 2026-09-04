@@ -4,7 +4,7 @@
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title>FuzzyCAD</title>
-  <link rel="stylesheet" href="palette.css?v=ui1" />
+  <link rel="stylesheet" href="palette.css?v=unctoggle" />
   <link rel="stylesheet" href="hardening.css" />
   <style>
     .insp{position:fixed;inset:0;background:#fbfcfd;z-index:50;display:none;flex-direction:column;font:13px/1.4 -apple-system,'Segoe UI',Roboto,sans-serif;color:#2b3440}
@@ -58,6 +58,9 @@
     <div class="list__head" style="display:flex;align-items:center;justify-content:space-between;gap:8px">
       <span id="count" class="chip">0 open questions</span>
       <span style="display:flex;gap:6px;flex:none">
+        <button id="toggleUncertainty" type="button"
+          title="Hide or show all uncertainty overlays in the viewport (display only; nothing is deleted)"
+          style="border:1px solid #d3d8df;color:#5a6672;background:#fff;font:600 11px/1 -apple-system,'Segoe UI',Roboto,sans-serif;padding:5px 9px;border-radius:6px;cursor:pointer">👁 Hide</button>
         <button id="openInspector" type="button"
           title="Open the Inspector: status overview + one-click viewport repair"
           style="border:1px solid #d3d8df;color:#5a6672;background:#fff;font:600 11px/1 -apple-system,'Segoe UI',Roboto,sans-serif;padding:5px 9px;border-radius:6px;cursor:pointer">⚙ Inspector</button>
@@ -100,12 +103,13 @@
     </div>
   </div>
 
-  <script src="palette.js?v=ui1"></script>
-  <script src="panel_incremental.js?v=ui1"></script>
-  <script src="panel_archive.js?v=ui1"></script>
+  <script src="palette.js?v=unctoggle"></script>
+  <script src="panel_incremental.js?v=unctoggle"></script>
+  <script src="panel_archive.js?v=unctoggle"></script>
   <script src="panel_resync.js"></script>
   <script src="hover_ops.js"></script>
   <script src="panel_inspector.js"></script>
   <script src="study_log.js"></script>
+  <script src="panel_uncertainty_toggle.js?v=unctoggle"></script>
 </body>
 </html>

@@ -130,6 +130,10 @@ def install(m):
                 pass
         return changed
 
+    # ---- global show/hide: one switch to hide ALL uncertainty visuals --------
+    def uncertainty_hidden():
+        return bool(getattr(m, "_uncertainty_hidden", False))
+
     # ---- edit focus: hide every OTHER mark's uncertainty while one is edited --
     def editing_focus_mid():
         """The mark currently owning an edit. Non-None => focus mode: suppress
@@ -178,6 +182,13 @@ def install(m):
     if callable(base_comic_rows):
         def comic_rows_focused():
             result = base_comic_rows()
+            if uncertainty_hidden():
+                # Global hide: no comic at all; retained bodies get cleared.
+                try:
+                    _rows, retained = result
+                    return [], retained
+                except Exception:
+                    return result
             ftok = focus_body_token()
             if ftok is None:
                 return result
@@ -194,6 +205,8 @@ def install(m):
     if callable(base_opacity_rows):
         def opacity_rows_focused():
             rows = base_opacity_rows()
+            if uncertainty_hidden():
+                return []   # no opacity override -> bodies show as ordinary solids
             ftok = focus_body_token()
             if ftok is None:
                 return rows
@@ -207,6 +220,9 @@ def install(m):
     def draw_persistent_marks():
         """Apply badge/detail switches into the one persistent mark group."""
         m._clear(m.GROUP_MARKS)
+        # Global hide: the group is cleared above; draw no badges/details at all.
+        if uncertainty_hidden():
+            return
         group = m._group(m.GROUP_MARKS)
         if group is None:
             return
@@ -367,6 +383,8 @@ def install(m):
         # transaction so the single viewport refresh below picks them up. Before
         # this hook they wrapped _redraw_marks and were silently bypassed when the
         # authoritative render replaced it -- which is why floating images vanished.
+        # Overlays run even when hidden so they can clear their own graphics
+        # (e.g. the floating-image leader line honors _uncertainty_hidden).
         for overlay in list(getattr(m, "_persistent_overlays", None) or []):
             try:
                 overlay()

@@ -309,6 +309,9 @@ def install(m):
         state["busy"] = True
         try:
             m._clear(GROUP_ID)
+            # Global uncertainty hide: leave the silhouette group cleared.
+            if getattr(m, "_uncertainty_hidden", False):
+                return
             if not getattr(m, "_marks", None):
                 return
             group = m._group(GROUP_ID)
