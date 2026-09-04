@@ -87,6 +87,15 @@ def install(m):
         ]
         return any(abs(op - v) < 0.025 for v in vals)
 
+    # Any body faded below this is treated as leftover FuzzyCAD display state
+    # during a full recovery. A resolved comic/rough body can persist in the saved
+    # document at COMIC_SOURCE_OPACITY (~0.02) -- it then reads as a see-through
+    # wireframe "frame" even without the add-in loaded, because body opacity is a
+    # saved property. Matching only the exact known values missed bodies whose
+    # reloaded opacity drifted or was written by an older build, so recovery now
+    # restores ANY orphan (no open mark wants it faded) that is not solid.
+    ORPHAN_FADE_CEILING = 0.95
+
     def reclaim_orphan_visual_opacity(design):
         """Full-document recovery for stale FuzzyCAD display opacity.
 
@@ -97,6 +106,7 @@ def install(m):
         """
         want = desired_visual_tokens()
         restore = getattr(m, "_restore_orphan_visual_body", None)
+        restored = 0
         for body in iter_live_bodies(design):
             btok = tok(body)
             if btok in want:
@@ -105,17 +115,23 @@ def install(m):
                 op = float(body.opacity)
             except Exception:
                 continue
-            if known_visual_opacity(op):
-                if restore is not None:
-                    try:
-                        if restore(body):
-                            continue
-                    except Exception:
-                        pass
+            # No open mark wants this body faded. If it is not solid, it is
+            # leftover FuzzyCAD display state -- restore it to opaque.
+            if op >= ORPHAN_FADE_CEILING:
+                continue
+            if restore is not None:
                 try:
-                    body.opacity = 1.0
+                    if restore(body):
+                        restored += 1
+                        continue
                 except Exception:
                     pass
+            try:
+                body.opacity = 1.0
+                restored += 1
+            except Exception:
+                pass
+        return restored
 
     def reconcile(full_scan=False):
         design = m._design()
@@ -148,6 +164,39 @@ def install(m):
 
     m._reconcile_viewport = reconcile
     m._reclaim_orphan_visual_opacity = reclaim_orphan_visual_opacity
+
+    # Resolving a mark (Accept/Reject/Delete) is a discrete, non-drag event. After
+    # the mark's status flips, its subject body is no longer in desired_visual_
+    # tokens(), so a leftover comic/semi-transparent opacity must be reverted to
+    # the body's real appearance. The runtime opacity record can be gone here (a
+    # reopened/crash-recovered document starts with empty records and the mark's
+    # live body handle may not be resolvable), so instead of trusting a single
+    # cached token we run the bounded orphan reclaim over the live bodies. This is
+    # what makes "reject/accept a Rough Shape leaves the body a see-through frame"
+    # actually restore the body's colour instead of stranding it at ~0.02 opacity.
+    def reclaim_on_resolve(reason):
+        try:
+            design = m._design()
+            if design is not None:
+                reclaim_orphan_visual_opacity(design)
+        except Exception:
+            pass
+
+    old_accept = getattr(m, "_accept", None)
+    if old_accept is not None:
+        def accept(mark, *args, **kwargs):
+            result = old_accept(mark, *args, **kwargs)
+            reclaim_on_resolve("accept")
+            return result
+        m._accept = accept
+
+    old_remove_mark = getattr(m, "_remove_mark", None)
+    if old_remove_mark is not None:
+        def remove_mark(mid, *args, **kwargs):
+            result = old_remove_mark(mid, *args, **kwargs)
+            reclaim_on_resolve("remove")
+            return result
+        m._remove_mark = remove_mark
 
     def redraw(*args, **kwargs):
         result = old_redraw(*args, **kwargs)
