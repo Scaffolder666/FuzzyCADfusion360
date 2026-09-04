@@ -326,11 +326,47 @@ def install(m):
     # state here also lets Reject disappear from the panel immediately instead of
     # waiting for sketch/comic reconstruction to finish.
     def remove_mark(mid):
+        # Grab the live body BEFORE the mark is removed, so we can force its
+        # display opacity back to solid even when the runtime record was lost --
+        # e.g. a reopened handoff file, where `records` starts empty and the
+        # entity token may have changed, so refresh_ghost/recover can't find it.
+        body = None
+        try:
+            body = m._body.get(mid)
+        except Exception:
+            body = None
+
         result = old_remove_mark(mid)
         try:
             refresh_ghost()
         except Exception:
             pass
+
+        # Safety net: if this body no longer carries any open mark but is still
+        # showing a comic display opacity, restore it to solid. Uses the live body
+        # object (not a token lookup), so it survives a handoff token change.
+        if body is not None:
+            still_used = False
+            try:
+                btok = body_token(body)
+                for mk in (getattr(m, "_marks", None) or []):
+                    if mk.get("status", "open") != "open":
+                        continue
+                    b = m._body.get(mk.get("id"))
+                    if b is not None and body_token(b) == btok:
+                        still_used = True
+                        break
+            except Exception:
+                still_used = False
+            if not still_used:
+                try:
+                    cur = float(body.opacity)
+                    if any(abs(cur - v) < 0.03 for v in visual_values()):
+                        body.opacity = 1.0
+                        applied.pop(body_token(body), None)
+                except Exception:
+                    pass
+
         try:
             m._send_state()
         except Exception:
