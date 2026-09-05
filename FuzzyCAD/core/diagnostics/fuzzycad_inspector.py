@@ -128,7 +128,94 @@ def install(m):
                     continue
         return removed
 
+    def inventory(tag):
+        """Dump every custom graphics group and every faded body to the crash log.
+
+        Ground-truth probe for the "leftover frame" reports. After reject/accept a
+        marked body must return to solid and its comic graphics must be gone. If a
+        frame lingers it is either (a) a body still faded below 1.0 -- we log its
+        component/name/token/opacity, or (b) a custom graphics group the API can
+        still see -- we log its id/owner/count. Anything the log does NOT list is
+        unreachable through the API (e.g. baked into Fusion's display cache) and
+        needs a different remedy than purge/reclaim.
+        """
+        trace = getattr(m, "_crash_trace", None)
+        if trace is None:
+            return
+        try:
+            design = m._design()
+        except Exception:
+            design = None
+        if design is None:
+            trace("REPAIR_INV_" + tag, "no design")
+            return
+        try:
+            comps = design.allComponents
+        except Exception:
+            comps = None
+        if comps is None:
+            trace("REPAIR_INV_" + tag, "no components")
+            return
+        groups_seen = 0
+        fuzzy_groups = 0
+        faded = 0
+        try:
+            for ci in range(comps.count):
+                comp = comps.item(ci)
+                try:
+                    cname = str(getattr(comp, "name", "") or "")
+                except Exception:
+                    cname = "?"
+                try:
+                    grps = comp.customGraphicsGroups
+                    for gi in range(grps.count):
+                        g = grps.item(gi)
+                        gid = str(getattr(g, "id", "") or "")
+                        groups_seen += 1
+                        if gid.startswith("FuzzyCAD"):
+                            fuzzy_groups += 1
+                        trace("REPAIR_INV_" + tag,
+                              "GROUP comp={} id={} count={} visible={}".format(
+                                  cname, gid or "<empty-id>",
+                                  int(getattr(g, "count", 0) or 0),
+                                  getattr(g, "isVisible", None)))
+                except Exception:
+                    pass
+                try:
+                    bodies = comp.bRepBodies
+                    for bi in range(bodies.count):
+                        b = bodies.item(bi)
+                        try:
+                            op = float(b.opacity)
+                        except Exception:
+                            op = -1.0
+                        if op < 0.99:
+                            faded += 1
+                            try:
+                                bname = str(getattr(b, "name", "") or "")
+                            except Exception:
+                                bname = "?"
+                            try:
+                                btok = str(b.entityToken)[:40]
+                            except Exception:
+                                btok = "?"
+                            trace("REPAIR_INV_" + tag,
+                                  "FADED_BODY comp={} name={} opacity={} visible={} token={}".format(
+                                      cname, bname, round(op, 4),
+                                      getattr(b, "isVisible", None), btok))
+                except Exception:
+                    pass
+        except Exception:
+            pass
+        trace("REPAIR_INV_" + tag + "_SUMMARY",
+              "groups_total={} fuzzy_groups={} faded_bodies={}".format(
+                  groups_seen, fuzzy_groups, faded))
+
     def repair():
+        try:
+            inventory("BEFORE")
+        except Exception:
+            pass
         result = {
             "swept": False,
             "restored": 0,
@@ -181,6 +268,10 @@ def install(m):
         log("REPAIR swept={} restored={} purged_groups={} full_scan={}".format(
             result["swept"], result["restored"], result["purged_groups"],
             result["full_scan"]))
+        try:
+            inventory("AFTER")
+        except Exception:
+            pass
         return result
 
     class PaletteHTMLHandler(adsk.core.HTMLEventHandler):
