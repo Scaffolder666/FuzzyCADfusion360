@@ -1328,8 +1328,15 @@ def _accept(mark):
         elif tool == "extrude":
             comp = ent.body.parentComponent
             ext = comp.features.extrudeFeatures
-            ei = ext.createInput(ent, adsk.fusion.FeatureOperations.JoinFeatureOperation)
-            ei.setDistanceExtent(False, adsk.core.ValueInput.createByReal(mark["amount"]))
+            # Two-way extrude, like native Fusion: dragging the face outward
+            # (positive depth) joins/adds material; dragging it inward (negative
+            # depth) cuts into the body. The signed distance carries the direction.
+            amount = mark["amount"]
+            op = (adsk.fusion.FeatureOperations.CutFeatureOperation
+                  if amount < 0 else
+                  adsk.fusion.FeatureOperations.JoinFeatureOperation)
+            ei = ext.createInput(ent, op)
+            ei.setDistanceExtent(False, adsk.core.ValueInput.createByReal(amount))
             ext.add(ei)
         elif tool == "fillet":
             comp = ent.body.parentComponent
