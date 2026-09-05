@@ -321,11 +321,12 @@ _flow_trace.install(_legacy)
 # Keep FuzzyCAD's display graphics + display-only opacity out of the saved file.
 # Fusion bakes on-screen CustomGraphics into the document's display cache, where
 # they become unenumerable "leftover frames"/stacked badges that survive reopen
-# and Repair and pile up on every save. This strips them at documentSaving and
-# redraws at documentSaved. Loaded last so _redraw_marks, _restore_all_bodies and
-# _reclaim_orphan_visual_opacity all exist when the save handlers fire.
-_save_hygiene = _load("fuzzycad_save_hygiene", "core/lifecycle/fuzzycad_save_hygiene.py")
-_save_hygiene.install(_legacy)
+# and Repair and pile up on every save. This strips every FuzzyCAD graphics group
+# and restores body opacity at documentSaving, then redraws at documentSaved.
+# Loaded last so _redraw_marks / _restore_all_bodies exist when the handlers fire.
+# (Previously present in the tree but never registered, so the guard was inert.)
+_save_clean = _load("fuzzycad_save_clean", "core/persistence/fuzzycad_save_clean.py")
+_save_clean.install(_legacy)
 
 run = _legacy.run
 stop = _legacy.stop
