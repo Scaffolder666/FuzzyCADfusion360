@@ -318,5 +318,14 @@ _uncertainty_toggle.install(_legacy)
 _flow_trace = _load("fuzzycad_flow_trace", "core/diagnostics/fuzzycad_flow_trace.py")
 _flow_trace.install(_legacy)
 
+# Keep FuzzyCAD's display graphics + display-only opacity out of the saved file.
+# Fusion bakes on-screen CustomGraphics into the document's display cache, where
+# they become unenumerable "leftover frames"/stacked badges that survive reopen
+# and Repair and pile up on every save. This strips them at documentSaving and
+# redraws at documentSaved. Loaded last so _redraw_marks, _restore_all_bodies and
+# _reclaim_orphan_visual_opacity all exist when the save handlers fire.
+_save_hygiene = _load("fuzzycad_save_hygiene", "core/lifecycle/fuzzycad_save_hygiene.py")
+_save_hygiene.install(_legacy)
+
 run = _legacy.run
 stop = _legacy.stop
