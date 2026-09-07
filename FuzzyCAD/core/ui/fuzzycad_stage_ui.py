@@ -174,7 +174,7 @@ def install(m):
             b = sel_count(inputs, "sel") > 0 if inputs else False
             send_stage(tool, [
                 {"label": "Select face", "done": b},
-                {"label": "Set diameter & depth", "done": False, "hint": "both Need Input"},
+                {"label": "Set diameter & depth", "done": False, "hint": "both Fuzzy"},
             ], 0 if not b else 1, "Hole")
             return
 

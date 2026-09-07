@@ -109,7 +109,8 @@ def install(m):
             "id": mark.get("id"),
             "tool": tool,
             "num": mark.get("num", 1),
-            "title": "{} {}".format(tool.capitalize(), mark.get("num", 1)),
+            "title": (m._fuzzy_title(mark) if getattr(m, "_fuzzy_title", None)
+                      else "{} {}".format(tool.capitalize(), mark.get("num", 1))),
             "mtype": mark.get("mtype", "need_input"),
             "summary": summary,
             "resolution": reason,       # "accepted" | "rejected"

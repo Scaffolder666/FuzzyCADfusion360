@@ -70,7 +70,7 @@
   };
 
   var MTYPES = [
-    { key: "need_input", label: "Need Input", glyph: "!" },
+    { key: "need_input", label: "Fuzzy", glyph: "!" },
     { key: "constraint", label: "Constraint", glyph: "‖" },
     { key: "conflict", label: "Conflict", glyph: "⑂" }
   ];

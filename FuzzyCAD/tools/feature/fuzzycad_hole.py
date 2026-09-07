@@ -29,7 +29,7 @@ def install(m):
     m.CMD_LABEL["hole"] = "Hole"
     m.CMD_FILTER["hole"] = "PlanarFaces"
     m.CMD_HINT["hole"] = (
-        "Select a planar face; position, diameter, and depth remain Need Input."
+        "Select a planar face; position, diameter, and depth remain Fuzzy."
     )
     m.CMD_CATS["hole"] = ("hole",)
 

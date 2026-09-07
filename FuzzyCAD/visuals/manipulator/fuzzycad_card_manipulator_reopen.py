@@ -907,7 +907,7 @@ def install(m):
                 existing.deleteMe()
             cd = m._ui.commandDefinitions.addButtonDefinition(
                 EDIT_CMD_ID, "Adjust FuzzyCAD Proposal",
-                "Reopen the native manipulator for an unresolved Need Input proposal", "")
+                "Reopen the native manipulator for an unresolved Fuzzy proposal", "")
             h = EditCommandCreated()
             cd.commandCreated.add(h)
             m._handlers.append(h)

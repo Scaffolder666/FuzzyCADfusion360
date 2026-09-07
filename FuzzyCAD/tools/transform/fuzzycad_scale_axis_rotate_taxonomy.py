@@ -57,7 +57,7 @@ def install(m):
     # Collaboration/tool taxonomy.
     # ------------------------------------------------------------------
     m.MTYPES = ("need_input", "constraint", "conflict")
-    m.MTYPE_LABEL["need_input"] = "Need Input"
+    m.MTYPE_LABEL["need_input"] = "Fuzzy"
     m.MTYPE_LABEL["constraint"] = "Constraint"
     m.MTYPE_LABEL["conflict"] = "Conflict"
     m.MTYPE_COLOR["conflict"] = (128, 90, 180)

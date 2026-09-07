@@ -23,7 +23,7 @@
     axis_rotate: "⟳", extrude: "⤒", fillet: "◜", hole: "⊙",
     note: "◈", compare: "⑂"
   };
-  var TLABEL = { need_input: "NEED INPUT", constraint: "CONSTRAINT", conflict: "CONFLICT" };
+  var TLABEL = { need_input: "FUZZY", constraint: "CONSTRAINT", conflict: "CONFLICT" };
 
   var els = {};
   function el(id) { return document.getElementById(id); }
@@ -45,7 +45,7 @@
 
     els.stats.innerHTML = "";
     els.stats.appendChild(stat(c.open || 0, "Open questions"));
-    els.stats.appendChild(stat(c.need_input || 0, "Need Input"));
+    els.stats.appendChild(stat(c.need_input || 0, "Fuzzy"));
     els.stats.appendChild(stat(c.conflict || 0, "Conflict"));
     els.stats.appendChild(stat(c.ghosted || 0, "Ghosted bodies"));
     els.stats.appendChild(stat(strayTotal, "Stray graphics", strayTotal > 0));

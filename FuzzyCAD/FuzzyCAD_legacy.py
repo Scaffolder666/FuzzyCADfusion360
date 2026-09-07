@@ -83,12 +83,41 @@ def _icon_path(mtype):
 
 # The three uncertainty mark types (paper's categories).
 MTYPES = ("need_input", "constraint", "alternative")
-MTYPE_LABEL = {"need_input": "Need Input", "constraint": "Constraint",
+MTYPE_LABEL = {"need_input": "Fuzzy", "constraint": "Constraint",
                "alternative": "Alternative"}
 MTYPE_COLOR = {"need_input": (200, 44, 32), "constraint": (183, 121, 31),
                "alternative": (128, 90, 180)}
 MTYPE_GLYPH = {"need_input": u"!", "constraint": u"‖", "alternative": u"⑂"}
 GHOST_OPACITY = 0.16
+
+# Card naming: a geometry Fuzzy mark reads as "Fuzzy <property>", grouped by what
+# the proposal leaves uncertain. Similar tools deliberately share one bucket so the
+# panel reads as a few kinds of fuzziness; the card's own icon + value fields still
+# show which exact tool it is. Cards are numbered per bucket (see _make_mark), so
+# e.g. every shape tool shares one running "Fuzzy Shape N" sequence.
+FUZZY_PROPERTY = {
+    "move": "Fuzzy Position",
+    "rotate": "Fuzzy Orientation",
+    "axis_rotate": "Fuzzy Orientation",
+    "scale": "Fuzzy Size",
+    "scale_axis": "Fuzzy Size",
+    "extrude": "Fuzzy Shape",
+    "fillet": "Fuzzy Shape",
+    "hole": "Fuzzy Shape",
+    "rough": "Fuzzy Shape",
+}
+
+
+def _fuzzy_bucket(tool):
+    """Counter/display key for a tool. Geometry tools collapse into their Fuzzy
+    property bucket; anything else (note, compare) keeps its own tool key."""
+    return FUZZY_PROPERTY.get(tool, tool)
+
+
+def _fuzzy_title(mark):
+    tool = mark.get("tool", "")
+    name = FUZZY_PROPERTY.get(tool) or str(tool).capitalize()
+    return "{} {}".format(name, mark.get("num", 1))
 SKETCH_AMP_FRAC = 0.008
 EDGE_SAMPLES = 10
 
@@ -566,7 +595,7 @@ def _draw_label(group, mark, rgb):
         return
     a = mark["anchor"]; off = mark.get("size", 3.0) * 0.9
     tip = adsk.core.Point3D.create(a[0], a[1] + off, a[2])
-    tag = mark["label"] or "{} {}".format(mark["tool"].capitalize(), mark.get("num", 1))
+    tag = mark["label"] or _fuzzy_title(mark)
     text = group.addText(tag, "Arial", 1.0, _label_transform(tip))
     text.color = _solid(rgb)
     _apply_billboard(text, tip)
@@ -747,8 +776,9 @@ def _is_default(cat, op):
 
 
 def _make_mark(tool, op):
-    num = _tool_count.get(tool, 0) + 1
-    _tool_count[tool] = num
+    key = _fuzzy_bucket(tool)
+    num = _tool_count.get(key, 0) + 1
+    _tool_count[key] = num
     mark = {"tool": tool, "label": "", "anchor": _pending["anchor"],
             "size": _pending["size"], "num": num,
             "status": "open", "mtype": "need_input", "comments": []}
@@ -1493,7 +1523,7 @@ def _summary(mark):
 
 def _public(mark):
     return {"id": mark["id"], "tool": mark["tool"], "num": mark.get("num", 1),
-            "title": "{} {}".format(mark["tool"].capitalize(), mark.get("num", 1)),
+            "title": _fuzzy_title(mark),
             "label": mark["label"], "status": mark.get("status", "open"),
             "mtype": mark.get("mtype", "need_input"),
             "summary": _summary(mark), "fields": _fields(mark),
