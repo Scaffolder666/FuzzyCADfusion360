@@ -128,8 +128,17 @@ def install(m):
                     mark.get("tool") in SUPPORTED)
 
     def redraw_other_marks(active_id):
-        """Keep the active mark out of the persistent group while its live preview
-        is being manipulated, otherwise the old and current proposals overlap."""
+        """Edit focus: while one mark is being edited, hide every OTHER mark's
+        uncertainty so the viewport stays clean until Confirm.
+
+        The active mark is kept out of the persistent group anyway (its live
+        preview owns the viewport). Beyond that, this now suppresses all OTHER
+        marks' badges too -- the focus-filtered _refresh_ghost / comic sync below
+        already drop their comic fill and restore their body opacity, so leaving
+        their badges drawn was the one piece that made edit-focus look broken
+        (floating "!" icons on bodies you are not editing). Rough Shape is the
+        deliberate exception: it stays visible as a reference envelope to build
+        against."""
         try:
             m._clear(m.GROUP_MARKS)
             group = m._group(m.GROUP_MARKS)
@@ -137,11 +146,22 @@ def install(m):
                 for mark in list(m._marks):
                     if mark.get("id") == active_id or mark.get("id") not in m._geom:
                         continue
+                    # Focus: draw only Rough Shape references; hide the rest.
+                    if mark.get("tool") != "rough":
+                        continue
                     try:
                         m._draw_one(group, mark)
                     except Exception:
                         pass
+            # Restore other bodies' opacity (focus-filtered) and rebuild comic so
+            # only the edited body + rough keep their comic fill/boundary.
             m._refresh_ghost()
+            try:
+                sync = getattr(m, "_sync_comic_uncertainty", None)
+                if sync is not None:
+                    sync()
+            except Exception:
+                pass
         except Exception:
             pass
 
