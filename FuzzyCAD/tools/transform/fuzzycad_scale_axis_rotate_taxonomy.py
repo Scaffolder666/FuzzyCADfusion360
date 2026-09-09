@@ -217,6 +217,13 @@ def install(m):
         origin = g.get("axis_origin") or mark.get("axis_origin") or [0.0, 0.0, 0.0]
         direction = g.get("axis_dir") or mark.get("axis_dir") or [0.0, 0.0, 1.0]
         draw_axis_guide(group, origin, direction, mark.get("size", 3.0), mark["id"] * 611)
+        arrow = getattr(m, "_draw_rotation_arrow", None)
+        if arrow is not None:
+            try:
+                arrow(group, origin, direction, mark.get("size", 3.0) * 0.62,
+                      mark.get("angle", 0.0), mark["id"] * 613)
+            except Exception:
+                pass
         callout(group, mark, "Axis Rotate = {:.1f}°".format(mark.get("angle", 0.0)), origin)
 
     m._DRAW["axis_rotate"] = draw_axis_rotate

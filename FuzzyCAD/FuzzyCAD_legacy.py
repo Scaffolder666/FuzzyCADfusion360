@@ -425,13 +425,71 @@ def _draw_move(group, mark, rgb, amp):
              rgb, amp, mark["id"] * 7, weight=2)
 
 
+def _draw_rotation_arrow(group, origin, axis_dir, r, angle_deg, seed):
+    """A curved orange arrow -- an arc spanning the rotation angle plus an
+    arrowhead -- so a rotation proposal reads unmistakably as a rotation (and in
+    which direction / by how much). Orange is the 'where/how the change happens'
+    cue. axis_dir is a 3-vector; the arc lies in the plane perpendicular to it."""
+    try:
+        a = math.radians(float(angle_deg or 0.0))
+    except Exception:
+        return
+    if abs(a) < math.radians(4.0):
+        return  # too small to read as an arrow
+    cap = math.radians(330.0)
+    a = max(-cap, min(cap, a))
+
+    ax = list(axis_dir)
+    n = math.sqrt(ax[0] ** 2 + ax[1] ** 2 + ax[2] ** 2) or 1.0
+    ax = (ax[0] / n, ax[1] / n, ax[2] / n)
+    helper = (0.0, 1.0, 0.0) if abs(ax[0]) > 0.85 else (1.0, 0.0, 0.0)
+    ux = ax[1] * helper[2] - ax[2] * helper[1]
+    uy = ax[2] * helper[0] - ax[0] * helper[2]
+    uz = ax[0] * helper[1] - ax[1] * helper[0]
+    ul = math.sqrt(ux * ux + uy * uy + uz * uz) or 1.0
+    u = (ux / ul, uy / ul, uz / ul)
+    w = (ax[1] * u[2] - ax[2] * u[1], ax[2] * u[0] - ax[0] * u[2], ax[0] * u[1] - ax[1] * u[0])
+
+    def P(t):
+        c, s = math.cos(t), math.sin(t)
+        return (origin[0] + r * (c * u[0] + s * w[0]),
+                origin[1] + r * (c * u[1] + s * w[1]),
+                origin[2] + r * (c * u[2] + s * w[2]))
+
+    steps = max(8, int(abs(a) / (2 * math.pi) * 48) + 4)
+    pts = [P(a * i / steps) for i in range(steps + 1)]
+    orange = (225, 126, 38)
+    _sketchy(group, pts, orange, 0.0, seed * 91, weight=2, strokes=1)
+
+    # Arrowhead at the swept end: two barbs splayed back along the tangent.
+    end = pts[-1]
+    sgn = 1.0 if a >= 0 else -1.0
+    tx = (-math.sin(a) * u[0] + math.cos(a) * w[0]) * sgn
+    ty = (-math.sin(a) * u[1] + math.cos(a) * w[1]) * sgn
+    tz = (-math.sin(a) * u[2] + math.cos(a) * w[2]) * sgn
+    tl = math.sqrt(tx * tx + ty * ty + tz * tz) or 1.0
+    tx, ty, tz = tx / tl, ty / tl, tz / tl
+    rx = math.cos(a) * u[0] + math.sin(a) * w[0]
+    ry = math.cos(a) * u[1] + math.sin(a) * w[1]
+    rz = math.cos(a) * u[2] + math.sin(a) * w[2]
+    h = max(r * 0.24, 0.001)
+    b1 = (end[0] - h * (tx * 0.9 + rx * 0.6), end[1] - h * (ty * 0.9 + ry * 0.6),
+          end[2] - h * (tz * 0.9 + rz * 0.6))
+    b2 = (end[0] - h * (tx * 0.9 - rx * 0.6), end[1] - h * (ty * 0.9 - ry * 0.6),
+          end[2] - h * (tz * 0.9 - rz * 0.6))
+    _sketchy(group, [b1, end, b2], orange, 0.0, seed * 92, weight=2, strokes=1)
+
+
 def _draw_rotate(group, mark, rgb, amp):
     m = _op_matrix(mark)
     for i, loop in enumerate(_geom[mark["id"]]["edges"]):
         _sketchy(group, _apply_matrix(loop, m), rgb, amp * 0.8,
                  mark["id"] * 100 + i, weight=1, strokes=2)
-    _draw_ring(group, mark["anchor"], _dominant_axis(mark["rot"]),
-               mark.get("size", 3.0) * 0.62, COLOR_WARN, mark["id"])
+    axis = _dominant_axis(mark["rot"])
+    r = mark.get("size", 3.0) * 0.62
+    _draw_ring(group, mark["anchor"], axis, r, COLOR_WARN, mark["id"])
+    _draw_rotation_arrow(group, mark["anchor"], _axis_unit(axis), r,
+                         mark["rot"]["XYZ".index(axis)], mark["id"])
 
 
 def _draw_scale(group, mark, rgb, amp):
