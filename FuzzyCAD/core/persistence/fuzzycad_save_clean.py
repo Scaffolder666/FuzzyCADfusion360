@@ -2,7 +2,8 @@
 
 Fusion 2026 can serialize CustomGraphics into the document's OGS/DefaultScene.
 After reopen those graphics may still render even though the API no longer exposes
-corresponding CustomGraphicsGroups, leaving undeletable white image/text quads.
+corresponding CustomGraphicsGroups, leaving undeletable white image/text quads or
+stacked badges.
 
 FuzzyCAD collaboration state already lives in Design.attributes, so viewport
 CustomGraphics are disposable presentation. At the very start of a save this
@@ -12,14 +13,38 @@ API-visible FuzzyCAD CustomGraphics group. Once documentSaved fires, the user's
 graphics-cache preference is restored and the current marks are redrawn from
 authoritative runtime/persisted state.
 
+Legacy documents need one migration save. A document that already contains saved
+FuzzyCAD state but has never been saved by this guard may contain orphaned OGS
+objects that cannot be deleted from the current viewport. During that first
+legacy session we hydrate cards and geometry references but suppress fresh
+FuzzyCAD redraws, preventing a second badge from being stacked on the baked one.
+The clean-save marker is written only while Fusion's graphics cache is disabled.
+After that save, the document must be closed and reopened once; the old OGS is no
+longer serialized, and fresh visuals are rebuilt from Design.attributes.
+
 Native Fusion Canvases used for explicit user-attached reference images are not
 CustomGraphics and are intentionally left alone so those references still travel
 with the document.
 """
 
+ATTR_GROUP = "FuzzyCAD"
+STATE_ATTR = "uncertainty_state_v1"
+OGS_CLEAN_ATTR = "ogs_cache_clean_v1"
+OGS_CLEAN_VALUE = "1"
+
 
 def install(m):
+    # fuzzycad_uncertainty_badges historically installs this module defensively,
+    # while FuzzyCAD.py also installs it explicitly at the end of the patch stack.
+    # The second call is useful: finalize the redraw guard only after every later
+    # renderer has wrapped _redraw_marks / _reload_persisted_state.
     if getattr(m, "_fuzzycad_save_clean_installed", False):
+        finalize = getattr(m, "_fuzzycad_save_clean_finalize", None)
+        if finalize is not None:
+            try:
+                finalize()
+            except Exception:
+                pass
         return
     m._fuzzycad_save_clean_installed = True
 
@@ -34,6 +59,11 @@ def install(m):
         "saving_document": None,
         "graphics_cache_previous": None,
         "graphics_cache_overridden": False,
+        "clean_marker_written": False,
+        "legacy_pending": False,
+        "legacy_notice_shown": False,
+        "post_save_notice_shown": False,
+        "finalized": False,
     }
 
     def log(msg):
@@ -45,6 +75,12 @@ def install(m):
     def app():
         try:
             return m._app or adsk.core.Application.get()
+        except Exception:
+            return None
+
+    def design():
+        try:
+            return m._design()
         except Exception:
             return None
 
@@ -72,17 +108,46 @@ def install(m):
         except Exception:
             return True
 
-    def all_components():
-        design = None
+    def attribute(name):
+        des = design()
+        if des is None:
+            return None
         try:
-            design = m._design()
+            return des.attributes.itemByName(ATTR_GROUP, name)
         except Exception:
-            design = None
-        if design is None:
+            return None
+
+    def legacy_needs_migration():
+        """Conservatively treat old persisted FuzzyCAD documents as OGS legacy."""
+        if attribute(STATE_ATTR) is None:
+            return False
+        clean = attribute(OGS_CLEAN_ATTR)
+        if clean is None:
+            return True
+        try:
+            return str(clean.value or "") != OGS_CLEAN_VALUE
+        except Exception:
+            return True
+
+    def set_legacy_pending(reason):
+        pending = bool(legacy_needs_migration())
+        state["legacy_pending"] = pending
+        # A reopened document gets a fresh notice lifecycle.
+        state["post_save_notice_shown"] = False
+        try:
+            m._fuzzycad_legacy_ogs_pending = pending
+        except Exception:
+            pass
+        log("legacy OGS migration pending={} reason={}".format(pending, reason))
+        return pending
+
+    def all_components():
+        des = design()
+        if des is None:
             return []
         out = []
         try:
-            comps = design.allComponents
+            comps = des.allComponents
             for i in range(comps.count):
                 try:
                     out.append(comps.item(i))
@@ -90,7 +155,7 @@ def install(m):
                     pass
         except Exception:
             try:
-                out.append(design.rootComponent)
+                out.append(des.rootComponent)
             except Exception:
                 pass
         return out
@@ -127,22 +192,24 @@ def install(m):
     def disable_graphics_cache_for_save():
         """Temporarily prevent OGS/DefaultScene from being serialized."""
         if state["graphics_cache_overridden"]:
-            return
+            return True
         prefs = compatibility_preferences()
         if prefs is None:
             log("graphics-cache preference unavailable; relying on CustomGraphics purge")
-            return
+            return False
         try:
             previous = bool(prefs.isCacheGraphicsOnDocumentSave)
             state["graphics_cache_previous"] = previous
             prefs.isCacheGraphicsOnDocumentSave = False
             state["graphics_cache_overridden"] = True
             log("disabled document graphics cache for this save (previous={})".format(previous))
+            return True
         except Exception:
             state["graphics_cache_previous"] = None
             state["graphics_cache_overridden"] = False
             log("could not disable document graphics cache\n{}".format(
                 m.traceback.format_exc()))
+            return False
 
     def restore_graphics_cache_setting():
         """Restore the Fusion preference changed for the current save."""
@@ -161,6 +228,78 @@ def install(m):
             state["graphics_cache_previous"] = None
             state["graphics_cache_overridden"] = False
 
+    def mark_document_ogs_clean():
+        """Persist the migration marker only when cache suppression is active."""
+        state["clean_marker_written"] = False
+        if not state["graphics_cache_overridden"]:
+            return False
+        des = design()
+        if des is None:
+            return False
+        try:
+            des.attributes.add(ATTR_GROUP, OGS_CLEAN_ATTR, OGS_CLEAN_VALUE)
+            state["clean_marker_written"] = True
+            log("wrote {} while graphics cache was disabled".format(OGS_CLEAN_ATTR))
+            return True
+        except Exception:
+            log("could not write OGS clean marker\n{}".format(m.traceback.format_exc()))
+            return False
+
+    def show_legacy_notice():
+        if not state["legacy_pending"] or state["legacy_notice_shown"]:
+            return
+        state["legacy_notice_shown"] = True
+        try:
+            ui = (app()).userInterface
+            ui.messageBox(
+                "This design was saved by an older FuzzyCAD build and may contain a baked viewport cache.\n\n"
+                "FuzzyCAD loaded the cards but is not drawing a second set of viewport markers. "
+                "Save the design once, then close and reopen it. The reopened file will rebuild "
+                "FuzzyCAD visuals from the saved decision state without the legacy OGS cache.",
+                "FuzzyCAD legacy viewport cleanup")
+        except Exception:
+            pass
+
+    def show_post_save_notice():
+        if state["post_save_notice_shown"]:
+            return
+        state["post_save_notice_shown"] = True
+        try:
+            ui = (app()).userInterface
+            ui.messageBox(
+                "The clean version has been saved without Fusion's viewport graphics cache.\n\n"
+                "Close this design and reopen it once. The old baked marker is still loaded in the "
+                "current Fusion viewport and cannot be removed through the CustomGraphics API, so "
+                "FuzzyCAD will keep fresh viewport redraws suppressed until reopen.",
+                "FuzzyCAD cleanup saved")
+        except Exception:
+            pass
+
+    def finalize():
+        """Install migration guards after the full renderer stack is assembled."""
+        if state["finalized"]:
+            return
+        state["finalized"] = True
+
+        old_redraw = getattr(m, "_redraw_marks", None)
+        if old_redraw is not None:
+            def redraw_marks(*args, **kwargs):
+                if state["legacy_pending"]:
+                    log("REDRAW SUPPRESSED: legacy OGS remains loaded until reopen")
+                    return None
+                return old_redraw(*args, **kwargs)
+            m._redraw_marks = redraw_marks
+
+        old_reload = getattr(m, "_reload_persisted_state", None)
+        if old_reload is not None:
+            def reload_persisted_state(*args, **kwargs):
+                set_legacy_pending("document-reload")
+                return old_reload(*args, **kwargs)
+            m._reload_persisted_state = reload_persisted_state
+
+        log("FINALIZED: legacy hydration/redraw migration guard installed")
+
+    m._fuzzycad_save_clean_finalize = finalize
     m._purge_fuzzycad_custom_graphics = purge_custom_graphics
 
     class DocumentSaving(adsk.core.DocumentEventHandler):
@@ -174,7 +313,7 @@ def install(m):
             # documentSaving fires at the very start of serialization. Disable
             # Fusion's document graphics cache first so orphaned OGS objects that
             # are no longer API-enumerable cannot travel with the saved design.
-            disable_graphics_cache_for_save()
+            cache_disabled = disable_graphics_cache_for_save()
 
             try:
                 persist = getattr(m, "_persist_state", None)
@@ -186,9 +325,15 @@ def install(m):
             state["saving"] = True
             state["saving_document"] = event_document(args) or active_document()
 
+            # Record that this file has passed through a cache-disabled save. On a
+            # legacy file the runtime flag deliberately stays True until reopen,
+            # because the old orphaned OGS object is still resident in this viewport.
+            if cache_disabled:
+                mark_document_ogs_clean()
+
             # Body opacity is presentation state too and can otherwise be written
             # into the document. Restore it before serialization; documentSaved
-            # redraw re-applies FuzzyCAD's visual policy for the open marks.
+            # redraw re-applies FuzzyCAD's visual policy for clean/open marks.
             try:
                 restore = getattr(m, "_restore_all_bodies", None)
                 if restore is not None:
@@ -207,8 +352,8 @@ def install(m):
                     a.activeViewport.refresh()
             except Exception:
                 pass
-            log("DOCUMENT SAVING: graphics cache OFF; purged {} FuzzyCAD groups".format(
-                removed))
+            log("DOCUMENT SAVING: graphics cache OFF={} purged {} FuzzyCAD groups".format(
+                cache_disabled, removed))
 
     class DocumentSaved(adsk.core.DocumentEventHandler):
         def __init__(self):
@@ -232,6 +377,17 @@ def install(m):
             # The file is already serialized. Return Fusion to the user's original
             # graphics-cache setting before rebuilding transient viewport graphics.
             restore_graphics_cache_setting()
+
+            if state["legacy_pending"]:
+                # Do not draw a second marker into the current viewport. The clean
+                # marker has been serialized, but the baked legacy OGS object stays
+                # alive in memory until this document is actually reopened.
+                if state["clean_marker_written"]:
+                    log("LEGACY CLEAN SAVE complete; waiting for document reopen")
+                    show_post_save_notice()
+                else:
+                    log("LEGACY CLEAN SAVE incomplete; clean marker was not written")
+                return
 
             try:
                 # Resolve dynamically so every renderer installed after this module
@@ -267,8 +423,13 @@ def install(m):
             log("documentSaved binding failed\n{}".format(m.traceback.format_exc()))
 
     def run(context):
+        # This must happen before persistence.run hydrates the saved marks. The
+        # late-finalized _redraw_marks wrapper will therefore suppress the second
+        # badge while still allowing the cards/references to load normally.
+        set_legacy_pending("startup")
         result = old_run(context)
         bind_events()
+        show_legacy_notice()
         log("READY: saves omit OGS cache, strip FuzzyCAD graphics, then redraw")
         return result
 
