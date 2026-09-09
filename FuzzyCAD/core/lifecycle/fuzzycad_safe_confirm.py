@@ -391,6 +391,39 @@ def install(m):
                     request_finish(action, tid)
                     return
 
+            # A live, not-yet-confirmed creation/custom command still owns its
+            # proposal's mark. Accepting/rejecting it mid-command is the confirm
+            # crash the user hit: the mark gets resolved while the native command is
+            # still alive, so the stale left-panel Confirm then executes against a
+            # mark that no longer exists. Settle the command first -- the same safe
+            # main-thread terminate the Confirm button uses -- which turns the live
+            # proposal into an ordinary card; the user then accepts/rejects that
+            # settled card. Only intercept when the target IS the live mark, so
+            # terminal actions on other, already-settled cards are unaffected.
+            if action in ("accept", "reject"):
+                create_cmd = getattr(m, "_active_cmd", None)
+                if create_cmd and create_cmd != "edit_existing":
+                    live = getattr(m, "_live", None) or {}
+                    live_ids = set()
+                    for v in live.values():
+                        try:
+                            live_ids.add(int(v))
+                        except Exception:
+                            pass
+                    try:
+                        tid = int(data.get("id"))
+                    except Exception:
+                        tid = None
+                    if tid is None or tid in live_ids:
+                        trace("CARD_TERMINAL_DURING_CREATE",
+                              "action={} id={} cmd={} -> settle command first".format(
+                                  action, tid, create_cmd))
+                        try:
+                            m._app.fireCustomEvent(m.LAUNCH_EVENT_ID, "")
+                        except Exception:
+                            pass
+                        return
+
             # Normal (already-Proposed) Fillet terminal actions pass through the
             # legacy resolver. Remember the tool before delegation, then reconcile
             # its separate exact-candidate group after the mark has been removed.
