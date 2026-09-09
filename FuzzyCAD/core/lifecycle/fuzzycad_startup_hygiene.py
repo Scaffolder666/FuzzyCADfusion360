@@ -1,10 +1,11 @@
 """Reset stale FuzzyCAD runtime visuals before persisted collaboration state loads.
 
 CustomGraphics and body opacity can survive in a saved Fusion document even
-though they are only a visualization cache.  The source of truth is the saved
-FuzzyCAD state, so every add-in startup removes old FuzzyCAD graphics, restores
-body opacities left by older ghost previews, clears transient Python state, and
-then lets the persistence layer rebuild only the marks that actually exist.
+though they are only a visualization cache. The source of truth is the saved
+FuzzyCAD state, so every add-in startup removes old FuzzyCAD graphics from every
+component, restores body opacities left by older ghost previews, clears transient
+Python state, and then lets the persistence layer rebuild only the marks that
+actually exist.
 """
 
 
@@ -35,24 +36,43 @@ def install(m):
         except Exception:
             return None
 
+    def all_components(design):
+        if design is None:
+            return []
+        out = []
+        try:
+            comps = design.allComponents
+            for i in range(comps.count):
+                try:
+                    out.append(comps.item(i))
+                except Exception:
+                    pass
+        except Exception:
+            try:
+                out.append(design.rootComponent)
+            except Exception:
+                pass
+        return out
+
     def clear_graphics(design):
         if design is None:
             return 0
         removed = 0
-        try:
-            groups = design.rootComponent.customGraphicsGroups
+        for comp in all_components(design):
+            try:
+                groups = comp.customGraphicsGroups
+            except Exception:
+                continue
             for i in range(groups.count - 1, -1, -1):
                 try:
                     group = groups.item(i)
                     gid = str(getattr(group, "id", "") or "")
                     # All of our runtime graphic caches use this namespace.
-                    if gid.startswith("FuzzyCAD_"):
+                    if gid.startswith("FuzzyCAD"):
                         group.deleteMe()
                         removed += 1
                 except Exception:
                     pass
-        except Exception:
-            pass
         return removed
 
     def restore_stale_ghost_opacity(design):
@@ -64,28 +84,24 @@ def install(m):
         if design is None:
             return 0
         restored = 0
-        try:
-            comps = design.allComponents
-            for ci in range(comps.count):
+        for comp in all_components(design):
+            try:
+                bodies = comp.bRepBodies
+            except Exception:
+                continue
+            for bi in range(bodies.count):
                 try:
-                    bodies = comps.item(ci).bRepBodies
+                    body = bodies.item(bi)
+                    opacity = float(body.opacity)
+                    if any(abs(opacity - value) <= 1.0e-4 for value in GHOST_OPACITIES):
+                        body.opacity = 1.0
+                        restored += 1
                 except Exception:
-                    continue
-                for bi in range(bodies.count):
-                    try:
-                        body = bodies.item(bi)
-                        opacity = float(body.opacity)
-                        if any(abs(opacity - value) <= 1.0e-4 for value in GHOST_OPACITIES):
-                            body.opacity = 1.0
-                            restored += 1
-                    except Exception:
-                        pass
-        except Exception:
-            pass
+                    pass
         return restored
 
     def clear_runtime_state():
-        # A Stop -> Run cycle can reuse the Python module.  Never let old marks
+        # A Stop -> Run cycle can reuse the Python module. Never let old marks
         # survive independently of the document's persisted state.
         try:
             m._restore_all_bodies()
