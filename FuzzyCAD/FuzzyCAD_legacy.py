@@ -56,7 +56,13 @@ CMD_HINT = {"transform": "Select a body, then grab a move / rotate / scale handl
 CMD_CATS = {"transform": ("move", "rotate", "scale"),
             "extrude": ("extrude",), "fillet": ("fillet",)}
 
-COLOR_FUZZY = (77, 77, 77)       # ~70% black pencil gray — the sketchy ghost
+# ~80% black pencil gray -- the sketchy ghost for proposal previews. Kept at
+# (51,51,51) on purpose: it routes _sketchy through the wobble-carrying
+# "proposal_internal" role (via the gray heuristic) so live-creation previews
+# (Scale All, Move/Rotate, Extrude, Fillet) read hand-drawn like the comic, and it
+# is dark enough not to look faint. NOTE: do not use (77,77,77) here -- that exact
+# value maps to the zero-wobble "annotation" role and made previews straight + pale.
+COLOR_FUZZY = (51, 51, 51)
 COLOR_ANSWERED = (70, 154, 104)
 COLOR_WARN = (200, 44, 32)
 AXIS_COLOR = {"X": (210, 60, 50), "Y": (70, 160, 90), "Z": (70, 110, 190)}
