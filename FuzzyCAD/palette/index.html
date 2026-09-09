@@ -55,15 +55,18 @@
   </header>
 
   <section class="list">
-    <div class="list__head" style="display:flex;align-items:center;justify-content:space-between;gap:8px">
+    <div class="list__head" style="display:flex;align-items:flex-start;justify-content:space-between;gap:8px">
       <span id="count" class="chip">0 open questions</span>
-      <span style="display:flex;gap:6px;flex:none">
+      <span style="display:flex;gap:6px;flex:none;flex-wrap:wrap;justify-content:flex-end;max-width:210px">
         <button id="toggleUncertainty" type="button"
           title="Hide or show all uncertainty overlays in the viewport (display only; nothing is deleted)"
           style="border:1px solid #d3d8df;color:#5a6672;background:#fff;font:600 11px/1 -apple-system,'Segoe UI',Roboto,sans-serif;padding:5px 9px;border-radius:6px;cursor:pointer">👁 Hide</button>
         <button id="openInspector" type="button"
           title="Open the Inspector: status overview + one-click viewport repair"
           style="border:1px solid #d3d8df;color:#5a6672;background:#fff;font:600 11px/1 -apple-system,'Segoe UI',Roboto,sans-serif;padding:5px 9px;border-radius:6px;cursor:pointer">⚙ Inspector</button>
+        <button id="cleanSave" type="button"
+          title="Save without Fusion OGS viewport cache, then close and reopen this design"
+          style="border:1px solid #b9d5c4;color:#1c7a4a;background:#eef7f1;font:700 11px/1 -apple-system,'Segoe UI',Roboto,sans-serif;padding:5px 9px;border-radius:6px;cursor:pointer">Clean Save</button>
         <button id="dumpState" type="button"
           title="Show where this document's FuzzyCAD state is stored and export the raw JSON"
           style="border:1px solid #d3d8df;color:#5a6672;background:#fff;font:600 11px/1 -apple-system,'Segoe UI',Roboto,sans-serif;padding:5px 9px;border-radius:6px;cursor:pointer">JSON</button>
@@ -111,5 +114,6 @@
   <script src="panel_inspector.js"></script>
   <script src="study_log.js"></script>
   <script src="panel_uncertainty_toggle.js?v=unctoggle"></script>
+  <script src="panel_clean_save.js?v=1"></script>
 </body>
 </html>
