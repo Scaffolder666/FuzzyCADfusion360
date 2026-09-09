@@ -200,11 +200,23 @@ def install(m):
             rgb, amp = m._style(mark)
         except Exception:
             rgb, amp = (150, 150, 150), 0.0
+        # Hand-drawn edit preview: route through the wobble-carrying
+        # "proposal_internal" role (keeping the lighter ghost colour) so the
+        # dragged outline reads sketchy like the comic boundary, instead of the
+        # zero-wobble "annotation" role that (77,77,77) otherwise resolves to.
+        # The wobble is baked into this one-time base; each drag frame still only
+        # re-transforms the group, so there is no per-frame cost.
+        sz = float(mark.get("size", 3.0) or 3.0)
+        stroke = getattr(m, "_visual_stroke", None)
         g = m._geom.get(mark.get("id"), {}) or {}
         for i, loop in enumerate(g.get("edges", []) or []):
+            seed = mark.get("id", 1) * 120 + i
             try:
-                m._sketchy(group, loop, rgb, amp * 0.8,
-                           mark.get("id", 1) * 120 + i, weight=1, strokes=2)
+                if stroke is not None:
+                    stroke(group, loop, "proposal_internal", seed,
+                           size=sz, rgb=rgb, weight=1, strokes=2)
+                else:
+                    m._sketchy(group, loop, rgb, amp * 0.8, seed, weight=1, strokes=2)
             except Exception:
                 pass
         return group
