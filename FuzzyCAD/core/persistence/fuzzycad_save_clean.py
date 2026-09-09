@@ -5,10 +5,12 @@ After reopen those graphics may still render even though the API no longer expos
 corresponding CustomGraphicsGroups, leaving undeletable white image/text quads.
 
 FuzzyCAD collaboration state already lives in Design.attributes, so viewport
-CustomGraphics are disposable presentation. Immediately before Fusion saves the
-active document this module persists the collaboration state, restores temporary
-body opacity, and removes every FuzzyCAD CustomGraphics group. Once documentSaved
-fires, the current marks are redrawn from authoritative runtime/persisted state.
+CustomGraphics are disposable presentation. At the very start of a save this
+module temporarily disables Fusion's document graphics cache, persists the
+collaboration state, restores temporary body opacity, and removes every
+API-visible FuzzyCAD CustomGraphics group. Once documentSaved fires, the user's
+graphics-cache preference is restored and the current marks are redrawn from
+authoritative runtime/persisted state.
 
 Native Fusion Canvases used for explicit user-attached reference images are not
 CustomGraphics and are intentionally left alone so those references still travel
@@ -30,6 +32,8 @@ def install(m):
         "saving_handler": None,
         "saved_handler": None,
         "saving_document": None,
+        "graphics_cache_previous": None,
+        "graphics_cache_overridden": False,
     }
 
     def log(msg):
@@ -38,9 +42,16 @@ def install(m):
         except Exception:
             pass
 
+    def app():
+        try:
+            return m._app or adsk.core.Application.get()
+        except Exception:
+            return None
+
     def active_document():
         try:
-            return (m._app or adsk.core.Application.get()).activeDocument
+            a = app()
+            return a.activeDocument if a is not None else None
         except Exception:
             return None
 
@@ -103,6 +114,53 @@ def install(m):
                     pass
         return removed
 
+    def compatibility_preferences():
+        try:
+            a = app()
+            if a is None:
+                return None
+            prefs = a.preferences
+            return prefs.compatibilityPreferences if prefs is not None else None
+        except Exception:
+            return None
+
+    def disable_graphics_cache_for_save():
+        """Temporarily prevent OGS/DefaultScene from being serialized."""
+        if state["graphics_cache_overridden"]:
+            return
+        prefs = compatibility_preferences()
+        if prefs is None:
+            log("graphics-cache preference unavailable; relying on CustomGraphics purge")
+            return
+        try:
+            previous = bool(prefs.isCacheGraphicsOnDocumentSave)
+            state["graphics_cache_previous"] = previous
+            prefs.isCacheGraphicsOnDocumentSave = False
+            state["graphics_cache_overridden"] = True
+            log("disabled document graphics cache for this save (previous={})".format(previous))
+        except Exception:
+            state["graphics_cache_previous"] = None
+            state["graphics_cache_overridden"] = False
+            log("could not disable document graphics cache\n{}".format(
+                m.traceback.format_exc()))
+
+    def restore_graphics_cache_setting():
+        """Restore the Fusion preference changed for the current save."""
+        if not state["graphics_cache_overridden"]:
+            return
+        previous = state.get("graphics_cache_previous")
+        try:
+            prefs = compatibility_preferences()
+            if prefs is not None and previous is not None:
+                prefs.isCacheGraphicsOnDocumentSave = bool(previous)
+                log("restored document graphics cache preference to {}".format(bool(previous)))
+        except Exception:
+            log("could not restore document graphics cache preference\n{}".format(
+                m.traceback.format_exc()))
+        finally:
+            state["graphics_cache_previous"] = None
+            state["graphics_cache_overridden"] = False
+
     m._purge_fuzzycad_custom_graphics = purge_custom_graphics
 
     class DocumentSaving(adsk.core.DocumentEventHandler):
@@ -112,6 +170,12 @@ def install(m):
         def notify(self, args):
             if not is_active_target(args):
                 return
+
+            # documentSaving fires at the very start of serialization. Disable
+            # Fusion's document graphics cache first so orphaned OGS objects that
+            # are no longer API-enumerable cannot travel with the saved design.
+            disable_graphics_cache_for_save()
+
             try:
                 persist = getattr(m, "_persist_state", None)
                 if persist is not None:
@@ -138,10 +202,13 @@ def install(m):
             except Exception:
                 log("graphics purge before save failed\n{}".format(m.traceback.format_exc()))
             try:
-                (m._app or adsk.core.Application.get()).activeViewport.refresh()
+                a = app()
+                if a is not None and a.activeViewport:
+                    a.activeViewport.refresh()
             except Exception:
                 pass
-            log("DOCUMENT SAVING: purged {} FuzzyCAD groups before serialization".format(removed))
+            log("DOCUMENT SAVING: graphics cache OFF; purged {} FuzzyCAD groups".format(
+                removed))
 
     class DocumentSaved(adsk.core.DocumentEventHandler):
         def __init__(self):
@@ -161,6 +228,11 @@ def install(m):
 
             state["saving"] = False
             state["saving_document"] = None
+
+            # The file is already serialized. Return Fusion to the user's original
+            # graphics-cache setting before rebuilding transient viewport graphics.
+            restore_graphics_cache_setting()
+
             try:
                 # Resolve dynamically so every renderer installed after this module
                 # also participates in the post-save rebuild.
@@ -168,23 +240,27 @@ def install(m):
             except Exception:
                 log("post-save redraw failed\n{}".format(m.traceback.format_exc()))
             try:
-                (m._app or adsk.core.Application.get()).activeViewport.refresh()
+                a = app()
+                if a is not None and a.activeViewport:
+                    a.activeViewport.refresh()
             except Exception:
                 pass
-            log("DOCUMENT SAVED: FuzzyCAD viewport rebuilt from marks")
+            log("DOCUMENT SAVED: preference restored; FuzzyCAD viewport rebuilt from marks")
 
     def bind_events():
-        app = m._app or adsk.core.Application.get()
+        a = app()
+        if a is None:
+            return
         try:
             h = DocumentSaving()
-            app.documentSaving.add(h)
+            a.documentSaving.add(h)
             m._handlers.append(h)
             state["saving_handler"] = h
         except Exception:
             log("documentSaving binding failed\n{}".format(m.traceback.format_exc()))
         try:
             h = DocumentSaved()
-            app.documentSaved.add(h)
+            a.documentSaved.add(h)
             m._handlers.append(h)
             state["saved_handler"] = h
         except Exception:
@@ -193,12 +269,15 @@ def install(m):
     def run(context):
         result = old_run(context)
         bind_events()
-        log("READY: documentSaving strips CustomGraphics; documentSaved redraws them")
+        log("READY: saves omit OGS cache, strip FuzzyCAD graphics, then redraw")
         return result
 
     def stop(context):
         state["saving"] = False
         state["saving_document"] = None
+        # Also repair the global preference if the add-in is stopped while a save
+        # lifecycle is incomplete.
+        restore_graphics_cache_setting()
         return old_stop(context)
 
     m.run = run
