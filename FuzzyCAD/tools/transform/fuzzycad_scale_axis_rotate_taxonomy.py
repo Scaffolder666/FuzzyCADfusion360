@@ -125,9 +125,17 @@ def install(m):
         return out
 
     def draw_transformed_edges(group, mark, matrix, rgb, amp, seed):
+        sz = float(mark.get("size", 3.0) or 3.0)
+        stroke = getattr(m, "_visual_stroke", None)
         for i, loop in enumerate(m._geom.get(mark["id"], {}).get("edges", [])):
-            m._sketchy(group, apply_matrix_pts(loop, matrix), rgb, amp * 0.8,
-                       mark["id"] * seed + i, weight=1, strokes=2)
+            pts = apply_matrix_pts(loop, matrix)
+            s = mark["id"] * seed + i
+            # Hand-drawn + darker pencil (proposal_internal) so the edit outline is
+            # sketchy and clearly visible, matching the comic boundary.
+            if stroke is not None:
+                stroke(group, pts, "proposal_internal", s, size=sz, weight=1.1, strokes=2)
+            else:
+                m._sketchy(group, pts, rgb, amp * 0.8, s, weight=1, strokes=2)
 
     def scale_matrix(anchor, factors):
         fx, fy, fz = factors

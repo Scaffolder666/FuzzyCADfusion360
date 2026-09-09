@@ -213,8 +213,11 @@ def install(m):
             seed = mark.get("id", 1) * 120 + i
             try:
                 if stroke is not None:
+                    # No rgb override: use proposal_internal's own darker pencil
+                    # (51,51,51) + wobble so the edit outline is hand-drawn AND not
+                    # too faint (the old (77,77,77) ghost read washed-out).
                     stroke(group, loop, "proposal_internal", seed,
-                           size=sz, rgb=rgb, weight=1, strokes=2)
+                           size=sz, weight=1.1, strokes=2)
                 else:
                     m._sketchy(group, loop, rgb, amp * 0.8, seed, weight=1, strokes=2)
             except Exception:

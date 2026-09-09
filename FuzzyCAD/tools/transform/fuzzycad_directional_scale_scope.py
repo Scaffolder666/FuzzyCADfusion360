@@ -226,10 +226,19 @@ def install(m):
             except Exception:
                 pass
 
+        sz = float(mark.get("size", 3.0) or 3.0)
+        stroke = getattr(m, "_visual_stroke", None)
         for i, loop in enumerate(m._geom.get(mark["id"], {}).get("edges", [])):
+            pts = transformed_points(loop, matrix)
+            seed = mark["id"] * 9310 + i
             try:
-                m._sketchy(group, transformed_points(loop, matrix), rgb, amp * 0.8,
-                           mark["id"] * 9310 + i, weight=1, strokes=2)
+                # Hand-drawn + darker pencil (proposal_internal) so the axis-scale
+                # outline reads sketchy and is not too faint, matching the comic.
+                if stroke is not None:
+                    stroke(group, pts, "proposal_internal", seed,
+                           size=sz, weight=1.1, strokes=2)
+                else:
+                    m._sketchy(group, pts, rgb, amp * 0.8, seed, weight=1, strokes=2)
             except Exception:
                 pass
 
