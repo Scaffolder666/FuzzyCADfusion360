@@ -23,7 +23,9 @@ VISUAL_TOKENS = {
     # lets the doubled hand-drawn passes read as sketch marks instead of borders.
     "proposal_internal": {
         "rgb": (51, 51, 51), "weight": 1.10, "strokes": 2,
-        "wobble_ratio": 0.0025, "wobble_min": 0.0090, "wobble_max": 0.090,
+        # Slightly stronger hand-drawn wobble (~1.6x) so the comic boundary reads
+        # more clearly as sketched, without the lines detaching from the form.
+        "wobble_ratio": 0.0042, "wobble_min": 0.0150, "wobble_max": 0.150,
     },
     "proposal_outer": {
         "rgb": (78, 78, 78), "weight": 2.15, "strokes": 1,
