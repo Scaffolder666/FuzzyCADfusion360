@@ -376,9 +376,20 @@ def install(m):
                 draw_subject_unselected(group, subjects[secondary])
             return
 
-        # Explicit Compare focus before a choice shows both alternatives in their
-        # own original positions as equally weak Conflict options. No transform or
-        # alignment is ever applied by this in-place renderer.
+        # No choice made yet. By default keep BOTH alternatives hidden (the real
+        # bodies are already light-bulb-off, and we draw no preview), so a fresh
+        # conflict reads as "two options set aside" until the reviewer picks one on
+        # the card -- clicking Option 1/2 sets `selected` and the branch above
+        # reveals just that alternative with its uncertainty look. Only an explicit
+        # Compare/Focus on THIS mark shows both side by side.
+        revealed = False
+        try:
+            vstate = getattr(m, "_uncertainty_visual_state", None) or {}
+            revealed = int(vstate.get("revealed_id")) == int(mark.get("id"))
+        except Exception:
+            revealed = False
+        if not revealed:
+            return
         for i, subject in enumerate(subjects[:2]):
             draw_subject_unresolved(group, subject, i)
 
