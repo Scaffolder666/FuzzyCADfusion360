@@ -66,6 +66,12 @@ _TOOL_VISUALS = {
     ),
     "compare": _cfg(
         kind="conflict",
+        # In-place Compare is rendered entirely by its own alternative renderer
+        # (compare_inplace: nothing until a choice, then only the chosen option).
+        # It must NOT also go through the generic comic layer, which otherwise drew
+        # a default alternative (index 0) as comic before any choice was made.
+        comic_capable=False,
+        comic_proposed=False,
         proposed_detail="focus",
     ),
 
