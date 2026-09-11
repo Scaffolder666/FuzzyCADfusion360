@@ -561,6 +561,22 @@ def install(m):
 
     m._redraw_marks = redraw
 
+    # The authoritative renderer (fuzzycad_visual_transition) is installed AFTER
+    # this module and replaces _redraw_marks with its own render_once, which does
+    # not call the wrapper above -- so reconcile_visibility would never run on a
+    # normal redraw and the real alternative bodies would stay visible. Register it
+    # as a persistent overlay, which render_once invokes on every transaction, so
+    # the originals are reliably hidden while an in-place Compare is open.
+    try:
+        overlays = getattr(m, "_persistent_overlays", None)
+        if overlays is None:
+            overlays = []
+            m._persistent_overlays = overlays
+        if reconcile_visibility not in overlays:
+            overlays.append(reconcile_visibility)
+    except Exception:
+        pass
+
     def stop(context):
         # Restore every browser visibility state this module changed. Resolve
         # fresh wrappers; the dictionaries above contain pure-Python values only.
