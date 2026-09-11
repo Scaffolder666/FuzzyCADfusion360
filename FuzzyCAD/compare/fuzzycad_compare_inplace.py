@@ -370,10 +370,11 @@ def install(m):
 
         if selected in (0, 1) and int(selected) < len(subjects):
             primary = int(selected)
-            secondary = 1 - primary
+            # Show ONLY the chosen alternative in place (with its uncertainty look).
+            # Both real bodies are already light-bulb-off, and we deliberately do not
+            # draw the other alternative -- the reviewer toggles Option 1/2 on the
+            # card to view each one at a time, instead of seeing both at once.
             draw_subject_primary(group, mark, subjects[primary])
-            if 0 <= secondary < len(subjects):
-                draw_subject_unselected(group, subjects[secondary])
             return
 
         # No choice made yet. By default keep BOTH alternatives hidden (the real
