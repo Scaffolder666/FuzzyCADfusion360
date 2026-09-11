@@ -48,7 +48,7 @@ COMMANDS = ("transform", "extrude", "fillet")
 CMD_ID = {c: "FuzzyCAD_" + c.capitalize() for c in COMMANDS}
 CMD_ID["note"] = "FuzzyCAD_Note"
 CMD_LABEL = {"transform": "Transform", "extrude": "Fuzzy Extrude",
-             "fillet": "Fuzzy Fillet", "note": "Note"}
+             "fillet": "Fuzzy Fillet", "note": "Constraint"}
 CMD_FILTER = {"transform": "SolidBodies", "extrude": "Faces", "fillet": "Edges"}
 CMD_HINT = {"transform": "Select a body, then grab a move / rotate / scale handle.",
             "extrude": "Select a planar face, then drag it out.",
@@ -110,19 +110,29 @@ FUZZY_PROPERTY = {
     "extrude": "Fuzzy Shape",
     "fillet": "Fuzzy Shape",
     "hole": "Fuzzy Shape",
-    "rough": "Fuzzy Shape",
+}
+
+# Rough Shape is a CONSTRAINT (a geometric envelope contributed as a bound), not a
+# Fuzzy question -- so it is named and numbered separately from the Fuzzy buckets.
+CONSTRAINT_PROPERTY = {
+    "rough": "Shape Constraint",
 }
 
 
+def _property_name(tool):
+    return FUZZY_PROPERTY.get(tool) or CONSTRAINT_PROPERTY.get(tool)
+
+
 def _fuzzy_bucket(tool):
-    """Counter/display key for a tool. Geometry tools collapse into their Fuzzy
-    property bucket; anything else (note, compare) keeps its own tool key."""
-    return FUZZY_PROPERTY.get(tool, tool)
+    """Counter/display key for a tool. Geometry tools collapse into their property
+    bucket (Fuzzy Position/Size/..., or Shape Constraint for rough); anything else
+    (note, compare) keeps its own tool key."""
+    return _property_name(tool) or tool
 
 
 def _fuzzy_title(mark):
     tool = mark.get("tool", "")
-    name = FUZZY_PROPERTY.get(tool) or str(tool).capitalize()
+    name = _property_name(tool) or str(tool).capitalize()
     return "{} {}".format(name, mark.get("num", 1))
 SKETCH_AMP_FRAC = 0.008
 EDGE_SAMPLES = 10
@@ -1748,8 +1758,9 @@ def run(context):
         for cmd in COMMANDS:
             _add_button(panel, CMD_ID[cmd], CMD_LABEL[cmd], CMD_HINT[cmd],
                         FuzzyCommandCreated(cmd))
-        _add_button(panel, CMD_ID["note"], "Note",
-                    "Drop a note callout on the model (a Constraint mark)",
+        _add_button(panel, CMD_ID["note"], "Constraint",
+                    "Add a constraint on selected geometry: a requirement/limit "
+                    "future changes should respect (text + optional image)",
                     FuzzyNoteCreated())
         try:
             _app.unregisterCustomEvent(LAUNCH_EVENT_ID)

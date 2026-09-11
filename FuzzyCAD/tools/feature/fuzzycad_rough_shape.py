@@ -22,7 +22,8 @@ def install(m):
     m.CMD_ID["rough"] = "FuzzyCAD_RoughShape"
     m.CMD_LABEL["rough"] = "Rough Shape"
     m.CMD_FILTER["rough"] = "SolidBodies"
-    m.CMD_HINT["rough"] = "Select a rough body to flag the whole shape as uncertain."
+    m.CMD_HINT["rough"] = ("Select a rough body to contribute it as a shape "
+                           "constraint -- a crude envelope others build within.")
     m.CMD_CATS["rough"] = ("rough",)
 
     old_build_pending = m._build_pending
@@ -101,7 +102,7 @@ def install(m):
     def summary(mark):
         if mark.get("tool") == "rough":
             note = (mark.get("note") or "").strip()
-            return "rough shape" + (" — " + note[:40] if note else "")
+            return "shape constraint" + (" — " + note[:40] if note else "")
         return old_summary(mark)
 
     m._summary = summary
@@ -114,7 +115,11 @@ def install(m):
         m._next_id = mid + 1
         mark = m._make_mark("rough", {"note": ""})
         mark["id"] = mid
-        mark["mtype"] = "need_input"
+        # Rough Shape is a CONSTRAINT, not a Fuzzy question: a domain expert who
+        # knows the rough form/size (but not the full design) contributes a crude
+        # envelope body as a geometric bound for others to build within. It is the
+        # geometric counterpart to a stated (text) constraint.
+        mark["mtype"] = "constraint"
         m._geom[mid] = m._pending["geom"]
         m._entity[mid] = m._pending["entity"]
         m._body[mid] = m._pending["body"]
