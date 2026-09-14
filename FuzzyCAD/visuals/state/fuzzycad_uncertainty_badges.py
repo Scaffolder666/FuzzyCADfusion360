@@ -2,8 +2,8 @@
 
 Badge rules:
 - one screen-consistent badge size across marks;
-- place badges outside the projected subject bounds when possible;
-- connect every badge back to the related geometry with a leader line;
+- place badges just outside the projected subject bounds when possible;
+- connect every badge from the subject boundary to the visible badge edge;
 - stack multiple badges that belong to the same body instead of letting them overlap;
 - keep the graphics vector-only because Fusion can reopen saved text/PNG billboards
   as white placeholder quads.
@@ -16,11 +16,16 @@ import os
 import sys
 
 
-BADGE_PIXEL_SCALE = 13.0
-BADGE_OUTSIDE_MARGIN_PX = 26.0
+# CustomGraphicsViewScale interprets model-coordinate size in pixels. The vector
+# triangle is ~1.84 units wide, so 18 gives a badge about 33 px wide at normal
+# focus, large enough to read without dominating the model.
+BADGE_PIXEL_SCALE = 18.0
+BADGE_EDGE_GAP_PX = 10.0
 BADGE_STACK_GAP_PX = 30.0
 BADGE_FOCUS_SCALE = 1.15
-LEADER_RGB = (92, 92, 92)
+BADGE_SOCKET_RADIUS_UNITS = 0.72
+LEADER_RGB = (55, 55, 55)
+LEADER_WEIGHT = 2
 
 
 def install(m):
@@ -182,6 +187,7 @@ def install(m):
         return (anchor_view.x, anchor_view.x, anchor_view.y, anchor_view.y)
 
     def model_delta_for_view_delta(anchor, dx_px, dy_px):
+        """Convert a small screen-space offset into a model-space camera-plane offset."""
         try:
             vp = m._app.activeViewport
             (xx, xy, xz), (yx, yy, yz) = m._camera_xy()
@@ -201,6 +207,9 @@ def install(m):
                 return None
 
             cx = (dx_px * ydy - dy_px * ydx) / det
+            cy = (xdx * dy_px - xdy * xdx) / det
+            # The formula above intentionally keeps screen-space x/y independent;
+            # correct the y coefficient with the full 2x2 inverse when available.
             cy = (xdx * dy_px - xdy * dx_px) / det
             return (
                 cx * xx + cy * yx,
@@ -210,44 +219,112 @@ def install(m):
         except Exception:
             return None
 
-    def badge_center(mark, body):
+    def model_point_for_view_target(origin, target_x, target_y):
+        try:
+            vp = m._app.activeViewport
+            ov = vp.modelToViewSpace(m.adsk.core.Point3D.create(*origin))
+            if ov is None:
+                return None
+            delta = model_delta_for_view_delta(
+                origin, float(target_x - ov.x), float(target_y - ov.y))
+            if delta is None:
+                return None
+            return (
+                origin[0] + delta[0],
+                origin[1] + delta[1],
+                origin[2] + delta[2],
+            )
+        except Exception:
+            return None
+
+    def badge_scale(mark):
+        scale = BADGE_PIXEL_SCALE
+        try:
+            state = m._visual_state(mark)
+            if state.get("phase") == "editing" or state.get("show_persistent_detail"):
+                scale *= BADGE_FOCUS_SCALE
+        except Exception:
+            pass
+        return scale
+
+    def badge_layout(mark, body, scale):
+        """Return badge center plus a leader start on the projected subject boundary."""
         anchor = list(mark.get("anchor") or [0.0, 0.0, 0.0])
         try:
             vp = m._app.activeViewport
             av = vp.modelToViewSpace(m.adsk.core.Point3D.create(*anchor))
             if av is None:
                 raise RuntimeError("no view point")
+
             minx, maxx, miny, maxy = body_view_bounds(body, av)
-            right_x = maxx + BADGE_OUTSIDE_MARGIN_PX
-            left_x = minx - BADGE_OUTSIDE_MARGIN_PX
-            if right_x + 18.0 <= float(vp.width):
+            half_w = 0.92 * float(scale)
+            half_h = 1.00 * float(scale)
+            right_x = maxx + BADGE_EDGE_GAP_PX + half_w
+            left_x = minx - BADGE_EDGE_GAP_PX - half_w
+
+            if right_x + half_w + 6.0 <= float(vp.width):
                 target_x = right_x
+                edge_x = maxx
             else:
-                target_x = max(18.0, left_x)
+                target_x = max(half_w + 6.0, left_x)
+                edge_x = minx
+
             target_y = (miny + maxy) * 0.5 + stack_offset_px(mark, body)
-            target_y = max(18.0, min(float(vp.height) - 18.0, target_y))
-            delta = model_delta_for_view_delta(
-                anchor, float(target_x - av.x), float(target_y - av.y))
-            if delta is not None:
-                return (
-                    anchor[0] + delta[0],
-                    anchor[1] + delta[1],
-                    anchor[2] + delta[2],
-                )
+            target_y = max(half_h + 6.0,
+                           min(float(vp.height) - half_h - 6.0, target_y))
+
+            # Start the leader on the projected bounding edge, not at the internal
+            # decision anchor. This makes the association read as object -> badge.
+            edge_y = max(miny, min(maxy, target_y))
+            center = model_point_for_view_target(anchor, target_x, target_y)
+            leader_start = model_point_for_view_target(anchor, edge_x, edge_y)
+            if center is not None:
+                return center, (leader_start or tuple(anchor))
         except Exception:
             pass
 
         try:
             (xx, xy, xz), (yx, yy, yz) = m._camera_xy()
             s = float(mark.get("size", 3.0) or 3.0)
-            off = max(1.0, min(s * 0.7, 4.0))
+            off = max(0.8, min(s * 0.45, 2.6))
+            center = (
+                anchor[0] + xx * off + yx * off * 0.18,
+                anchor[1] + xy * off + yy * off * 0.18,
+                anchor[2] + xz * off + yz * off * 0.18,
+            )
+            return center, tuple(anchor)
+        except Exception:
+            return tuple(anchor), tuple(anchor)
+
+    def badge_socket(center, leader_start, scale):
+        """Return a point slightly inside the visible badge edge toward the subject.
+
+        The badge itself is view-scaled/billboarded while the leader is ordinary
+        model-space graphics. Computing the socket in view space makes the two meet
+        visually even after zooming or rotating the camera.
+        """
+        try:
+            vp = m._app.activeViewport
+            cv = vp.modelToViewSpace(m.adsk.core.Point3D.create(*center))
+            sv = vp.modelToViewSpace(m.adsk.core.Point3D.create(*leader_start))
+            if cv is None or sv is None:
+                return center
+            dx, dy = float(sv.x - cv.x), float(sv.y - cv.y)
+            ln = (dx * dx + dy * dy) ** 0.5
+            if ln < 1.0e-6:
+                return center
+            radius_px = float(scale) * BADGE_SOCKET_RADIUS_UNITS
+            delta = model_delta_for_view_delta(
+                center, dx / ln * radius_px, dy / ln * radius_px)
+            if delta is None:
+                return center
             return (
-                anchor[0] + xx * off + yx * off * 0.25,
-                anchor[1] + xy * off + yy * off * 0.25,
-                anchor[2] + xz * off + yz * off * 0.25,
+                center[0] + delta[0],
+                center[1] + delta[1],
+                center[2] + delta[2],
             )
         except Exception:
-            return tuple(anchor)
+            return center
 
     def add_lines(group, points, rgb, weight=2, view_scale=None, billboard_anchor=None):
         if not points or len(points) < 2:
@@ -277,16 +354,6 @@ def install(m):
                 pass
         return line
 
-    def badge_scale(mark):
-        scale = BADGE_PIXEL_SCALE
-        try:
-            state = m._visual_state(mark)
-            if state.get("phase") == "editing" or state.get("show_persistent_detail"):
-                scale *= BADGE_FOCUS_SCALE
-        except Exception:
-            pass
-        return scale
-
     def draw_symbol(group, center, mtype, rgb, scale):
         cx, cy, cz = center
 
@@ -294,17 +361,17 @@ def install(m):
             return (cx + x, cy + y, cz)
 
         if mtype == "constraint":
-            add_lines(group, [P(-0.28, 0.38), P(-0.28, -0.35)], rgb, 3, scale, center)
-            add_lines(group, [P(0.28, 0.38), P(0.28, -0.35)], rgb, 3, scale, center)
+            add_lines(group, [P(-0.28, 0.38), P(-0.28, -0.35)], rgb, 4, scale, center)
+            add_lines(group, [P(0.28, 0.38), P(0.28, -0.35)], rgb, 4, scale, center)
             return
 
         if mtype == "conflict":
-            add_lines(group, [P(-0.38, 0.32), P(0.38, -0.32)], rgb, 3, scale, center)
-            add_lines(group, [P(0.38, 0.32), P(-0.38, -0.32)], rgb, 3, scale, center)
+            add_lines(group, [P(-0.38, 0.32), P(0.38, -0.32)], rgb, 4, scale, center)
+            add_lines(group, [P(0.38, 0.32), P(-0.38, -0.32)], rgb, 4, scale, center)
             return
 
-        add_lines(group, [P(0.0, 0.45), P(0.0, -0.16)], rgb, 3, scale, center)
-        add_lines(group, [P(-0.03, -0.47), P(0.03, -0.47)], rgb, 4, scale, center)
+        add_lines(group, [P(0.0, 0.45), P(0.0, -0.16)], rgb, 4, scale, center)
+        add_lines(group, [P(-0.03, -0.47), P(0.03, -0.47)], rgb, 5, scale, center)
 
     def draw_badge(group, mark):
         if not visible(mark):
@@ -313,12 +380,13 @@ def install(m):
         body = primary_body(mark)
         mtype = presentation_type(mark)
         rgb = m.MTYPE_COLOR.get(mtype, getattr(m, "COLOR_WARN", (200, 44, 32)))
-        anchor = tuple(mark.get("anchor") or [0.0, 0.0, 0.0])
-        center = badge_center(mark, body)
         scale = badge_scale(mark)
+        center, leader_start = badge_layout(mark, body, scale)
+        leader_end = badge_socket(center, leader_start, scale)
 
         try:
-            add_lines(group, [anchor, center], LEADER_RGB, weight=1)
+            add_lines(group, [leader_start, leader_end], LEADER_RGB,
+                      weight=LEADER_WEIGHT)
         except Exception:
             pass
 
@@ -330,7 +398,8 @@ def install(m):
             (cx, cy + 1.0, cz),
         ]
         try:
-            add_lines(group, tri, rgb, weight=3, view_scale=scale, billboard_anchor=center)
+            add_lines(group, tri, rgb, weight=4,
+                      view_scale=scale, billboard_anchor=center)
             draw_symbol(group, center, mtype, rgb, scale)
         except Exception:
             try:
@@ -346,6 +415,8 @@ def install(m):
         pass
     m._draw_badge = draw_badge
 
+    # Notes use the same badge + leader system now. Avoid drawing a second legacy
+    # callout line that would compete with the unified leader.
     def draw_note_reload_safe(group, mark, rgb, amp):
         return
 
@@ -368,4 +439,4 @@ def install(m):
         except Exception:
             pass
 
-    log("OUTSIDE BADGES READY: screen-size + leader + same-body stacking")
+    log("BADGES READY: larger + darker leaders + edge-to-edge attachment")
