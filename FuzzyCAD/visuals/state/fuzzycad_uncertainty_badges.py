@@ -17,14 +17,17 @@ import sys
 
 
 # CustomGraphicsViewScale interprets model-coordinate size in pixels. The vector
-# triangle is ~1.84 units wide, so 18 gives a badge about 33 px wide at normal
+# triangle is ~1.84 units wide, so 19 gives a badge about 35 px wide at normal
 # focus, large enough to read without dominating the model.
-BADGE_PIXEL_SCALE = 18.0
-BADGE_EDGE_GAP_PX = 10.0
+BADGE_PIXEL_SCALE = 19.0
+BADGE_EDGE_GAP_PX = 9.0
 BADGE_STACK_GAP_PX = 30.0
 BADGE_FOCUS_SCALE = 1.15
-BADGE_SOCKET_RADIUS_UNITS = 0.72
-LEADER_RGB = (55, 55, 55)
+# The leader endpoint sits inside the triangle instead of stopping exactly at the
+# outline. Because the badge is drawn afterward, the overlap is hidden and reads
+# as one continuous object-to-badge connection.
+BADGE_SOCKET_RADIUS_UNITS = 0.38
+LEADER_RGB = (42, 42, 42)
 LEADER_WEIGHT = 2
 
 
@@ -207,9 +210,6 @@ def install(m):
                 return None
 
             cx = (dx_px * ydy - dy_px * ydx) / det
-            cy = (xdx * dy_px - xdy * xdx) / det
-            # The formula above intentionally keeps screen-space x/y independent;
-            # correct the y coefficient with the full 2x2 inverse when available.
             cy = (xdx * dy_px - xdy * dx_px) / det
             return (
                 cx * xx + cy * yx,
@@ -297,11 +297,12 @@ def install(m):
             return tuple(anchor), tuple(anchor)
 
     def badge_socket(center, leader_start, scale):
-        """Return a point slightly inside the visible badge edge toward the subject.
+        """Return a point inside the visible badge toward the subject.
 
         The badge itself is view-scaled/billboarded while the leader is ordinary
         model-space graphics. Computing the socket in view space makes the two meet
-        visually even after zooming or rotating the camera.
+        visually after zooming or rotating the camera. The endpoint intentionally
+        overlaps the triangle interior so anti-aliasing cannot leave a visible gap.
         """
         try:
             vp = m._app.activeViewport
