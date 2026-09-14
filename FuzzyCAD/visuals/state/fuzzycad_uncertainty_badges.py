@@ -5,7 +5,8 @@ Keep badge placement deliberately simple:
 - choose one pixel position just outside that projected body;
 - convert that position back to ONE model-space endpoint;
 - draw the leader to that endpoint;
-- draw a local, view-scaled badge translated to exactly the same endpoint.
+- draw a local, view-scaled badge translated to exactly the same endpoint;
+- recompute the layout whenever the Fusion camera changes.
 
 The badge does not use CustomGraphicsBillBoard anchoring. Fusion has retired the
 billboard anchor argument, so relying on it can make the visible badge drift away
@@ -18,7 +19,6 @@ import sys
 
 
 BADGE_PIXEL_SCALE = 19.0
-# Visible distance from the projected object edge to the badge edge.
 VISIBLE_LEADER_PX = 34.0
 BADGE_STACK_GAP_PX = 34.0
 BADGE_FOCUS_SCALE = 1.15
@@ -187,12 +187,6 @@ def install(m):
                 fallback_view.y, fallback_view.y)
 
     def view_target_at_reference_depth(reference, target_x, target_y):
-        """Map a viewport pixel to model space while keeping reference depth.
-
-        Fusion already exposes the complete model-to-viewport transform. Preserve
-        the transformed Z coordinate, replace only X/Y with the desired viewport
-        pixels, then invert the matrix. No hand-built camera-basis approximation.
-        """
         try:
             vp = m._app.activeViewport
             xf = vp.modelToViewSpaceTransform
@@ -208,8 +202,6 @@ def install(m):
                 raise RuntimeError("view->model transform failed")
             return (p.x, p.y, p.z)
         except Exception:
-            # Fallback still guarantees the correct projected X/Y. Its depth is
-            # arbitrary, but this is display-only geometry.
             try:
                 q = m._app.activeViewport.viewToModelSpace(
                     m.adsk.core.Point2D.create(float(target_x), float(target_y)))
@@ -230,7 +222,6 @@ def install(m):
         return scale
 
     def badge_layout(mark, body, scale):
-        """Return exactly two model points: body-edge start and badge-center end."""
         anchor = tuple(mark.get("anchor") or [0.0, 0.0, 0.0])
         try:
             vp = m._app.activeViewport
@@ -242,8 +233,6 @@ def install(m):
             half_badge_w = 0.92 * float(scale)
             half_badge_h = 1.00 * float(scale)
 
-            # Keep the badge near the actual decision anchor vertically instead of
-            # forcing every decision to the body's center.
             anchor_y = max(miny, min(maxy, float(av.y)))
             target_y = anchor_y + stack_offset_px(mark, body)
             target_y = max(half_badge_h + 8.0,
@@ -267,7 +256,6 @@ def install(m):
         except Exception:
             pass
 
-        # Simple model-space fallback. Both graphics still share one endpoint.
         try:
             (xx, xy, xz), (yx, yy, yz) = m._camera_xy()
             s = float(mark.get("size", 3.0) or 3.0)
@@ -294,11 +282,6 @@ def install(m):
         return line
 
     def add_local_badge_line(group, points, center, rgb, weight, scale):
-        """Draw local 2D badge geometry, then translate/orient it to center.
-
-        This avoids billboard anchoring entirely. The local origin is the badge
-        anchor and the transform translation is the only source of badge position.
-        """
         flat = []
         for x, y in points:
             flat.extend([float(x), float(y), 0.0])
@@ -321,8 +304,6 @@ def install(m):
             pass
 
         try:
-            # Local geometry is centered at local (0,0,0), so scale about that
-            # same local origin. No model-space billboard anchor is involved.
             line.viewScale = m.adsk.fusion.CustomGraphicsViewScale.create(
                 float(scale), m.adsk.core.Point3D.create(0.0, 0.0, 0.0))
         except Exception:
@@ -362,8 +343,6 @@ def install(m):
         scale = badge_scale(mark)
         leader_start, center = badge_layout(mark, body, scale)
 
-        # One endpoint. The leader ends at center and every badge primitive is
-        # translated to that exact same model-space center.
         try:
             add_world_line(group, leader_start, center,
                            LEADER_RGB, LEADER_WEIGHT)
@@ -390,7 +369,6 @@ def install(m):
         pass
     m._draw_badge = draw_badge
 
-    # Notes use the same badge + leader. Do not draw a second legacy callout.
     def draw_note_reload_safe(group, mark, rgb, amp):
         return
 
@@ -399,8 +377,43 @@ def install(m):
     except Exception:
         pass
 
-    # Preserve the save-clean lifecycle that protects .f3d files from serialized
-    # CustomGraphics artifacts.
+    # Badge placement is view-dependent, so recompute it after every camera
+    # change. Without this, rotating/panning/zooming leaves badges at positions
+    # calculated for the previous view.
+    try:
+        app = m._app or m.adsk.core.Application.get()
+        old_handler = getattr(m, "_badge_camera_handler", None)
+        if old_handler is not None:
+            try:
+                app.cameraChanged.remove(old_handler)
+            except Exception:
+                pass
+
+        class BadgeCameraChangedHandler(m.adsk.core.CameraEventHandler):
+            def __init__(self):
+                super().__init__()
+
+            def notify(self, args):
+                if bool(getattr(m, "_badge_camera_redrawing", False)):
+                    return
+                try:
+                    m._badge_camera_redrawing = True
+                    m._redraw_marks()
+                except Exception:
+                    pass
+                finally:
+                    m._badge_camera_redrawing = False
+
+        handler = BadgeCameraChangedHandler()
+        if app.cameraChanged.add(handler):
+            m._badge_camera_handler = handler
+            try:
+                m._handlers.append(handler)
+            except Exception:
+                pass
+    except Exception:
+        log("cameraChanged handler install failed")
+
     try:
         root = os.path.dirname(os.path.abspath(m.__file__))
         path = os.path.join(root, "core", "persistence", "fuzzycad_save_clean.py")
@@ -415,4 +428,4 @@ def install(m):
         except Exception:
             pass
 
-    log("BADGES READY: one endpoint, exact viewport transform, no billboard anchor")
+    log("BADGES READY: exact endpoint + exact view transform + camera refresh")
