@@ -34,7 +34,12 @@ def install(m):
         if tool == "compare":
             try:
                 alts = (geom or {}).get("alternatives") or []
-                return valid(ent) and len([b for b in alts if valid(b)]) >= 2
+                enough_alts = len([b for b in alts if valid(b)]) >= 2
+                # In-place Conflict has no separate target entity by design. Its
+                # two resolved alternatives are the complete geometry reference.
+                if mark.get("inplace"):
+                    return enough_alts
+                return valid(ent) and enough_alts
             except Exception:
                 return False
         if tool in ("extrude", "hole"):
