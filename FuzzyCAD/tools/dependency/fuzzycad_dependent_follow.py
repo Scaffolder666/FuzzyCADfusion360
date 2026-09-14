@@ -1,23 +1,14 @@
 """Let work built on a fuzzy part follow it when the part is resolved.
 
-The core finding: in async CAD, uncertainty is transitive. If you build a chin
-guard on a headrest whose angle is still an open question, accepting the headrest
-angle must carry the chin guard along -- otherwise the "final" model is silently
-wrong (new fake certainty).
+Uncertainty is transitive in async CAD. If a collaborator builds new geometry on
+an object while that object's Move/Rotate/Scale decision is still unresolved,
+accepting the upstream decision must carry the downstream work so the relationship
+does not silently break.
 
-This module handles the rigid co-motion case (Move / Rotate). When such a mark is
-accepted, it finds the bodies that are built on the marked body -- detected by a
-shared, coincident planar face (the anchor face the downstream sits on) -- shows
-them highlighted, and asks once whether to carry them along. If yes, the SAME
-rigid transform (m._op_matrix) is applied to the marked body and the confirmed
-dependants together, so their relative geometry is preserved exactly.
-
-Scale / Extrude are NOT rigid: different faces move by different amounts, so those
-follow a per-anchor-face displacement and are handled separately (next step). Here
-we only do the rigid Move/Rotate case; everything else falls through unchanged.
-
-Only bodies the user confirms are moved -- the system makes the coupling visible
-and asks; the decision stays with the user.
+Selection-time snapshots store Fusion entity tokens only as persistent handles.
+At Accept those handles are resolved back to Fusion entities and the entities are
+compared. Token strings are never used as entity identity because Fusion can return
+different token strings for the same entity over time.
 """
 
 import math
@@ -31,8 +22,6 @@ def install(m):
     FOLLOW_RGB = (225, 126, 38)
 
     def log(msg):
-        # Always write to the app log (visible in Text Commands) so detection can
-        # be diagnosed even in the non-dev build where _debug is a no-op.
         try:
             (m._app or adsk.core.Application.get()).log("[FuzzyCAD FOLLOW] " + msg)
         except Exception:
@@ -44,6 +33,79 @@ def install(m):
         except Exception:
             return None
 
+    def same_entity(a, b):
+        if a is None or b is None:
+            return False
+        if a is b:
+            return True
+        try:
+            return bool(a == b)
+        except Exception:
+            return False
+
+    def native_body(body):
+        if body is None:
+            return None
+        try:
+            native = body.nativeObject
+            return native if native is not None else body
+        except Exception:
+            return body
+
+    def body_occurrence(body):
+        try:
+            return adsk.fusion.Occurrence.cast(body.assemblyContext)
+        except Exception:
+            return None
+
+    def same_body_instance(a, b):
+        """Compare body identity without comparing entity-token strings.
+
+        Two assembly proxies count as the same body only when both their native
+        body and occurrence context match. A native body and one occurrence proxy
+        are intentionally different instances.
+        """
+        if same_entity(a, b):
+            return True
+        if a is None or b is None:
+            return False
+        if not same_entity(native_body(a), native_body(b)):
+            return False
+        oa, ob = body_occurrence(a), body_occurrence(b)
+        if oa is None and ob is None:
+            return True
+        if oa is None or ob is None:
+            return False
+        return same_entity(oa, ob)
+
+    def contains_body(rows, body):
+        return any(same_body_instance(row, body) for row in rows)
+
+    def resolve_token_bodies(design, tokens):
+        """Resolve a saved token snapshot into current body entities.
+
+        A token remains a valid lookup handle even if Fusion would now emit a
+        different token string for that same entity. Resolve first, compare second.
+        """
+        out = []
+        if design is None:
+            return out
+        for tok in tokens or []:
+            if not tok:
+                continue
+            try:
+                ents = design.findEntityByToken(str(tok))
+            except Exception:
+                continue
+            try:
+                for ent in ents:
+                    body = adsk.fusion.BRepBody.cast(ent)
+                    if body is not None and not contains_body(out, body):
+                        out.append(body)
+            except Exception:
+                continue
+        return out
+
     def bbox_gap(a, b):
         amn, amx = a.minPoint, a.maxPoint
         bmn, bmx = b.minPoint, b.maxPoint
@@ -53,19 +115,22 @@ def install(m):
         return math.sqrt(dx * dx + dy * dy + dz * dz)
 
     def all_bodies(design):
-        """Every solid body in the design: root plus all occurrence proxies, so a
-        shape built in a different component from the marked part is still seen."""
+        """Every solid body instance: root bodies plus occurrence proxies."""
         out = []
         try:
             root = design.rootComponent
             for i in range(root.bRepBodies.count):
-                out.append(root.bRepBodies.item(i))
+                body = root.bRepBodies.item(i)
+                if body is not None and not contains_body(out, body):
+                    out.append(body)
             occs = root.allOccurrences
             for i in range(occs.count):
                 try:
                     bs = occs.item(i).bRepBodies
                     for j in range(bs.count):
-                        out.append(bs.item(j))
+                        body = bs.item(j)
+                        if body is not None and not contains_body(out, body):
+                            out.append(body)
                 except Exception:
                     continue
         except Exception:
@@ -73,9 +138,7 @@ def install(m):
         return out
 
     def detect_dependents(primary):
-        """Bodies that touch the marked body (bounding-box contact) -- the same
-        proven proximity signal Move scope uses. Loose on purpose: the user
-        confirms the set, so a false positive just gets left unchecked."""
+        """Bodies currently touching the marked body, with instance-safe de-dupe."""
         if primary is None:
             return []
         design = m._design()
@@ -86,20 +149,16 @@ def install(m):
             pbb = primary.boundingBox
         except Exception:
             return []
-        tol = max(0.05, min(float(size) * 0.02, 0.20))   # 0.5mm .. 2mm contact tol
-        ptok = body_token(primary)
+        tol = max(0.05, min(float(size) * 0.02, 0.20))
         out = []
-        seen = set()
         for b in all_bodies(design):
             try:
-                tok = body_token(b)
-                if tok is None or tok == ptok or tok in seen:
+                if same_body_instance(b, primary) or contains_body(out, b):
                     continue
-                seen.add(tok)
                 if hasattr(b, "isVisible") and not b.isVisible:
                     continue
                 try:
-                    if m._body_locked(b):     # has its own open question — leave it
+                    if m._body_locked(b):
                         continue
                 except Exception:
                     pass
@@ -111,24 +170,18 @@ def install(m):
             getattr(primary, "name", "body"), len(out), tol * 10.0))
         return out[:12]
 
-    # Shared so fuzzycad_move_scope can snapshot the SAME touching set at selection
-    # time. That snapshot (related_tokens) is what "built on top since" is measured
-    # against at accept, so both ends must use one detector for the delta to be real.
     m._follow_detect_dependents = detect_dependents
 
     def all_body_tokens(design=None):
-        """Tokens of every body in the design right now. Snapshotted at selection so
-        accept can tell a genuinely NEW body (built on the part after the mark) from
-        a pre-existing one the operation merely grew into -- only the former should
-        be auto-carried."""
+        """Lookup handles for every body instance present when a mark is created."""
         design = design or m._design()
-        toks = set()
+        toks = []
         if design is None:
             return toks
         for b in all_bodies(design):
-            t = body_token(b)
-            if t:
-                toks.add(t)
+            tok = body_token(b)
+            if tok:
+                toks.append(tok)
         return toks
 
     m._follow_all_tokens = all_body_tokens
@@ -173,7 +226,6 @@ def install(m):
             return False
 
     def rigid_matrix(mark):
-        """The rigid transform for a co-motion mark, in world space."""
         if mark.get("tool") == "axis_rotate":
             g = m._geom.get(mark["id"], {})
             origin = g.get("axis_origin") or mark.get("axis_origin") or [0.0, 0.0, 0.0]
@@ -187,25 +239,23 @@ def install(m):
         return m._op_matrix(mark)
 
     def apply_together(matrix, primary, deps):
-        """Apply the same rigid transform to the marked body and the dependants.
-        Bodies are grouped by their owning component (a MoveFeature is scoped to
-        one component), so a shape built in a different component still moves."""
+        """Apply the same rigid transform to primary and confirmed dependants."""
         try:
-            groups = []      # list of (component, [bodies])
-            added = set()
+            groups = []
+            added = []
 
             def enroll(b):
-                tok = body_token(b)
-                if tok is None or tok in added:
+                if b is None or contains_body(added, b):
                     return
-                added.add(tok)
+                added.append(b)
                 try:
                     comp = b.parentComponent
                 except Exception:
                     return
                 for g in groups:
                     if g[0] == comp:
-                        g[1].append(b); return
+                        g[1].append(b)
+                        return
                 groups.append((comp, [b]))
 
             enroll(primary)
@@ -228,27 +278,39 @@ def install(m):
                 m.traceback.format_exc()))
             return False
 
-    def carry_bodies(matrix, specs, design):
-        """Apply one rigid matrix to a set of dependant bodies given as (ref, token).
+    def resolve_body(design, tok):
+        if design is None or not tok:
+            return None
+        try:
+            ents = design.findEntityByToken(str(tok))
+        except Exception:
+            return None
+        try:
+            for e in ents:
+                body = adsk.fusion.BRepBody.cast(e)
+                if body is not None:
+                    return body
+        except Exception:
+            pass
+        return None
 
-        Re-resolves any ref that the primary's own move invalidated, and groups by
-        owning component because a MoveFeature is component-scoped."""
-        groups = []      # [(component, [bodies])]
-        added = set()
+    def carry_bodies(matrix, specs, design):
+        """Carry selected current bodies after the primary's own feature commits."""
+        groups = []
+        added = []
 
         def enroll(b):
-            tok = body_token(b)
-            key = tok or str(id(b))
-            if key in added:
+            if b is None or contains_body(added, b):
                 return
-            added.add(key)
+            added.append(b)
             try:
                 comp = b.parentComponent
             except Exception:
                 return
             for g in groups:
                 if g[0] == comp:
-                    g[1].append(b); return
+                    g[1].append(b)
+                    return
             groups.append((comp, [b]))
 
         for ref, tok in specs:
@@ -261,7 +323,7 @@ def install(m):
             if target is None:
                 target = resolve_body(design, tok)
             if target is None:
-                log("carry skip: body lost tok={}".format(tok))
+                log("carry skip: body lost handle={}".format(tok))
                 continue
             enroll(target)
 
@@ -283,27 +345,7 @@ def install(m):
         n = math.sqrt(v[0] * v[0] + v[1] * v[1] + v[2] * v[2]) or 1.0
         return [v[0] / n, v[1] / n, v[2] / n]
 
-    def resolve_body(design, tok):
-        if design is None or not tok:
-            return None
-        try:
-            ents = design.findEntityByToken(tok)
-        except Exception:
-            return None
-        try:
-            for e in ents:
-                if isinstance(e, adsk.fusion.BRepBody):
-                    return e
-        except Exception:
-            pass
-        return None
-
     def displacement(mark, p):
-        """How far a dependant at point p should translate to stay attached.
-
-        Scale moves each point away from the centre in proportion to distance
-        ((f-1)(p-c)); a directional scale only along its axis; an extrude pushes
-        the extruded face by d along its normal."""
         tool = mark.get("tool")
         if tool == "scale":
             c = mark.get("anchor", [0.0, 0.0, 0.0])
@@ -332,8 +374,6 @@ def install(m):
             comp.features.moveFeatures.createInput(coll, mtx))
 
     def detect_flex_deps(mark, primary):
-        """Dependants for a Scale/Extrude. For Extrude, only bodies touching the
-        extruded face itself follow (parts on other faces don't move)."""
         tool = mark.get("tool")
         design = m._design()
         if design is None or primary is None:
@@ -354,15 +394,12 @@ def install(m):
                 target = primary.boundingBox
             except Exception:
                 return []
-        ptok = body_token(primary)
+
         out = []
-        seen = set()
         for b in all_bodies(design):
             try:
-                tok = body_token(b)
-                if not tok or tok == ptok or tok in seen:
+                if same_body_instance(b, primary) or contains_body(out, b):
                     continue
-                seen.add(tok)
                 if hasattr(b, "isVisible") and not b.isVisible:
                     continue
                 try:
@@ -378,10 +415,6 @@ def install(m):
         return out[:12]
 
     def apply_flex(mark, deps):
-        """Scale/extrude the primary, then translate each chosen dependant by its
-        own local displacement so it stays attached (position follows, size is
-        never changed). Returns old_accept's result. deps may be empty (then only
-        the primary changes)."""
         design = m._design()
         plan = []
         for b in deps:
@@ -389,11 +422,11 @@ def install(m):
                 c = m._bbox_center_size(b)[0]
                 disp = displacement(mark, c)
                 plan.append((b, body_token(b), disp))
-                log("FLEX plan tok={} disp=({:.3f}, {:.3f}, {:.3f})".format(
+                log("FLEX plan handle={} disp=({:.3f}, {:.3f}, {:.3f})".format(
                     body_token(b), disp[0], disp[1], disp[2]))
             except Exception:
                 log("FLEX plan failed\n{}".format(m.traceback.format_exc()))
-        ok = old_accept(mark)      # scale / extrude the primary
+        ok = old_accept(mark)
         moved = 0
         if ok:
             for body, tok, disp in plan:
@@ -408,7 +441,7 @@ def install(m):
                 if target is None:
                     target = resolve_body(design, tok)
                 if target is None:
-                    log("FLEX skip: body lost tok={}".format(tok))
+                    log("FLEX skip: body lost handle={}".format(tok))
                     continue
                 try:
                     translate_body(target, disp)
@@ -424,9 +457,8 @@ def install(m):
     def accept(mark):
         tool = mark.get("tool")
 
-        # Axis Rotate has no selection-time scope question, so it keeps the
-        # confirm-at-accept dialog: detect what's built on the part, highlight it,
-        # ask once, carry along if the reviewer says yes.
+        # Axis Rotate predates the selection-time snapshot path. Keep its explicit
+        # confirmation behavior until it has the same creation snapshot contract.
         if tool == "axis_rotate":
             primary = m._body.get(mark["id"])
             deps = []
@@ -439,71 +471,57 @@ def install(m):
                 take = confirm(len(deps))
                 highlight(deps, False)
                 if take:
-                    try:
-                        primary.opacity = 1.0
-                    except Exception:
-                        pass
                     return apply_together(rigid_matrix(mark), primary, deps)
             return old_accept(mark)
 
-        # Move / Rotate: the "carry the neighbours too?" question was already
-        # answered at selection (fuzzycad_move_scope's messageBox), so we DON'T ask
-        # again here. Two sets are handled, both silently:
-        #   - neighbours present when the mark was created (related_tokens): moved
-        #     only if the reviewer chose "together".
-        #   - parts touching the primary NOW but not in that snapshot: built on the
-        #     part *after* it became uncertain -> carried automatically. Leaving them
-        #     behind would silently break geometry that was stacked on an open
-        #     question, which is exactly the failure FuzzyCAD exists to prevent.
-        # Both are resolved from currently-live bodies (no stale refs), and the
-        # primary is moved by old_accept first so all its legacy bookkeeping runs.
         if tool in RIGID_TOOLS:
             primary = m._body.get(mark["id"])
             design = m._design()
             scope = mark.get("move_scope", "only")
-            s0 = set(mark.get("related_tokens", []) or [])
-            all0 = set(mark.get("all_tokens_at_mark", []) or [])
-            specs = []          # [(ref, token)] to carry with the primary
+            related_handles = list(mark.get("related_tokens", []) or [])
+            all_handles = list(mark.get("all_tokens_at_mark", []) or [])
+            related_snapshot = resolve_token_bodies(design, related_handles)
+            all_snapshot = resolve_token_bodies(design, all_handles)
+            specs = []
             approved = 0
             built_on = 0
             try:
                 current = detect_dependents(primary)
             except Exception:
                 current = []
+
             for b in current:
-                tok = body_token(b)
-                if tok in s0:
+                was_related = contains_body(related_snapshot, b)
+                existed_at_mark = contains_body(all_snapshot, b)
+                if was_related:
                     if scope == "together":
-                        specs.append((b, tok)); approved += 1
-                elif all0 and tok not in all0:
-                    # Genuinely new since the mark (built on the part afterwards) ->
-                    # auto-carry. Requires the all-token snapshot: without it we can't
-                    # tell new from pre-existing, so we do NOT auto-carry (that empty-
-                    # snapshot case used to move every neighbour even on "Only this").
-                    specs.append((b, tok)); built_on += 1
+                        specs.append((b, body_token(b)))
+                        approved += 1
+                elif all_handles and not existed_at_mark:
+                    # This body genuinely did not exist when the unresolved
+                    # decision was created and is now attached to the upstream
+                    # body. It is downstream work and must follow automatically.
+                    specs.append((b, body_token(b)))
+                    built_on += 1
+
             log("MOVE/ROTATE carry scope={} approved_neighbours={} built_on_top={}".format(
                 scope, approved, built_on))
-            ok = old_accept(mark)                # move the primary (legacy path)
+            ok = old_accept(mark)
             if ok and specs:
                 moved = carry_bodies(rigid_matrix(mark), specs, design)
                 log("carried {} of {} dependant bodies".format(moved, len(specs)))
             return ok
 
-        # Non-rigid: Scale / Extrude -> each dependant follows its own local
-        # displacement (position follows, size never changes; the primary is
-        # scaled/extruded as usual).
         if tool in FLEX_TOOLS:
             primary = m._body.get(mark["id"])
 
-            # Scale (uniform or directional): the "keep them attached?" question was
-            # already answered at selection (fuzzycad_scale_scope), so don't re-ask.
-            # Neighbours present at mark time follow only if the reviewer said yes;
-            # parts built on the primary since then follow automatically. Fixed-side
-            # neighbours simply get a zero displacement and stay put on their own.
             if tool in ("scale", "scale_axis") and mark.get("scope_asked"):
+                design = m._design()
                 scope = mark.get("move_scope", "only")
-                s0 = set(mark.get("related_tokens", []) or [])
-                all0 = set(mark.get("all_tokens_at_mark", []) or [])
+                related_handles = list(mark.get("related_tokens", []) or [])
+                all_handles = list(mark.get("all_tokens_at_mark", []) or [])
+                related_snapshot = resolve_token_bodies(design, related_handles)
+                all_snapshot = resolve_token_bodies(design, all_handles)
                 try:
                     current = detect_flex_deps(mark, primary)
                 except Exception:
@@ -511,22 +529,21 @@ def install(m):
                 chosen = []
                 attached = built_on = 0
                 for b in current:
-                    tok = body_token(b)
-                    if tok in s0:
+                    was_related = contains_body(related_snapshot, b)
+                    existed_at_mark = contains_body(all_snapshot, b)
+                    if was_related:
                         if scope == "together":
-                            chosen.append(b); attached += 1
-                    elif all0 and tok not in all0:
-                        # Genuinely new since the mark -> built on top -> auto.
-                        # Requires the all-token snapshot; without it we don't guess
-                        # (and a pre-existing part the growth merely reached is never
-                        # treated as new).
-                        chosen.append(b); built_on += 1
+                            chosen.append(b)
+                            attached += 1
+                    elif all_handles and not existed_at_mark:
+                        chosen.append(b)
+                        built_on += 1
                 log("SCALE carry scope={} attached={} built_on_top={}".format(
                     scope, attached, built_on))
                 return apply_flex(mark, chosen)
 
-            # Extrude (and any scale with no selection-time answer): keep the
-            # confirm-at-accept dialog.
+            # Extrude (and any scale with no selection-time answer) keeps the
+            # explicit confirmation path because no creation snapshot is available.
             deps = []
             try:
                 deps = detect_flex_deps(mark, primary)
@@ -542,4 +559,4 @@ def install(m):
         return old_accept(mark)
 
     m._accept = accept
-    log("DEPENDENT FOLLOW READY (move/rotate rigid + scale/extrude per-body)")
+    log("DEPENDENT FOLLOW READY (entity-resolved handoff identity + downstream carry)")
