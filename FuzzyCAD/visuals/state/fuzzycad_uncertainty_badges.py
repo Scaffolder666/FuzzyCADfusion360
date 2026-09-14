@@ -24,6 +24,7 @@ BADGE_PIXEL_SCALE = 24.0
 BADGE_FOCUS_SCALE = 1.15
 LEADER_RGB = (42, 42, 42)
 LEADER_WEIGHT = 2
+LEADER_DISTANCE_MULTIPLIER = 2.0
 
 # Base model-space placement. Fusion model units are cm.
 FIXED_GAP_MIN_CM = 1.8
@@ -374,7 +375,8 @@ def install(m):
         anchor = tuple(mark.get("anchor") or [0.0, 0.0, 0.0])
         target = bbox_tuple(body_bbox(body))
         if target is None:
-            return anchor, (anchor[0] + 2.5, anchor[1], anchor[2])
+            return anchor, (anchor[0] + 2.5 * LEADER_DISTANCE_MULTIPLIER,
+                            anchor[1], anchor[2])
 
         sx = max(target[3] - target[0], 1.0e-6)
         sy = max(target[4] - target[1], 1.0e-6)
@@ -413,7 +415,7 @@ def install(m):
             edge_cost = distance_to_global_edge(target, overall, direction)
 
             for push_rank, mult in enumerate(PUSH_MULTIPLIERS):
-                d = gap * float(mult)
+                d = gap * float(mult) * LEADER_DISTANCE_MULTIPLIER
                 center = (start[0] + dx * d + sv[0] * stack,
                           start[1] + dy * d + sv[1] * stack,
                           start[2] + dz * d + sv[2] * stack)
@@ -449,7 +451,8 @@ def install(m):
 
         if best is not None:
             return best[1], best[2]
-        return anchor, (anchor[0] + gap, anchor[1], anchor[2])
+        return anchor, (anchor[0] + gap * LEADER_DISTANCE_MULTIPLIER,
+                        anchor[1], anchor[2])
 
     def add_world_line(group, start, end, rgb, weight):
         coords = m.adsk.fusion.CustomGraphicsCoordinates.create([
@@ -458,7 +461,7 @@ def install(m):
         ])
         line = group.addLines(coords, [0, 1], True)
         line.color = m._solid(rgb)
-        line.weight = int(weight)
+        line.weight = float(weight)
         try:
             line.depthPriority = 10
         except Exception:
@@ -477,7 +480,7 @@ def install(m):
         coords = m.adsk.fusion.CustomGraphicsCoordinates.create(flat)
         line = group.addLines(coords, list(range(len(points))), True)
         line.color = m._solid(rgb)
-        line.weight = int(weight)
+        line.weight = float(weight)
 
         try:
             origin = m.adsk.core.Point3D.create(*center)
@@ -524,10 +527,11 @@ def install(m):
             add_local_badge_line(group, [(0.38, 0.32), (-0.38, -0.32)],
                                  center, rgb, 5, scale)
             return
+        # Need-input exclamation: half the previous stroke thickness.
         add_local_badge_line(group, [(0.0, 0.45), (0.0, -0.16)],
-                             center, rgb, 4, scale)
+                             center, rgb, 2.0, scale)
         add_local_badge_line(group, [(-0.045, -0.47), (0.045, -0.47)],
-                             center, rgb, 5, scale)
+                             center, rgb, 2.5, scale)
 
     def draw_badge(group, mark):
         if not visible(mark):
