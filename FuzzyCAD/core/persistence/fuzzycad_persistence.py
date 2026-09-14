@@ -8,7 +8,9 @@ Persistence is deliberately defensive:
 - never overwrite a non-empty saved snapshot from an unhydrated empty runtime;
 - keep the previous snapshot in a backup attribute before each write;
 - restore cards even when a geometry token can no longer be resolved, so a
-  collaboration decision does not silently disappear from the sidebar.
+  collaboration decision does not silently disappear from the sidebar;
+- hydrate current in-place Compare assembly identity and Hole face-local geometry,
+  while remaining backward compatible with older saved rows.
 """
 
 import json
@@ -16,7 +18,7 @@ import json
 ATTR_GROUP = "FuzzyCAD"
 ATTR_NAME = "uncertainty_state_v1"
 BACKUP_NAME = "uncertainty_state_v1_backup"
-SCHEMA_VERSION = 1
+SCHEMA_VERSION = 2
 
 
 def install(m):
@@ -178,13 +180,92 @@ def install(m):
         if des is None:
             return None
         try:
-            matches = des.findEntityByToken(tok)
+            matches = des.findEntityByToken(str(tok))
             for ent in matches:
                 if cls is None or isinstance(ent, cls):
                     return ent
         except Exception:
             pass
         return None
+
+    def same_entity(a, b):
+        if a is None or b is None:
+            return False
+        if a is b:
+            return True
+        try:
+            return bool(a == b)
+        except Exception:
+            return False
+
+    def native_body(body):
+        if body is None:
+            return None
+        try:
+            native = body.nativeObject
+            return native if native is not None else body
+        except Exception:
+            return body
+
+    def occurrence_path(occ):
+        try:
+            value = str(occ.fullPathName or "").strip()
+            return value or None
+        except Exception:
+            return None
+
+    def resolve_occurrence(tok=None, path=None):
+        if tok:
+            occ = resolve(tok, adsk.fusion.Occurrence)
+            if occ is not None:
+                return occ
+        des = design()
+        if des is None or not path:
+            return None
+        try:
+            occs = des.rootComponent.allOccurrences
+            for i in range(occs.count):
+                occ = occs.item(i)
+                if occurrence_path(occ) == str(path):
+                    return occ
+        except Exception:
+            pass
+        return None
+
+    def resolve_alt_body(alt):
+        """Resolve both current and older Compare alternative schemas.
+
+        Entity tokens are handles only. We resolve them to native Fusion objects
+        and compare the objects themselves instead of comparing token strings.
+        """
+        if not isinstance(alt, dict):
+            return None
+
+        # Current schema: preserve occurrence context first when possible.
+        occ = resolve_occurrence(
+            alt.get("occurrence_token"), alt.get("occurrence_path"))
+        native_tok = alt.get("native_body_token")
+        native_target = resolve(native_tok, adsk.fusion.BRepBody) if native_tok else None
+        if occ is not None and native_target is not None:
+            try:
+                bodies = occ.bRepBodies
+                for i in range(bodies.count):
+                    body = bodies.item(i)
+                    if same_entity(native_body(body), native_target):
+                        return body
+            except Exception:
+                pass
+
+        # Current in-place schema also keeps the originally selected proxy/body
+        # token. Old saved tokens remain valid handles even if Fusion later returns
+        # a different token string for the same entity.
+        for tok in alt.get("body_tokens") or []:
+            body = resolve(tok, adsk.fusion.BRepBody)
+            if body is not None:
+                return body
+
+        # Backward compatibility with the older target-aligned Compare schema.
+        return resolve(alt.get("token"), adsk.fusion.BRepBody)
 
     def reconstruct_geom(mark, ent, body):
         tool = mark.get("tool")
@@ -193,12 +274,15 @@ def install(m):
         if tool == "compare":
             alternatives = []
             for alt in mark.get("alternatives") or []:
-                if not isinstance(alt, dict):
-                    continue
-                b = resolve(alt.get("token"), adsk.fusion.BRepBody)
+                b = resolve_alt_body(alt)
                 if b is not None:
                     alternatives.append(b)
-            return {"alternatives": alternatives} if len(alternatives) >= 2 else None
+            if len(alternatives) < 2:
+                return None
+            geom = {"alternatives": alternatives}
+            if mark.get("inplace"):
+                geom["inplace"] = True
+            return geom
         if tool in ("move", "rotate", "scale", "scale_axis", "axis_rotate"):
             if body is None:
                 return None
@@ -207,7 +291,7 @@ def install(m):
                 geom["axis_origin"] = list(mark.get("axis_origin", mark.get("anchor", [0, 0, 0])))
                 geom["axis_dir"] = list(mark.get("axis_dir", [0, 0, 1]))
             return geom
-        if tool in ("extrude", "fillet") and ent is not None:
+        if tool in ("extrude", "fillet", "hole") and ent is not None:
             try:
                 pending = m._build_pending(tool, ent)
                 return pending.get("geom") if pending else None
@@ -253,7 +337,7 @@ def install(m):
                 tool = mark.get("tool")
                 body = resolve(row.get("body_token"), adsk.fusion.BRepBody)
                 ent = resolve(row.get("entity_token"))
-                if tool == "compare" and ent is None:
+                if tool == "compare" and ent is None and not mark.get("inplace"):
                     ent = resolve(mark.get("target_token"))
                 if body is None and isinstance(ent, (adsk.fusion.BRepBody, adsk.fusion.BRepFace, adsk.fusion.BRepEdge)):
                     try:
@@ -270,6 +354,10 @@ def install(m):
                     geom = {}
                     mark["reference_lost"] = True
                     degraded += 1
+                else:
+                    # A previous buggy build may have persisted reference_lost even
+                    # though the current build can resolve the complete subject.
+                    mark.pop("reference_lost", None)
 
                 if tool not in ("note", "compare") and body is None:
                     mark["reference_lost"] = True
@@ -289,6 +377,21 @@ def install(m):
                     m._entity[mid] = ent
                 if body is not None:
                     m._body[mid] = body
+
+                # Hole U/V offsets are face-local. Rebuild the basis from the
+                # resolved planar face on every handoff so side/angled holes do not
+                # silently fall back to world Z after reopen.
+                if tool == "hole" and geom and not mark.get("reference_lost"):
+                    try:
+                        base = geom.get("base_anchor")
+                        if base:
+                            mark["base_anchor"] = list(base)
+                        updater = getattr(m, "_hole_update_anchor", None)
+                        if updater is not None:
+                            updater(mark)
+                    except Exception:
+                        pass
+
                 try:
                     n = int(mark.get("num", 1) or 1)
                 except Exception:
@@ -399,7 +502,7 @@ def install(m):
     def run(context):
         result = old_run(context)
         load_state()
-        log("PERSISTENCE READY: guarded snapshot + backup + degraded-card recovery")
+        log("PERSISTENCE READY: guarded snapshot + backup + current Compare/Hole hydration")
         return result
 
     def stop(context):
