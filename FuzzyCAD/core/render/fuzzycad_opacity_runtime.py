@@ -1,12 +1,20 @@
 """Apply source-body opacity from the central visual authority.
 
 This module owns only Fusion body opacity bookkeeping. It does not decide which
-state a tool is in. `fuzzycad_uncertainty_visual.py` supplies body-level targets.
+state a tool is in. `fuzzycad_uncertainty_visual.py` supplies body-level claims.
 
-A critical ownership rule applies: FuzzyCAD restores opacity only when it has an
-explicit record of the value it changed. A user's own Fusion Opacity Control is
-never inferred to be stale merely because it happens to equal a FuzzyCAD display
-value such as 0.50.
+Opacity ownership is body-scoped, not mark-scoped. Several unresolved decisions
+may legitimately share one body. FuzzyCAD captures that body's original Fusion
+opacity once, keeps the record while ANY uncertainty claim remains, and restores
+the original only after the last claim disappears. Accept/Reject order therefore
+does not change the original value.
+
+A claim can temporarily request no opacity override (for example a clean Editing
+view). In that case the body is restored to its captured original for display,
+but the ownership record is retained until the final claim is gone.
+
+FuzzyCAD never infers ownership from a numeric opacity value. A user's own Fusion
+Opacity Control is touched only when FuzzyCAD has an explicit captured original.
 """
 
 import json
@@ -19,11 +27,13 @@ def install(m):
     old_run = m.run
     old_stop = m.stop
     old_remove_mark = m._remove_mark
-    records = {}  # entity-token lookup handle -> captured original numeric opacity
-    crash_records = {}  # persisted lookup handle -> original numeric opacity
+
+    # Lookup handles are persistence handles only, never identity comparisons.
+    records = {}       # saved token -> captured original numeric opacity
+    crash_records = {} # persisted saved token -> captured original numeric opacity
     crash_loaded = [False]
     last_targets = [None]
-    applied = {}  # lookup handle -> opacity we last wrote
+    applied = {}       # saved token -> opacity FuzzyCAD last wrote
 
     def design():
         try:
@@ -45,11 +55,52 @@ def install(m):
             if des is None:
                 return None
             for ent in des.findEntityByToken(str(tok)):
-                if isinstance(ent, m.adsk.fusion.BRepBody):
-                    return ent
+                body = m.adsk.fusion.BRepBody.cast(ent)
+                if body is not None:
+                    return body
         except Exception:
             pass
         return None
+
+    def same_entity(a, b):
+        if a is None or b is None:
+            return False
+        if a is b:
+            return True
+        try:
+            return bool(a == b)
+        except Exception:
+            return False
+
+    def native_body(body):
+        if body is None:
+            return None
+        try:
+            native = body.nativeObject
+            return native if native is not None else body
+        except Exception:
+            return body
+
+    def body_occurrence(body):
+        try:
+            return m.adsk.fusion.Occurrence.cast(body.assemblyContext)
+        except Exception:
+            return None
+
+    def same_body_instance(a, b):
+        """Compare live body identity while preserving occurrence context."""
+        if same_entity(a, b):
+            return True
+        if a is None or b is None:
+            return False
+        if not same_entity(native_body(a), native_body(b)):
+            return False
+        oa, ob = body_occurrence(a), body_occurrence(b)
+        if oa is None and ob is None:
+            return True
+        if oa is None or ob is None:
+            return False
+        return same_entity(oa, ob)
 
     def load_crash_records():
         if crash_loaded[0]:
@@ -97,40 +148,138 @@ def install(m):
                 except Exception:
                     pass
 
-    def desired_targets():
-        wanted = {}
+    def owner_token_for_body(body, preferred=None):
+        """Reuse an existing ownership handle for the same resolved body instance."""
+        load_crash_records()
+        if preferred and (preferred in records or preferred in crash_records):
+            return preferred
+        for tok in list(records.keys()) + [t for t in crash_records.keys() if t not in records]:
+            if same_body_instance(resolve_body(tok), body):
+                return tok
+        return preferred or body_token(body)
+
+    def visual_claims():
+        """Return one merged claim per live body instance.
+
+        The visual authority normally already aggregates marks by body. We merge
+        once more by resolved Fusion identity so two wrappers/tokens for the same
+        occurrence cannot create two opacity owners.
+        """
+        groups = []
         try:
-            for tok, body, opacity in m._visual_opacity_subject_rows():
-                if body is not None and tok and opacity is not None:
-                    wanted[str(tok)] = (body, float(opacity))
-            return wanted
+            states = list(m._visual_body_states() or [])
         except Exception:
-            pass
+            states = []
 
-        ghost_v = float(getattr(m, "GHOST_OPACITY", 0.5))
-        for mark in list(getattr(m, "_marks", []) or []):
-            if mark.get("status", "open") != "open" or mark.get("tool") == "note":
+        if states:
+            for row in states:
+                body = row.get("body")
+                if body is None:
+                    continue
+                group = None
+                for existing in groups:
+                    if same_body_instance(existing["body"], body):
+                        group = existing
+                        break
+                if group is None:
+                    group = {
+                        "body": body,
+                        "tokens": [],
+                        "mark_ids": [],
+                        "wants_comic": False,
+                        "suppress_comic": False,
+                        "editing_opacities": [],
+                        "fallback_targets": [],
+                    }
+                    groups.append(group)
+                tok = row.get("token") or body_token(body)
+                if tok and tok not in group["tokens"]:
+                    group["tokens"].append(str(tok))
+                for mid in row.get("mark_ids") or []:
+                    if mid not in group["mark_ids"]:
+                        group["mark_ids"].append(mid)
+                if row.get("wants_comic") or row.get("comic_visible"):
+                    group["wants_comic"] = True
+                if row.get("suppress_comic"):
+                    group["suppress_comic"] = True
+                editing_opacity = row.get("editing_opacity")
+                if editing_opacity is not None:
+                    try:
+                        group["editing_opacities"].append(float(editing_opacity))
+                    except Exception:
+                        pass
+                target = row.get("source_opacity")
+                if target is not None:
+                    try:
+                        group["fallback_targets"].append(float(target))
+                    except Exception:
+                        pass
+        else:
+            # Compatibility fallback for older visual authority implementations.
+            try:
+                for tok, body, opacity in m._visual_opacity_subject_rows():
+                    if body is None:
+                        continue
+                    groups.append({
+                        "body": body,
+                        "tokens": [str(tok)] if tok else [],
+                        "mark_ids": [],
+                        "wants_comic": False,
+                        "suppress_comic": False,
+                        "editing_opacities": [],
+                        "fallback_targets": [float(opacity)] if opacity is not None else [],
+                    })
+            except Exception:
+                pass
+
+        claims = {}
+        comic_opacity = float(getattr(m, "_VISUAL_COMIC_SOURCE_OPACITY", 0.02))
+        for group in groups:
+            # Preserve the visual authority's precedence: a clean Editing claim
+            # suppresses Proposed comic. If that editing claim explicitly asks for
+            # opacity (Hole/Fillet), use it. Otherwise show the captured original.
+            if group["suppress_comic"]:
+                target = (max(group["editing_opacities"])
+                          if group["editing_opacities"] else None)
+            elif group["wants_comic"]:
+                target = comic_opacity
+            elif group["editing_opacities"]:
+                target = max(group["editing_opacities"])
+            elif group["fallback_targets"]:
+                # Fallback rows have no phase metadata. Use the least invasive
+                # explicit target deterministically instead of traversal order.
+                target = max(group["fallback_targets"])
+            else:
+                target = None
+
+            preferred = group["tokens"][0] if group["tokens"] else body_token(group["body"])
+            key = owner_token_for_body(group["body"], preferred)
+            if not key:
                 continue
-            body = m._body.get(mark.get("id"))
-            tok = body_token(body)
-            if body is not None and tok:
-                wanted[tok] = (body, ghost_v)
-        return wanted
+            claims[str(key)] = {
+                "body": group["body"],
+                "target": target,
+                "mark_ids": list(group["mark_ids"]),
+            }
+        return claims
 
-    def target_signature(wanted):
+    def desired_targets():
+        return {tok: (row["body"], float(row["target"]))
+                for tok, row in visual_claims().items()
+                if row.get("target") is not None}
+
+    def target_signature(claims):
         try:
             return tuple(sorted(
-                (str(tok), round(float(target), 4))
-                for tok, (_body, target) in wanted.items()))
+                (str(tok),
+                 None if row.get("target") is None else round(float(row.get("target")), 4),
+                 tuple(sorted(str(mid) for mid in row.get("mark_ids") or [])))
+                for tok, row in claims.items()))
         except Exception:
             return ()
 
-    def capture_original(tok, body, target):
-        """Capture exactly what Fusion says the user's body opacity is now.
-
-        Never infer an original value from the numeric opacity. A legitimate user
-        setting can be 0.50, 0.16, or any other value that FuzzyCAD also uses.
-        """
+    def capture_original(tok, body):
+        """Capture exactly what Fusion says the user's body opacity is now."""
         load_crash_records()
         if tok in crash_records:
             try:
@@ -145,68 +294,80 @@ def install(m):
         save_crash_records()
         return float(cur)
 
-    def restore_token(tok):
+    def original_for(tok):
         load_crash_records()
-        applied.pop(tok, None)
-        original = records.pop(tok, None)
-        if original is None:
-            original = crash_records.get(tok)
+        if tok in records:
+            return records.get(tok)
+        return crash_records.get(tok)
+
+    def restore_owned(tok, body=None, drop_owner=False):
+        """Show the captured original, optionally releasing FuzzyCAD ownership."""
+        original = original_for(tok)
         if original is None:
             return False
-        body = resolve_body(tok)
         if body is None:
-            return False
-        ok = False
-        try:
-            if body.isValid:
-                body.opacity = float(original)
-                ok = True
-        except Exception:
-            try:
-                body.opacity = float(original)
-                ok = True
-            except Exception:
-                pass
-        if ok:
-            crash_records.pop(tok, None)
-            save_crash_records()
-        return ok
-
-    def restore_orphan_body(body):
-        """Restore only a body for which FuzzyCAD captured an original opacity."""
-        tok = body_token(body)
-        if not tok:
-            return False
-        if tok in desired_targets():
-            return False
-
-        load_crash_records()
-        applied.pop(tok, None)
-        original = records.pop(tok, None)
-        if original is None:
-            original = crash_records.get(tok)
-        if original is None:
-            # Ownership boundary: no FuzzyCAD record means do not touch the user's
-            # native Opacity Control, regardless of its numeric value.
+            body = resolve_body(tok)
+        if body is None:
             return False
         try:
             body.opacity = float(original)
-            crash_records.pop(tok, None)
-            save_crash_records()
-            return True
         except Exception:
             return False
+        applied.pop(tok, None)
+        if drop_owner:
+            records.pop(tok, None)
+            crash_records.pop(tok, None)
+            save_crash_records()
+        return True
+
+    def body_has_claim(body, claims=None):
+        claims = claims if claims is not None else visual_claims()
+        for row in claims.values():
+            if same_body_instance(row.get("body"), body):
+                return True
+        return False
+
+    def restore_orphan_body(body):
+        """Restore only after the LAST uncertainty claim on this body disappears."""
+        if body is None:
+            return False
+        claims = visual_claims()
+        if body_has_claim(body, claims):
+            # The body is still owned by at least one uncertainty. A clean Editing
+            # claim may display the original opacity, but ownership must stay alive.
+            return False
+        tok = owner_token_for_body(body, body_token(body))
+        if not tok or original_for(tok) is None:
+            return False
+        return restore_owned(tok, body, drop_owner=True)
 
     def recover_crash_records():
         load_crash_records()
-        wanted = desired_targets()
+        claims = visual_claims()
         changed = False
         for tok, original in list(crash_records.items()):
-            if tok in wanted:
-                records[tok] = float(original)
-                continue
             body = resolve_body(tok)
             if body is None:
+                continue
+            claim = None
+            for key, row in claims.items():
+                if same_body_instance(row.get("body"), body):
+                    claim = (key, row)
+                    break
+            if claim is not None:
+                key, row = claim
+                # Re-key a persisted old lookup handle onto the claim owner while
+                # preserving the one true original value.
+                records[key] = float(original)
+                if key != tok:
+                    crash_records[key] = float(original)
+                    crash_records.pop(tok, None)
+                    changed = True
+                if row.get("target") is None:
+                    try:
+                        body.opacity = float(original)
+                    except Exception:
+                        pass
                 continue
             try:
                 body.opacity = float(original)
@@ -220,14 +381,24 @@ def install(m):
             save_crash_records()
 
     def refresh_ghost():
-        wanted = desired_targets()
-        signature = target_signature(wanted)
+        claims = visual_claims()
+        signature = target_signature(claims)
         phase_changed = signature != last_targets[0]
         load_crash_records()
 
-        for tok, (body, target) in wanted.items():
+        # Apply or temporarily release the visual override for every active claim.
+        for tok, row in claims.items():
+            body = row.get("body")
+            target = row.get("target")
+            if target is None:
+                # Keep the captured original record while another uncertainty still
+                # owns the body. Only the display override is temporarily released.
+                if tok in records or tok in crash_records:
+                    restore_owned(tok, body, drop_owner=False)
+                continue
+
             if tok not in records:
-                records[tok] = capture_original(tok, body, target)
+                records[tok] = capture_original(tok, body)
             target = float(target)
             if applied.get(tok) == target:
                 continue
@@ -237,13 +408,17 @@ def install(m):
             except Exception:
                 pass
 
-        for tok in list(records.keys()):
-            if tok not in wanted:
-                restore_token(tok)
-                applied.pop(tok, None)
+        # Ownership ends only when no active uncertainty claim remains on the body.
+        owned_tokens = set(records.keys()) | set(crash_records.keys())
+        for tok in list(owned_tokens):
+            body = resolve_body(tok)
+            if body is not None and body_has_claim(body, claims):
+                continue
+            restore_owned(tok, body, drop_owner=True)
 
         try:
-            m._ghosted = {tok: body for tok, (body, _target) in wanted.items()}
+            m._ghosted = {tok: row["body"] for tok, row in claims.items()
+                          if row.get("target") is not None}
         except Exception:
             pass
 
@@ -261,7 +436,7 @@ def install(m):
         load_crash_records()
         tokens = set(records.keys()) | set(crash_records.keys())
         for tok in list(tokens):
-            restore_token(tok)
+            restore_owned(tok, resolve_body(tok), drop_owner=True)
         applied.clear()
         last_targets[0] = None
         try:
@@ -275,6 +450,7 @@ def install(m):
     m._restore_orphan_visual_body = restore_orphan_body
     m._recover_visual_opacity = recover_crash_records
     m._ghost_opacity_records = records
+    m._visual_opacity_claims = visual_claims
 
     def remove_mark(mid):
         body = None
@@ -289,8 +465,8 @@ def install(m):
         except Exception:
             pass
 
-        # If refresh did not already restore it, try the exact ownership record.
-        # No record means no write; never force an arbitrary transparent body solid.
+        # refresh_ghost owns the normal stacked-claim path. This is only a bounded
+        # recovery attempt for a body whose last mark disappeared unexpectedly.
         if body is not None:
             try:
                 restore_orphan_body(body)
