@@ -1,12 +1,14 @@
 """Viewport badge visualization for FuzzyCAD uncertainty marks.
 
-This file owns badge rendering only. Badge lifecycle comes from the central
-uncertainty visual authority; this module supplies collaboration-type variation:
-Need Input, Constraint/Note, and Conflict/Compare icons.
+Badge rules:
+- one screen-consistent badge size across marks;
+- place badges outside the projected subject bounds when possible;
+- connect every badge back to the related geometry with a leader line;
+- stack multiple badges that belong to the same body instead of letting them overlap;
+- keep the graphics vector-only because Fusion can reopen saved text/PNG billboards
+  as white placeholder quads.
 
-Persistent viewport text is deliberately avoided here. Fusion can reopen saved
-CustomGraphicsText as white placeholder quads, so notes use a vector leader plus
-the constraint badge; the full note text remains available in the side panel.
+Badge lifecycle still comes from the central uncertainty visual authority.
 """
 
 import importlib.util
@@ -14,13 +16,15 @@ import os
 import sys
 
 
-def install(m):
-    old_draw_badge = m._draw_badge
-    old_icon_path = m._icon_path
+BADGE_PIXEL_SCALE = 13.0
+BADGE_OUTSIDE_MARGIN_PX = 26.0
+BADGE_STACK_GAP_PX = 30.0
+BADGE_FOCUS_SCALE = 1.15
+LEADER_RGB = (92, 92, 92)
 
-    # Persistent CustomGraphicsText/PNG billboards are not reload-safe in Fusion.
-    # Keep the shared switch off for the saved-document renderer. Interactive HTML
-    # cards remain the source for names, values, and full note text.
+
+def install(m):
+    old_icon_path = m._icon_path
     m._VIEWPORT_LABELS = False
 
     try:
@@ -44,64 +48,312 @@ def install(m):
 
     m._icon_path = icon_path
 
-    # fuzzycad_note_dimensions originally renders note text through addText().
-    # That text can turn into a white rectangle after reopening an .f3d. Replace
-    # only the persistent note renderer here, after note_dimensions has installed,
-    # with texture-free line graphics. _draw_one still adds the constraint badge,
-    # so the note remains visible and locatable in the viewport.
-    def draw_note_reload_safe(group, mark, rgb, amp):
+    def log(msg):
         try:
-            a = mark.get("anchor") or [0.0, 0.0, 0.0]
-            s = float(mark.get("size", 3.0) or 3.0)
-            (xx, xy, xz), (yx, yy, yz) = m._camera_xy()
-            off = max(1.0, min(s * 0.9, 3.2))
-            tip = (
-                a[0] + (0.22 * xx + 0.94 * yx) * off,
-                a[1] + (0.22 * xy + 0.94 * yy) * off,
-                a[2] + (0.22 * xz + 0.94 * yz) * off,
-            )
-            m._sketchy(group, [tuple(a), tip], rgb, max(0.01, amp),
-                       mark["id"] * 3001, weight=2, strokes=1)
+            (m._app or m.adsk.core.Application.get()).log("[FuzzyCAD BADGES] " + msg)
         except Exception:
             pass
+
+    def visible(mark):
+        if mark is None:
+            return False
+        try:
+            return bool(m._visual_state(mark).get("show_badge"))
+        except Exception:
+            return mark.get("status", "open") == "open"
+
+    def presentation_type(mark):
+        tool = mark.get("tool")
+        if tool == "note":
+            return "constraint"
+        if tool == "compare":
+            return "conflict"
+        return mark.get("mtype", "need_input")
+
+    def same_entity(a, b):
+        if a is None or b is None:
+            return False
+        if a is b:
+            return True
+        try:
+            return bool(a == b)
+        except Exception:
+            return False
+
+    def native_body(body):
+        if body is None:
+            return None
+        try:
+            native = body.nativeObject
+            return native if native is not None else body
+        except Exception:
+            return body
+
+    def body_occurrence(body):
+        try:
+            return m.adsk.fusion.Occurrence.cast(body.assemblyContext)
+        except Exception:
+            return None
+
+    def same_body_instance(a, b):
+        if same_entity(a, b):
+            return True
+        if a is None or b is None:
+            return False
+        if not same_entity(native_body(a), native_body(b)):
+            return False
+        oa, ob = body_occurrence(a), body_occurrence(b)
+        if oa is None and ob is None:
+            return True
+        if oa is None or ob is None:
+            return False
+        return same_entity(oa, ob)
+
+    def subject_bodies(mark):
+        try:
+            fn = getattr(m, "_visual_subject_bodies", None)
+            if fn is not None:
+                rows = list(fn(mark) or [])
+                if rows:
+                    return rows
+        except Exception:
+            pass
+        mid = mark.get("id")
+        try:
+            body = m._body.get(mid)
+            if body is not None:
+                return [body]
+        except Exception:
+            pass
+        try:
+            ent = m._entity.get(mid)
+            body = m._entity_body(ent)
+            if body is not None:
+                return [body]
+        except Exception:
+            pass
+        return []
+
+    def primary_body(mark):
+        rows = subject_bodies(mark)
+        return rows[0] if rows else None
+
+    def badge_siblings(mark, body):
+        if body is None:
+            return [mark]
+        rows = []
+        for candidate in list(getattr(m, "_marks", None) or []):
+            if not visible(candidate):
+                continue
+            other = primary_body(candidate)
+            if same_body_instance(body, other):
+                rows.append(candidate)
+        rows.sort(key=lambda row: int(row.get("id", 0) or 0))
+        return rows or [mark]
+
+    def stack_offset_px(mark, body):
+        rows = badge_siblings(mark, body)
+        try:
+            idx = next(i for i, row in enumerate(rows) if row.get("id") == mark.get("id"))
+        except Exception:
+            idx = 0
+        return (idx - (len(rows) - 1) * 0.5) * BADGE_STACK_GAP_PX
+
+    def body_view_bounds(body, anchor_view):
+        if body is None:
+            return (anchor_view.x, anchor_view.x, anchor_view.y, anchor_view.y)
+        try:
+            bb = body.boundingBox
+            mn, mx = bb.minPoint, bb.maxPoint
+            pts = []
+            for x in (mn.x, mx.x):
+                for y in (mn.y, mx.y):
+                    for z in (mn.z, mx.z):
+                        q = m._app.activeViewport.modelToViewSpace(
+                            m.adsk.core.Point3D.create(x, y, z))
+                        if q is not None:
+                            pts.append(q)
+            if pts:
+                return (
+                    min(p.x for p in pts), max(p.x for p in pts),
+                    min(p.y for p in pts), max(p.y for p in pts))
+        except Exception:
+            pass
+        return (anchor_view.x, anchor_view.x, anchor_view.y, anchor_view.y)
+
+    def model_delta_for_view_delta(anchor, dx_px, dy_px):
+        try:
+            vp = m._app.activeViewport
+            (xx, xy, xz), (yx, yy, yz) = m._camera_xy()
+            a = m.adsk.core.Point3D.create(*anchor)
+            av = vp.modelToViewSpace(a)
+            xp = m.adsk.core.Point3D.create(anchor[0] + xx, anchor[1] + xy, anchor[2] + xz)
+            yp = m.adsk.core.Point3D.create(anchor[0] + yx, anchor[1] + yy, anchor[2] + yz)
+            xv = vp.modelToViewSpace(xp)
+            yv = vp.modelToViewSpace(yp)
+            if av is None or xv is None or yv is None:
+                return None
+
+            xdx, xdy = xv.x - av.x, xv.y - av.y
+            ydx, ydy = yv.x - av.x, yv.y - av.y
+            det = xdx * ydy - xdy * ydx
+            if abs(det) < 1.0e-9:
+                return None
+
+            cx = (dx_px * ydy - dy_px * ydx) / det
+            cy = (xdx * dy_px - xdy * dx_px) / det
+            return (
+                cx * xx + cy * yx,
+                cx * xy + cy * yy,
+                cx * xz + cy * yz,
+            )
+        except Exception:
+            return None
+
+    def badge_center(mark, body):
+        anchor = list(mark.get("anchor") or [0.0, 0.0, 0.0])
+        try:
+            vp = m._app.activeViewport
+            av = vp.modelToViewSpace(m.adsk.core.Point3D.create(*anchor))
+            if av is None:
+                raise RuntimeError("no view point")
+            minx, maxx, miny, maxy = body_view_bounds(body, av)
+            right_x = maxx + BADGE_OUTSIDE_MARGIN_PX
+            left_x = minx - BADGE_OUTSIDE_MARGIN_PX
+            if right_x + 18.0 <= float(vp.width):
+                target_x = right_x
+            else:
+                target_x = max(18.0, left_x)
+            target_y = (miny + maxy) * 0.5 + stack_offset_px(mark, body)
+            target_y = max(18.0, min(float(vp.height) - 18.0, target_y))
+            delta = model_delta_for_view_delta(
+                anchor, float(target_x - av.x), float(target_y - av.y))
+            if delta is not None:
+                return (
+                    anchor[0] + delta[0],
+                    anchor[1] + delta[1],
+                    anchor[2] + delta[2],
+                )
+        except Exception:
+            pass
+
+        try:
+            (xx, xy, xz), (yx, yy, yz) = m._camera_xy()
+            s = float(mark.get("size", 3.0) or 3.0)
+            off = max(1.0, min(s * 0.7, 4.0))
+            return (
+                anchor[0] + xx * off + yx * off * 0.25,
+                anchor[1] + xy * off + yy * off * 0.25,
+                anchor[2] + xz * off + yz * off * 0.25,
+            )
+        except Exception:
+            return tuple(anchor)
+
+    def add_lines(group, points, rgb, weight=2, view_scale=None, billboard_anchor=None):
+        if not points or len(points) < 2:
+            return None
+        flat = []
+        for p in points:
+            flat.extend([float(p[0]), float(p[1]), float(p[2])])
+        coords = m.adsk.fusion.CustomGraphicsCoordinates.create(flat)
+        line = group.addLines(coords, list(range(len(points))), True)
+        line.color = m._solid(rgb)
+        line.weight = int(weight)
+
+        if view_scale is not None and billboard_anchor is not None:
+            try:
+                anchor_pt = m.adsk.core.Point3D.create(*billboard_anchor)
+                line.viewScale = m.adsk.fusion.CustomGraphicsViewScale.create(
+                    float(view_scale), anchor_pt)
+            except Exception:
+                pass
+            try:
+                anchor_pt = m.adsk.core.Point3D.create(*billboard_anchor)
+                billboard = m.adsk.fusion.CustomGraphicsBillBoard.create(anchor_pt)
+                billboard.billBoardStyle = (
+                    m.adsk.fusion.CustomGraphicsBillBoardStyles.ScreenBillBoardStyle)
+                line.billBoarding = billboard
+            except Exception:
+                pass
+        return line
+
+    def badge_scale(mark):
+        scale = BADGE_PIXEL_SCALE
+        try:
+            state = m._visual_state(mark)
+            if state.get("phase") == "editing" or state.get("show_persistent_detail"):
+                scale *= BADGE_FOCUS_SCALE
+        except Exception:
+            pass
+        return scale
+
+    def draw_symbol(group, center, mtype, rgb, scale):
+        cx, cy, cz = center
+
+        def P(x, y):
+            return (cx + x, cy + y, cz)
+
+        if mtype == "constraint":
+            add_lines(group, [P(-0.28, 0.38), P(-0.28, -0.35)], rgb, 3, scale, center)
+            add_lines(group, [P(0.28, 0.38), P(0.28, -0.35)], rgb, 3, scale, center)
+            return
+
+        if mtype == "conflict":
+            add_lines(group, [P(-0.38, 0.32), P(0.38, -0.32)], rgb, 3, scale, center)
+            add_lines(group, [P(0.38, 0.32), P(-0.38, -0.32)], rgb, 3, scale, center)
+            return
+
+        add_lines(group, [P(0.0, 0.45), P(0.0, -0.16)], rgb, 3, scale, center)
+        add_lines(group, [P(-0.03, -0.47), P(0.03, -0.47)], rgb, 4, scale, center)
+
+    def draw_badge(group, mark):
+        if not visible(mark):
+            return
+
+        body = primary_body(mark)
+        mtype = presentation_type(mark)
+        rgb = m.MTYPE_COLOR.get(mtype, getattr(m, "COLOR_WARN", (200, 44, 32)))
+        anchor = tuple(mark.get("anchor") or [0.0, 0.0, 0.0])
+        center = badge_center(mark, body)
+        scale = badge_scale(mark)
+
+        try:
+            add_lines(group, [anchor, center], LEADER_RGB, weight=1)
+        except Exception:
+            pass
+
+        cx, cy, cz = center
+        tri = [
+            (cx, cy + 1.0, cz),
+            (cx + 0.92, cy - 0.72, cz),
+            (cx - 0.92, cy - 0.72, cz),
+            (cx, cy + 1.0, cz),
+        ]
+        try:
+            add_lines(group, tri, rgb, weight=3, view_scale=scale, billboard_anchor=center)
+            draw_symbol(group, center, mtype, rgb, scale)
+        except Exception:
+            try:
+                old = getattr(m, "_legacy_badge_fallback", None)
+                if old is not None:
+                    old(group, mark)
+            except Exception:
+                pass
+
+    try:
+        m._legacy_badge_fallback = m._draw_badge
+    except Exception:
+        pass
+    m._draw_badge = draw_badge
+
+    def draw_note_reload_safe(group, mark, rgb, amp):
+        return
 
     try:
         m._DRAW["note"] = draw_note_reload_safe
     except Exception:
         pass
 
-    def draw_badge(group, mark):
-        if mark is None:
-            return
-        try:
-            if not bool(m._visual_state(mark).get("show_badge")):
-                return
-        except Exception:
-            if mark.get("status", "open") != "open":
-                return
-
-        tool = mark.get("tool")
-        if tool == "note":
-            presentation = dict(mark)
-            presentation["tool"] = "note_badge"
-            presentation["mtype"] = "constraint"
-            return old_draw_badge(group, presentation)
-
-        if tool == "compare":
-            presentation = dict(mark)
-            presentation["mtype"] = "conflict"
-            return old_draw_badge(group, presentation)
-
-        return old_draw_badge(group, mark)
-
-    m._draw_badge = draw_badge
-
-    # Fusion 2026 can serialize API CustomGraphics into OGS/DefaultScene and then
-    # reopen them as orphaned render objects that are no longer enumerable through
-    # customGraphicsGroups. Install a save lifecycle guard: persist state, remove
-    # API-visible FuzzyCAD graphics immediately before save, then redraw after the
-    # save completes. Anchor the path to the legacy module at the add-in root so
-    # this remains independent of the visuals/state folder depth.
     try:
         root = os.path.dirname(os.path.abspath(m.__file__))
         path = os.path.join(root, "core", "persistence", "fuzzycad_save_clean.py")
@@ -112,7 +364,8 @@ def install(m):
         mod.install(m)
     except Exception:
         try:
-            (m._app or m.adsk.core.Application.get()).log(
-                "[FuzzyCAD BADGES] save-clean guard failed\n{}".format(m.traceback.format_exc()))
+            log("save-clean guard failed\n{}".format(m.traceback.format_exc()))
         except Exception:
             pass
+
+    log("OUTSIDE BADGES READY: screen-size + leader + same-body stacking")
