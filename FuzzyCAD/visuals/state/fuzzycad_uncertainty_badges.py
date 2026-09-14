@@ -3,7 +3,7 @@
 Badge rules:
 - one screen-consistent badge size across marks;
 - place badges just outside the projected subject bounds when possible;
-- connect every badge from the subject boundary to the visible badge edge;
+- draw the leader all the way to the badge center, then draw the badge on top;
 - stack multiple badges that belong to the same body instead of letting them overlap;
 - keep the graphics vector-only because Fusion can reopen saved text/PNG billboards
   as white placeholder quads.
@@ -20,13 +20,12 @@ import sys
 # triangle is ~1.84 units wide, so 19 gives a badge about 35 px wide at normal
 # focus, large enough to read without dominating the model.
 BADGE_PIXEL_SCALE = 19.0
-BADGE_EDGE_GAP_PX = 9.0
+# Visible leader length between the projected object edge and badge edge. The
+# leader itself continues underneath the badge to its center, so the badge is
+# literally placed on the line tail and no visual gap can appear.
+BADGE_EDGE_GAP_PX = 22.0
 BADGE_STACK_GAP_PX = 30.0
 BADGE_FOCUS_SCALE = 1.15
-# The leader endpoint sits inside the triangle instead of stopping exactly at the
-# outline. Because the badge is drawn afterward, the overlap is hidden and reads
-# as one continuous object-to-badge connection.
-BADGE_SOCKET_RADIUS_UNITS = 0.38
 LEADER_RGB = (42, 42, 42)
 LEADER_WEIGHT = 2
 
@@ -273,8 +272,8 @@ def install(m):
             target_y = max(half_h + 6.0,
                            min(float(vp.height) - half_h - 6.0, target_y))
 
-            # Start the leader on the projected bounding edge, not at the internal
-            # decision anchor. This makes the association read as object -> badge.
+            # Start on the projected object edge. The other end is the exact badge
+            # center, and the badge is rendered afterward on top of that line tail.
             edge_y = max(miny, min(maxy, target_y))
             center = model_point_for_view_target(anchor, target_x, target_y)
             leader_start = model_point_for_view_target(anchor, edge_x, edge_y)
@@ -295,37 +294,6 @@ def install(m):
             return center, tuple(anchor)
         except Exception:
             return tuple(anchor), tuple(anchor)
-
-    def badge_socket(center, leader_start, scale):
-        """Return a point inside the visible badge toward the subject.
-
-        The badge itself is view-scaled/billboarded while the leader is ordinary
-        model-space graphics. Computing the socket in view space makes the two meet
-        visually after zooming or rotating the camera. The endpoint intentionally
-        overlaps the triangle interior so anti-aliasing cannot leave a visible gap.
-        """
-        try:
-            vp = m._app.activeViewport
-            cv = vp.modelToViewSpace(m.adsk.core.Point3D.create(*center))
-            sv = vp.modelToViewSpace(m.adsk.core.Point3D.create(*leader_start))
-            if cv is None or sv is None:
-                return center
-            dx, dy = float(sv.x - cv.x), float(sv.y - cv.y)
-            ln = (dx * dx + dy * dy) ** 0.5
-            if ln < 1.0e-6:
-                return center
-            radius_px = float(scale) * BADGE_SOCKET_RADIUS_UNITS
-            delta = model_delta_for_view_delta(
-                center, dx / ln * radius_px, dy / ln * radius_px)
-            if delta is None:
-                return center
-            return (
-                center[0] + delta[0],
-                center[1] + delta[1],
-                center[2] + delta[2],
-            )
-        except Exception:
-            return center
 
     def add_lines(group, points, rgb, weight=2, view_scale=None, billboard_anchor=None):
         if not points or len(points) < 2:
@@ -383,10 +351,12 @@ def install(m):
         rgb = m.MTYPE_COLOR.get(mtype, getattr(m, "COLOR_WARN", (200, 44, 32)))
         scale = badge_scale(mark)
         center, leader_start = badge_layout(mark, body, scale)
-        leader_end = badge_socket(center, leader_start, scale)
 
+        # Deliberately terminate the line at the badge's anchor/center. The badge
+        # is drawn afterward and covers the tail, which guarantees a continuous
+        # visual connection regardless of zoom or billboard scaling.
         try:
-            add_lines(group, [leader_start, leader_end], LEADER_RGB,
+            add_lines(group, [leader_start, center], LEADER_RGB,
                       weight=LEADER_WEIGHT)
         except Exception:
             pass
@@ -440,4 +410,4 @@ def install(m):
         except Exception:
             pass
 
-    log("BADGES READY: larger + darker leaders + edge-to-edge attachment")
+    log("BADGES READY: badge centered on leader tail + longer visible leader")
