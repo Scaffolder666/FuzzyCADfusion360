@@ -1,16 +1,14 @@
 """Viewport badge visualization for FuzzyCAD uncertainty marks.
 
-Keep badge placement deliberately simple:
-- project the related body to viewport pixels;
-- choose one pixel position just outside that projected body;
-- convert that position back to ONE model-space endpoint;
-- draw the leader to that endpoint;
-- draw a local, view-scaled badge translated to exactly the same endpoint;
-- recompute the layout whenever the Fusion camera changes.
+Badge placement is intentionally model-space stable:
+- each badge gets one fixed position beside its related body;
+- the leader starts on the body's +X bounding-box face and ends at the badge center;
+- camera rotation, pan, and zoom do not recompute badge position;
+- viewScale is used only to keep the badge itself readable on screen;
+- multiple badges on the same body are stacked in model-space Z.
 
-The badge does not use CustomGraphicsBillBoard anchoring. Fusion has retired the
-billboard anchor argument, so relying on it can make the visible badge drift away
-from the model-space endpoint used by the leader.
+The badge primitives are local geometry translated to the exact leader endpoint,
+so the badge and line cannot drift apart because of separate placement systems.
 """
 
 import importlib.util
@@ -18,12 +16,19 @@ import os
 import sys
 
 
-BADGE_PIXEL_SCALE = 19.0
-VISIBLE_LEADER_PX = 34.0
-BADGE_STACK_GAP_PX = 34.0
+# ~44 px wide triangle at normal focus (triangle width is about 1.84 local units).
+BADGE_PIXEL_SCALE = 24.0
 BADGE_FOCUS_SCALE = 1.15
 LEADER_RGB = (42, 42, 42)
 LEADER_WEIGHT = 2
+
+# Fixed model-space placement. Fusion model units are cm.
+FIXED_GAP_MIN_CM = 1.5
+FIXED_GAP_MAX_CM = 4.0
+FIXED_GAP_BODY_FRAC = 0.35
+STACK_MIN_CM = 0.8
+STACK_MAX_CM = 2.0
+STACK_BODY_FRAC = 0.18
 
 
 def install(m):
@@ -121,6 +126,7 @@ def install(m):
                     return rows
         except Exception:
             pass
+
         mid = mark.get("id")
         try:
             body = m._body.get(mid)
@@ -128,6 +134,7 @@ def install(m):
                 return [body]
         except Exception:
             pass
+
         try:
             ent = m._entity.get(mid)
             body = m._entity_body(ent)
@@ -153,63 +160,14 @@ def install(m):
         rows.sort(key=lambda row: int(row.get("id", 0) or 0))
         return rows or [mark]
 
-    def stack_offset_px(mark, body):
+    def stack_index(mark, body):
         rows = badge_siblings(mark, body)
         try:
             idx = next(i for i, row in enumerate(rows)
                        if row.get("id") == mark.get("id"))
         except Exception:
             idx = 0
-        return (idx - (len(rows) - 1) * 0.5) * BADGE_STACK_GAP_PX
-
-    def body_view_bounds(body, fallback_view):
-        if body is None:
-            return (fallback_view.x, fallback_view.x,
-                    fallback_view.y, fallback_view.y)
-        try:
-            bb = body.boundingBox
-            mn, mx = bb.minPoint, bb.maxPoint
-            pts = []
-            vp = m._app.activeViewport
-            for x in (mn.x, mx.x):
-                for y in (mn.y, mx.y):
-                    for z in (mn.z, mx.z):
-                        p = vp.modelToViewSpace(
-                            m.adsk.core.Point3D.create(x, y, z))
-                        if p is not None:
-                            pts.append(p)
-            if pts:
-                return (min(p.x for p in pts), max(p.x for p in pts),
-                        min(p.y for p in pts), max(p.y for p in pts))
-        except Exception:
-            pass
-        return (fallback_view.x, fallback_view.x,
-                fallback_view.y, fallback_view.y)
-
-    def view_target_at_reference_depth(reference, target_x, target_y):
-        try:
-            vp = m._app.activeViewport
-            xf = vp.modelToViewSpaceTransform
-            p = m.adsk.core.Point3D.create(*reference)
-            if not p.transformBy(xf):
-                raise RuntimeError("model->view transform failed")
-            p.x = float(target_x)
-            p.y = float(target_y)
-            inv = xf.copy()
-            if not inv.invert():
-                raise RuntimeError("view transform not invertible")
-            if not p.transformBy(inv):
-                raise RuntimeError("view->model transform failed")
-            return (p.x, p.y, p.z)
-        except Exception:
-            try:
-                q = m._app.activeViewport.viewToModelSpace(
-                    m.adsk.core.Point2D.create(float(target_x), float(target_y)))
-                if q is not None:
-                    return (q.x, q.y, q.z)
-            except Exception:
-                pass
-        return None
+        return idx - (len(rows) - 1) * 0.5
 
     def badge_scale(mark):
         scale = BADGE_PIXEL_SCALE
@@ -221,51 +179,40 @@ def install(m):
             pass
         return scale
 
-    def badge_layout(mark, body, scale):
+    def fixed_badge_layout(mark, body):
+        """Return (leader_start, badge_center) in stable model coordinates.
+
+        Position never depends on the camera. The badge lives on the +X side of the
+        body's world-space bounding box. The decision anchor only chooses Y/Z on
+        that face so the leader still points near the relevant part of the object.
+        """
         anchor = tuple(mark.get("anchor") or [0.0, 0.0, 0.0])
-        try:
-            vp = m._app.activeViewport
-            av = vp.modelToViewSpace(m.adsk.core.Point3D.create(*anchor))
-            if av is None:
-                raise RuntimeError("anchor is not projectable")
-
-            minx, maxx, miny, maxy = body_view_bounds(body, av)
-            half_badge_w = 0.92 * float(scale)
-            half_badge_h = 1.00 * float(scale)
-
-            anchor_y = max(miny, min(maxy, float(av.y)))
-            target_y = anchor_y + stack_offset_px(mark, body)
-            target_y = max(half_badge_h + 8.0,
-                           min(float(vp.height) - half_badge_h - 8.0, target_y))
-
-            right_center_x = maxx + VISIBLE_LEADER_PX + half_badge_w
-            left_center_x = minx - VISIBLE_LEADER_PX - half_badge_w
-
-            if right_center_x + half_badge_w + 8.0 <= float(vp.width):
-                target_x = right_center_x
-                edge_x = maxx
-            else:
-                target_x = max(half_badge_w + 8.0, left_center_x)
-                edge_x = minx
-
-            edge_y = max(miny, min(maxy, target_y))
-            center = view_target_at_reference_depth(anchor, target_x, target_y)
-            start = view_target_at_reference_depth(anchor, edge_x, edge_y)
-            if center is not None and start is not None:
-                return start, center
-        except Exception:
-            pass
+        if body is None:
+            return anchor, (anchor[0] + 2.5, anchor[1], anchor[2])
 
         try:
-            (xx, xy, xz), (yx, yy, yz) = m._camera_xy()
-            s = float(mark.get("size", 3.0) or 3.0)
-            off = max(1.2, min(s * 0.65, 4.0))
-            center = (anchor[0] + xx * off,
-                      anchor[1] + xy * off,
-                      anchor[2] + xz * off)
-            return anchor, center
+            bb = body.boundingBox
+            mn, mx = bb.minPoint, bb.maxPoint
+            sx = max(float(mx.x - mn.x), 1.0e-6)
+            sy = max(float(mx.y - mn.y), 1.0e-6)
+            sz = max(float(mx.z - mn.z), 1.0e-6)
+            body_size = max(sx, sy, sz, 1.0)
+
+            # Clamp the stored decision anchor to the +X face of this body.
+            ay = max(float(mn.y), min(float(mx.y), float(anchor[1])))
+            az = max(float(mn.z), min(float(mx.z), float(anchor[2])))
+
+            gap = max(FIXED_GAP_MIN_CM,
+                      min(FIXED_GAP_MAX_CM, body_size * FIXED_GAP_BODY_FRAC))
+            stack_step = max(STACK_MIN_CM,
+                             min(STACK_MAX_CM, body_size * STACK_BODY_FRAC))
+            dz = stack_index(mark, body) * stack_step
+
+            start = (float(mx.x), ay, az)
+            center = (float(mx.x) + gap, ay, az + dz)
+            return start, center
         except Exception:
-            return anchor, anchor
+            return anchor, (anchor[0] + 2.5, anchor[1], anchor[2])
 
     def add_world_line(group, start, end, rgb, weight):
         coords = m.adsk.fusion.CustomGraphicsCoordinates.create([
@@ -282,6 +229,11 @@ def install(m):
         return line
 
     def add_local_badge_line(group, points, center, rgb, weight, scale):
+        """Draw badge geometry around local origin, then translate it to center.
+
+        Camera axes are used only to keep the icon facing the viewer. They do not
+        affect its model-space position.
+        """
         flat = []
         for x, y in points:
             flat.extend([float(x), float(y), 0.0])
@@ -296,14 +248,26 @@ def install(m):
             xdir = m.adsk.core.Vector3D.create(xx, xy, xz)
             ydir = m.adsk.core.Vector3D.create(yx, yy, yz)
             zdir = xdir.crossProduct(ydir)
-            xdir.normalize(); ydir.normalize(); zdir.normalize()
+            xdir.normalize()
+            ydir.normalize()
+            zdir.normalize()
             xf = m.adsk.core.Matrix3D.create()
             xf.setWithCoordinateSystem(origin, xdir, ydir, zdir)
             line.transform = xf
         except Exception:
-            pass
+            # If camera orientation cannot be read, the local badge remains in its
+            # default plane but still stays at the same center through the transform
+            # path above whenever possible.
+            try:
+                xf = m.adsk.core.Matrix3D.create()
+                xf.translation = m.adsk.core.Vector3D.create(
+                    float(center[0]), float(center[1]), float(center[2]))
+                line.transform = xf
+            except Exception:
+                pass
 
         try:
+            # Autodesk defines viewScale in pixels around this local anchor.
             line.viewScale = m.adsk.fusion.CustomGraphicsViewScale.create(
                 float(scale), m.adsk.core.Point3D.create(0.0, 0.0, 0.0))
         except Exception:
@@ -317,20 +281,20 @@ def install(m):
     def draw_symbol(group, center, mtype, rgb, scale):
         if mtype == "constraint":
             add_local_badge_line(group, [(-0.28, 0.38), (-0.28, -0.35)],
-                                 center, rgb, 4, scale)
+                                 center, rgb, 5, scale)
             add_local_badge_line(group, [(0.28, 0.38), (0.28, -0.35)],
-                                 center, rgb, 4, scale)
+                                 center, rgb, 5, scale)
             return
         if mtype == "conflict":
             add_local_badge_line(group, [(-0.38, 0.32), (0.38, -0.32)],
-                                 center, rgb, 4, scale)
+                                 center, rgb, 5, scale)
             add_local_badge_line(group, [(0.38, 0.32), (-0.38, -0.32)],
-                                 center, rgb, 4, scale)
+                                 center, rgb, 5, scale)
             return
         add_local_badge_line(group, [(0.0, 0.45), (0.0, -0.16)],
-                             center, rgb, 4, scale)
-        add_local_badge_line(group, [(-0.04, -0.47), (0.04, -0.47)],
                              center, rgb, 5, scale)
+        add_local_badge_line(group, [(-0.045, -0.47), (0.045, -0.47)],
+                             center, rgb, 6, scale)
 
     def draw_badge(group, mark):
         if not visible(mark):
@@ -341,8 +305,9 @@ def install(m):
         rgb = m.MTYPE_COLOR.get(
             mtype, getattr(m, "COLOR_WARN", (200, 44, 32)))
         scale = badge_scale(mark)
-        leader_start, center = badge_layout(mark, body, scale)
+        leader_start, center = fixed_badge_layout(mark, body)
 
+        # The leader and badge share exactly one model-space endpoint.
         try:
             add_world_line(group, leader_start, center,
                            LEADER_RGB, LEADER_WEIGHT)
@@ -353,7 +318,7 @@ def install(m):
             add_local_badge_line(
                 group,
                 [(0.0, 1.0), (0.92, -0.72), (-0.92, -0.72), (0.0, 1.0)],
-                center, rgb, 4, scale)
+                center, rgb, 5, scale)
             draw_symbol(group, center, mtype, rgb, scale)
         except Exception:
             try:
@@ -369,6 +334,7 @@ def install(m):
         pass
     m._draw_badge = draw_badge
 
+    # Notes use the same badge + leader. Avoid a duplicate legacy callout line.
     def draw_note_reload_safe(group, mark, rgb, amp):
         return
 
@@ -377,9 +343,8 @@ def install(m):
     except Exception:
         pass
 
-    # Badge placement is view-dependent, so recompute it after every camera
-    # change. Without this, rotating/panning/zooming leaves badges at positions
-    # calculated for the previous view.
+    # Remove the old camera-driven redraw hook if a previous version installed it.
+    # Badge position is now model-space fixed and should not move when the camera does.
     try:
         app = m._app or m.adsk.core.Application.get()
         old_handler = getattr(m, "_badge_camera_handler", None)
@@ -388,31 +353,9 @@ def install(m):
                 app.cameraChanged.remove(old_handler)
             except Exception:
                 pass
-
-        class BadgeCameraChangedHandler(m.adsk.core.CameraEventHandler):
-            def __init__(self):
-                super().__init__()
-
-            def notify(self, args):
-                if bool(getattr(m, "_badge_camera_redrawing", False)):
-                    return
-                try:
-                    m._badge_camera_redrawing = True
-                    m._redraw_marks()
-                except Exception:
-                    pass
-                finally:
-                    m._badge_camera_redrawing = False
-
-        handler = BadgeCameraChangedHandler()
-        if app.cameraChanged.add(handler):
-            m._badge_camera_handler = handler
-            try:
-                m._handlers.append(handler)
-            except Exception:
-                pass
+            m._badge_camera_handler = None
     except Exception:
-        log("cameraChanged handler install failed")
+        pass
 
     try:
         root = os.path.dirname(os.path.abspath(m.__file__))
@@ -428,4 +371,4 @@ def install(m):
         except Exception:
             pass
 
-    log("BADGES READY: exact endpoint + exact view transform + camera refresh")
+    log("BADGES READY: fixed model-space position + larger screen-size icon")
