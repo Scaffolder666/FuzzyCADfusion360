@@ -4,12 +4,10 @@ FuzzyCAD state lives inside the Fusion document as Design.attributes (group
 "FuzzyCAD"), so reopening a file restores every saved question and there was no
 UI to wipe it or even to see what is stored. This module adds two panel actions:
 
-  clearAll  -- permanently delete this document's FuzzyCAD state: end any active
-               FuzzyCAD command, remove both persistence attributes (primary +
-               backup), delete every FuzzyCAD custom-graphics overlay across all
-               components (not just root -- a Compare connector preview can live
-               on a sub-component), restore every ghosted body to full opacity,
-               and empty the in-memory marks.
+  clearAll  -- permanently delete this document's FuzzyCAD state. The request is
+               deferred to a Fusion custom event so an active reopened manipulator
+               can finish its own Execute/Destroy lifecycle before any mark/runtime
+               state is deleted.
   dumpState -- write the raw stored JSON to a file next to the add-in and show
                its path, so the persisted attribute can actually be inspected.
 
@@ -21,12 +19,15 @@ import os
 # Kept in sync with fuzzycad_persistence.py.
 ATTR_GROUP = "FuzzyCAD"
 ATTR_NAMES = ("uncertainty_state_v1", "uncertainty_state_v1_backup")
+CLEAR_EVENT_ID = "FuzzyCADClearAllSafe"
 _HERE = os.path.dirname(os.path.abspath(__file__))
 
 
 def install(m):
     adsk = m.adsk
     CurrentPaletteHTMLHandler = m.PaletteHTMLHandler
+    old_run = m.run
+    old_stop = m.stop
 
     def log(msg):
         try:
@@ -40,33 +41,43 @@ def install(m):
         except Exception:
             pass
 
-    def end_active_command():
-        # A live Compare/manipulator command keeps redrawing its own preview
-        # group, so deleting graphics without ending it would let the overlay
-        # (e.g. connector sprites) come straight back.
-        #
-        # A reopened card edit (`edit_existing`) must NEVER be closed with
-        # terminateActiveCommand() -- that native-manipulator terminate hard-crashes
-        # Fusion (ARCHITECTURE.md §5). Ask safe_confirm to finish it through the
-        # deferred doExecute path instead, and DON'T null _active_cmd here (the
-        # deferred close needs to still see it as the active edit). For any other
-        # command the normal terminate is fine.
-        if getattr(m, "_active_cmd", None) == "edit_existing":
-            finisher = getattr(m, "_safe_finish_reopen", None)
-            if finisher is not None:
-                try:
-                    finisher("confirm", getattr(m, "_active_edit_id", None))
-                    return
-                except Exception:
-                    pass
-        try:
-            m._ui.terminateActiveCommand()
-        except Exception:
-            pass
-        try:
-            m._active_cmd = None
-        except Exception:
-            pass
+    def finish_active_command_on_main_thread():
+        """Finish the active FuzzyCAD command before state is destroyed.
+
+        Reopened edits must close through Command.doExecute(True). Calling that
+        directly from an HTML callback is unsafe, so Clear All is first deferred
+        to this module's CustomEventHandler and only calls this helper there.
+        """
+        active = getattr(m, "_active_cmd", None)
+        if active == "edit_existing":
+            closer = getattr(m, "_close_active_edit_sync", None)
+            if closer is None:
+                log("CLEAR deferred: safe edit closer unavailable")
+                return False
+            try:
+                if not closer("clear-all"):
+                    log("CLEAR deferred: reopened edit did not close")
+                    return False
+            except Exception:
+                log("CLEAR edit close failed\n{}".format(m.traceback.format_exc()))
+                return False
+            if getattr(m, "_active_cmd", None) == "edit_existing":
+                log("CLEAR aborted: reopened edit still owns command")
+                return False
+            return True
+
+        if active is not None:
+            try:
+                m._ui.terminateActiveCommand()
+            except Exception:
+                log("CLEAR active command terminate failed\n{}".format(
+                    m.traceback.format_exc()))
+                return False
+            try:
+                m._active_cmd = None
+            except Exception:
+                pass
+        return True
 
     def delete_attributes(design):
         removed = 0
@@ -85,11 +96,7 @@ def install(m):
         return removed
 
     def delete_graphics(design):
-        """Remove every FuzzyCAD-owned graphics group on every component.
-
-        Groups are normally added to the root, but a Compare preview can attach
-        to an occurrence's component, which a root-only sweep would miss.
-        """
+        """Remove every FuzzyCAD-owned graphics group on every component."""
         try:
             comps = design.allComponents
         except Exception:
@@ -109,26 +116,26 @@ def install(m):
                 except Exception:
                     pass
 
-    def clear_all():
+    def clear_all_now():
         design = m._design()
         if design is None:
-            return
-        end_active_command()
-        # Put every ghosted body back to full opacity before dropping the marks
-        # that let the ghost bookkeeping find them.
+            return False
+
+        # Put only FuzzyCAD-owned visual overrides back to their captured originals
+        # before dropping the marks that own those records.
         try:
             m._restore_all_bodies()
         except Exception:
             pass
         delete_graphics(design)
-        # Drop any runtime dependency nudges (left-rail banner + tint).
+
         try:
             reset = getattr(m, "_reset_dependency_prompts", None)
             if reset:
                 reset()
         except Exception:
             pass
-        # Forget the in-memory collaboration state.
+
         try:
             m._marks[:] = []
             m._geom.clear(); m._entity.clear(); m._body.clear()
@@ -145,9 +152,8 @@ def install(m):
             m._pending = None
         except Exception:
             pass
-        # Delete the persisted document attributes so a reopen stays empty.
+
         removed = delete_attributes(design)
-        # A final clean redraw (marks empty) plus a state push.
         try:
             m._redraw_marks()
         except Exception:
@@ -161,6 +167,25 @@ def install(m):
         except Exception:
             pass
         log("CLEARED all FuzzyCAD state (attributes removed={})".format(removed))
+        return True
+
+    def request_clear_all():
+        try:
+            m._app.fireCustomEvent(CLEAR_EVENT_ID, "")
+            log("CLEAR queued on Fusion main thread")
+            return True
+        except Exception:
+            log("CLEAR queue failed\n{}".format(m.traceback.format_exc()))
+            return False
+
+    class ClearAllEvent(adsk.core.CustomEventHandler):
+        def notify(self, args):
+            try:
+                if not finish_active_command_on_main_thread():
+                    return
+                clear_all_now()
+            except Exception:
+                log("CLEAR custom event failed\n{}".format(m.traceback.format_exc()))
 
     def dump_state():
         """Write the raw persisted JSON to a file and report where it is."""
@@ -207,8 +232,8 @@ def install(m):
                 e = adsk.core.HTMLEventArgs.cast(args)
                 act = e.action if e is not None else None
                 if act == "clearAll":
-                    clear_all()
-                    try: e.returnData = json.dumps({"ok": True})
+                    ok = request_clear_all()
+                    try: e.returnData = json.dumps({"ok": bool(ok), "queued": bool(ok)})
                     except Exception: pass
                     return
                 if act == "dumpState":
@@ -221,6 +246,33 @@ def install(m):
             self._delegate.notify(args)
 
     m.PaletteHTMLHandler = PaletteHTMLHandler
-    m._clear_all_uncertainty = clear_all
+    m._clear_all_uncertainty = request_clear_all
     m._dump_uncertainty_state = dump_state
+
+    def run(context):
+        result = old_run(context)
+        try:
+            m._app.unregisterCustomEvent(CLEAR_EVENT_ID)
+        except Exception:
+            pass
+        try:
+            evt = m._app.registerCustomEvent(CLEAR_EVENT_ID)
+            h = ClearAllEvent()
+            evt.add(h)
+            m._handlers.append(h)
+            log("CLEAR ALL SAFE EVENT READY")
+        except Exception:
+            log("clear-all event registration failed\n{}".format(
+                m.traceback.format_exc()))
+        return result
+
+    def stop(context):
+        try:
+            m._app.unregisterCustomEvent(CLEAR_EVENT_ID)
+        except Exception:
+            pass
+        return old_stop(context)
+
+    m.run = run
+    m.stop = stop
     log("CLEAR ALL + STATE DUMP READY")
