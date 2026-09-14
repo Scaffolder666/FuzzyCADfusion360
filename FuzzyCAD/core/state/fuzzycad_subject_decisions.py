@@ -92,9 +92,49 @@ def install(m):
             pass
         return None
 
+    def same_entity(a, b):
+        """Compare resolved Fusion entities, never entity-token strings."""
+        if a is None or b is None:
+            return False
+        if a is b:
+            return True
+        try:
+            return bool(a == b)
+        except Exception:
+            return False
+
+    def native_body(body):
+        if body is None:
+            return None
+        try:
+            native = body.nativeObject
+            return native if native is not None else body
+        except Exception:
+            return body
+
+    def body_occurrence(body):
+        try:
+            return adsk.fusion.Occurrence.cast(body.assemblyContext)
+        except Exception:
+            return None
+
+    def same_body_instance(a, b):
+        """Identity-safe body comparison that preserves assembly occurrence context."""
+        if same_entity(a, b):
+            return True
+        if a is None or b is None:
+            return False
+        if not same_entity(native_body(a), native_body(b)):
+            return False
+        oa, ob = body_occurrence(a), body_occurrence(b)
+        if oa is None and ob is None:
+            return True
+        if oa is None or ob is None:
+            return False
+        return same_entity(oa, ob)
+
     def open_marks_for_body(body, exclude_id=None):
-        tok = token(body)
-        if not tok:
+        if body is None:
             return []
         rows = []
         for mark in list(getattr(m, "_marks", None) or []):
@@ -103,7 +143,7 @@ def install(m):
             if exclude_id is not None and mark.get("id") == exclude_id:
                 continue
             b = (getattr(m, "_body", None) or {}).get(mark.get("id"))
-            if token(b) == tok:
+            if same_body_instance(b, body):
                 rows.append(mark)
         return rows
 
@@ -337,7 +377,9 @@ def install(m):
         return ranked[0][1], ranked[0][0]
 
     def belongs_to_body(ent, body):
-        return token(entity_body(ent)) == token(body) if ent is not None and body is not None else False
+        if ent is None or body is None:
+            return False
+        return same_body_instance(entity_body(ent), body)
 
     def topology_entity(mark, body, hint):
         ent = fresh_entity(mark["id"])
@@ -518,4 +560,4 @@ def install(m):
         return result
 
     m._accept = accept
-    trace("SUBJECT_POLICY_READY", "multiple decisions + conservative topology relinking")
+    trace("SUBJECT_POLICY_READY", "multiple decisions + entity-safe shared-subject relinking")
