@@ -81,11 +81,36 @@
     return "need_input";
   }
 
+  // Card fields are debounced so typing does not redraw Fusion on every keypress.
+  // Keep the unsent value as data, not just a timer handle, so terminal actions
+  // can flush it before Accept. Without this, a fast "type -> Accept" applies the
+  // previous value and the delayed edit arrives after the mark has been removed.
   var editTimers = {};
+  var editPending = {};
+
   function editLive(id, key, value) {
     var k = id + ":" + key;
     if (editTimers[k]) clearTimeout(editTimers[k]);
-    editTimers[k] = setTimeout(function () { send("edit", { id: id, key: key, value: value }); }, 120);
+    editPending[k] = { id: id, key: key, value: value };
+    editTimers[k] = setTimeout(function () {
+      var row = editPending[k];
+      delete editTimers[k];
+      delete editPending[k];
+      if (row) send("edit", row);
+    }, 120);
+  }
+
+  function flushEditsForMark(id) {
+    var sends = [];
+    Object.keys(editPending).forEach(function (k) {
+      var row = editPending[k];
+      if (!row || row.id !== id) return;
+      if (editTimers[k]) clearTimeout(editTimers[k]);
+      delete editTimers[k];
+      delete editPending[k];
+      sends.push(Promise.resolve(send("edit", row)));
+    });
+    return Promise.all(sends);
   }
 
   /* Move replay remains real-time after intent is clear, but a deliberate dwell
@@ -208,7 +233,9 @@
     text.className = "refwarn__text";
     text.textContent = m.can_relink
       ? "This question is no longer linked to its original geometry."
-      : "This comparison lost an assembly reference. Recreate Compare to restore all connectors.";
+      : (m.tool === "compare"
+          ? "This comparison lost an assembly reference. Recreate Compare to restore it."
+          : "This question lost its geometry reference. Recreate the question on the intended geometry.");
     box.appendChild(title);
     box.appendChild(text);
     if (m.can_relink) {
@@ -330,7 +357,11 @@
       var apply = btn(acceptLabel, "act act--apply", function (ev) {
         stop(ev);
         stopMoveHover(true);
-        if (!m.reference_lost) send("accept", { id: m.id });
+        if (!m.reference_lost) {
+          flushEditsForMark(m.id).then(function () {
+            send("accept", { id: m.id });
+          });
+        }
       });
       if (m.reference_lost) {
         apply.disabled = true;
