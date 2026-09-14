@@ -1,17 +1,12 @@
 """Apply source-body opacity from the central visual authority.
 
 This module owns only Fusion body opacity bookkeeping. It does not decide which
-state a tool is in. `fuzzycad_uncertainty_visual.py` supplies body-level targets:
+state a tool is in. `fuzzycad_uncertainty_visual.py` supplies body-level targets.
 
-- comic baseline -> source body almost hidden (paper fill is rendered above it)
-- Fillet/Hole Editing -> source body at 0.50
-- normal Editing / Resolved -> original Fusion opacity
-
-The original opacity is also mirrored into a small design attribute while an
-override is active. That gives us a recovery path if Fusion/the add-in exits
-before the normal stop callback restores the body. No Fusion native wrapper is
-stored long-term: runtime and persisted records contain only entity tokens and
-numeric opacity values.
+A critical ownership rule applies: FuzzyCAD restores opacity only when it has an
+explicit record of the value it changed. A user's own Fusion Opacity Control is
+never inferred to be stale merely because it happens to equal a FuzzyCAD display
+value such as 0.50.
 """
 
 import json
@@ -24,11 +19,11 @@ def install(m):
     old_run = m.run
     old_stop = m.stop
     old_remove_mark = m._remove_mark
-    records = {}  # entity token -> original numeric opacity
-    crash_records = {}  # persisted token -> original numeric opacity
+    records = {}  # entity-token lookup handle -> captured original numeric opacity
+    crash_records = {}  # persisted lookup handle -> original numeric opacity
     crash_loaded = [False]
-    last_targets = [None]  # pure-Python phase signature; avoids per-drag comic sync
-    applied = {}  # entity token -> opacity we last WROTE (skip redundant per-frame writes)
+    last_targets = [None]
+    applied = {}  # lookup handle -> opacity we last wrote
 
     def design():
         try:
@@ -112,7 +107,6 @@ def install(m):
         except Exception:
             pass
 
-        # Install-time/backward fallback: old proposed-body ghost behavior.
         ghost_v = float(getattr(m, "GHOST_OPACITY", 0.5))
         for mark in list(getattr(m, "_marks", []) or []):
             if mark.get("status", "open") != "open" or mark.get("tool") == "note":
@@ -124,7 +118,6 @@ def install(m):
         return wanted
 
     def target_signature(wanted):
-        """Pure-data signature for transitions that can change comic visibility."""
         try:
             return tuple(sorted(
                 (str(tok), round(float(target), 4))
@@ -132,20 +125,12 @@ def install(m):
         except Exception:
             return ()
 
-    def visual_values(extra=None):
-        vals = [
-            float(getattr(m, "GHOST_OPACITY", 0.5)),
-            float(getattr(m, "_VISUAL_COMIC_SOURCE_OPACITY", 0.02)),
-            float(getattr(m, "_VISUAL_SEMITRANSPARENT_SOURCE_OPACITY", 0.50)),
-        ]
-        if extra is not None:
-            try:
-                vals.append(float(extra))
-            except Exception:
-                pass
-        return vals
-
     def capture_original(tok, body, target):
+        """Capture exactly what Fusion says the user's body opacity is now.
+
+        Never infer an original value from the numeric opacity. A legitimate user
+        setting can be 0.50, 0.16, or any other value that FuzzyCAD also uses.
+        """
         load_crash_records()
         if tok in crash_records:
             try:
@@ -156,12 +141,6 @@ def install(m):
             cur = float(body.opacity)
         except Exception:
             cur = 1.0
-
-        # Backward recovery for documents produced before persistent originals
-        # existed. A saved display-only opacity should not become the new original.
-        if any(abs(cur - v) < 0.02 for v in visual_values(target)):
-            cur = 1.0
-
         crash_records[str(tok)] = float(cur)
         save_crash_records()
         return float(cur)
@@ -176,8 +155,6 @@ def install(m):
             return False
         body = resolve_body(tok)
         if body is None:
-            # Keep the persisted record. The body may become resolvable after a
-            # document/feature rebuild or on the next add-in start.
             return False
         ok = False
         try:
@@ -196,7 +173,7 @@ def install(m):
         return ok
 
     def restore_orphan_body(body):
-        """Restore one body that no longer has any authoritative opacity target."""
+        """Restore only a body for which FuzzyCAD captured an original opacity."""
         tok = body_token(body)
         if not tok:
             return False
@@ -208,35 +185,19 @@ def install(m):
         original = records.pop(tok, None)
         if original is None:
             original = crash_records.get(tok)
-        if original is not None:
-            try:
-                body.opacity = float(original)
-                crash_records.pop(tok, None)
-                save_crash_records()
-                return True
-            except Exception:
-                return False
-
-        # Legacy safety net: old builds did not persist the true original. Only
-        # touch values that match a FuzzyCAD display override closely.
+        if original is None:
+            # Ownership boundary: no FuzzyCAD record means do not touch the user's
+            # native Opacity Control, regardless of its numeric value.
+            return False
         try:
-            cur = float(body.opacity)
+            body.opacity = float(original)
+            crash_records.pop(tok, None)
+            save_crash_records()
+            return True
         except Exception:
             return False
-        if any(abs(cur - v) < 0.025 for v in visual_values()):
-            try:
-                body.opacity = 1.0
-                return True
-            except Exception:
-                pass
-        return False
 
     def recover_crash_records():
-        """Recover stale opacity left by an interrupted previous session.
-
-        Open unresolved marks keep their saved original in `records` and receive
-        the current authoritative target again. Orphaned tokens are restored now.
-        """
         load_crash_records()
         wanted = desired_targets()
         changed = False
@@ -268,10 +229,6 @@ def install(m):
             if tok not in records:
                 records[tok] = capture_original(tok, body, target)
             target = float(target)
-            # Only WRITE body.opacity when it actually changes. Re-writing the same
-            # value every executePreview frame during a native manipulator drag is a
-            # Fusion hard-crash (each write pokes the display like a mid-drag
-            # refresh). Unchanged targets -> no write -> the drag stays stable.
             if applied.get(tok) == target:
                 continue
             try:
@@ -292,8 +249,6 @@ def install(m):
 
         last_targets[0] = signature
 
-        # Comic CustomGraphics are persistent per body. Synchronize only when the
-        # body-level target actually changes, not on every manipulator frame.
         if phase_changed:
             try:
                 sync = getattr(m, "_sync_comic_uncertainty", None)
@@ -321,15 +276,7 @@ def install(m):
     m._recover_visual_opacity = recover_crash_records
     m._ghost_opacity_records = records
 
-    # Resolution is a terminal visual transition. Restore opacity immediately
-    # after the mark disappears, before the heavier full viewport redraw. Sending
-    # state here also lets Reject disappear from the panel immediately instead of
-    # waiting for sketch/comic reconstruction to finish.
     def remove_mark(mid):
-        # Grab the live body BEFORE the mark is removed, so we can force its
-        # display opacity back to solid even when the runtime record was lost --
-        # e.g. a reopened handoff file, where `records` starts empty and the
-        # entity token may have changed, so refresh_ghost/recover can't find it.
         body = None
         try:
             body = m._body.get(mid)
@@ -342,30 +289,13 @@ def install(m):
         except Exception:
             pass
 
-        # Safety net: if this body no longer carries any open mark but is still
-        # showing a comic display opacity, restore it to solid. Uses the live body
-        # object (not a token lookup), so it survives a handoff token change.
+        # If refresh did not already restore it, try the exact ownership record.
+        # No record means no write; never force an arbitrary transparent body solid.
         if body is not None:
-            still_used = False
             try:
-                btok = body_token(body)
-                for mk in (getattr(m, "_marks", None) or []):
-                    if mk.get("status", "open") != "open":
-                        continue
-                    b = m._body.get(mk.get("id"))
-                    if b is not None and body_token(b) == btok:
-                        still_used = True
-                        break
+                restore_orphan_body(body)
             except Exception:
-                still_used = False
-            if not still_used:
-                try:
-                    cur = float(body.opacity)
-                    if any(abs(cur - v) < 0.03 for v in visual_values()):
-                        body.opacity = 1.0
-                        applied.pop(body_token(body), None)
-                except Exception:
-                    pass
+                pass
 
         try:
             m._send_state()
