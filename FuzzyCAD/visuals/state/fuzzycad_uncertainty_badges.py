@@ -26,9 +26,9 @@ LEADER_RGB = (42, 42, 42)
 LEADER_WEIGHT = 2
 
 # Base model-space placement. Fusion model units are cm.
-FIXED_GAP_MIN_CM = 1.5
-FIXED_GAP_MAX_CM = 4.0
-FIXED_GAP_BODY_FRAC = 0.35
+FIXED_GAP_MIN_CM = 1.8
+FIXED_GAP_MAX_CM = 4.6
+FIXED_GAP_BODY_FRAC = 0.40
 STACK_MIN_CM = 0.8
 STACK_MAX_CM = 2.0
 STACK_BODY_FRAC = 0.18
@@ -525,9 +525,9 @@ def install(m):
                                  center, rgb, 5, scale)
             return
         add_local_badge_line(group, [(0.0, 0.45), (0.0, -0.16)],
-                             center, rgb, 5, scale)
+                             center, rgb, 4, scale)
         add_local_badge_line(group, [(-0.045, -0.47), (0.045, -0.47)],
-                             center, rgb, 6, scale)
+                             center, rgb, 5, scale)
 
     def draw_badge(group, mark):
         if not visible(mark):
