@@ -96,20 +96,20 @@ MTYPE_COLOR = {"need_input": (200, 44, 32), "constraint": (183, 121, 31),
 MTYPE_GLYPH = {"need_input": u"!", "constraint": u"‖", "alternative": u"⑂"}
 GHOST_OPACITY = 0.16
 
-# Card naming: a geometry Fuzzy mark reads as "Fuzzy <property>", grouped by what
-# the proposal leaves uncertain. Similar tools deliberately share one bucket so the
-# panel reads as a few kinds of fuzziness; the card's own icon + value fields still
-# show which exact tool it is. Cards are numbered per bucket (see _make_mark), so
-# e.g. every shape tool shares one running "Fuzzy Shape N" sequence.
+# Card naming: a geometry Fuzzy mark reads as "Fuzzy <property>", named for the
+# design aspect it leaves uncertain (placement, orientation, size, thickness, edge
+# rounding, hole) so it matches the paper's terminology and the toolbar labels.
+# Move and Rotate share the Placement/Orientation split; the two Scale tools share
+# Size. Cards are numbered per bucket (see _make_mark).
 FUZZY_PROPERTY = {
-    "move": "Fuzzy Position",
+    "move": "Fuzzy Placement",
     "rotate": "Fuzzy Orientation",
     "axis_rotate": "Fuzzy Orientation",
     "scale": "Fuzzy Size",
     "scale_axis": "Fuzzy Size",
-    "extrude": "Fuzzy Shape",
-    "fillet": "Fuzzy Shape",
-    "hole": "Fuzzy Shape",
+    "extrude": "Fuzzy Thickness",
+    "fillet": "Fuzzy Edge Rounding",
+    "hole": "Fuzzy Hole",
 }
 
 # Rough Shape is a CONSTRAINT (a geometric envelope contributed as a bound), not a
