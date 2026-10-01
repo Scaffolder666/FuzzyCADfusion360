@@ -15,12 +15,18 @@ def install(m):
 
     # Card focus should feel like inspection, not a camera jump.  Keep enough
     # context around the object and never zoom out from the user's current view.
-    ZOOM_FACTOR = 0.78
-    MAX_BODY_FRAMES = 4.5
-    MIN_BODY_FRAMES = 1.9
+    # Make a card click read as a deliberate inspection move. Rough Shape gets a
+    # slightly tighter framing because it has no manipulator of its own; without
+    # that second cue a scene containing several rough bodies is hard to parse.
+    ZOOM_FACTOR = 0.65
+    MAX_BODY_FRAMES = 4.0
+    MIN_BODY_FRAMES = 1.45
+    ROUGH_ZOOM_FACTOR = 0.55
+    ROUGH_MAX_BODY_FRAMES = 3.2
+    ROUGH_MIN_BODY_FRAMES = 1.20
     BODY_TOOLS = {"move", "rotate", "scale", "scale_axis", "rough"}
     EDIT_CMD_ID = "FuzzyCAD_EditExistingProposal"
-    state = {"pending_edit_id": None}
+    state = {"pending_edit_id": None, "selected_rough_id": None}
 
     def body_center(mark):
         """Use the body center for whole-body operations.
@@ -65,8 +71,16 @@ def install(m):
                 return False
 
             size = max(float(mark.get("size", 1.0) or 1.0), 0.2)
-            desired = min(current * ZOOM_FACTOR, size * MAX_BODY_FRAMES)
-            desired = max(desired, size * MIN_BODY_FRAMES)
+            if mark.get("tool") == "rough":
+                zoom_factor = ROUGH_ZOOM_FACTOR
+                max_frames = ROUGH_MAX_BODY_FRAMES
+                min_frames = ROUGH_MIN_BODY_FRAMES
+            else:
+                zoom_factor = ZOOM_FACTOR
+                max_frames = MAX_BODY_FRAMES
+                min_frames = MIN_BODY_FRAMES
+            desired = min(current * zoom_factor, size * max_frames)
+            desired = max(desired, size * min_frames)
             desired = min(desired, current)  # a card click must never zoom out
             ratio = desired / current
 
@@ -100,6 +114,35 @@ def install(m):
             return False
 
     m._focus_mark_card = focus_mark
+
+    def clear_rough_selection():
+        """Remove only the native selection that this card-focus layer owns."""
+        mid = state.get("selected_rough_id")
+        state["selected_rough_id"] = None
+        if mid is None:
+            return
+        try:
+            body = m._body.get(mid)
+            if body is not None:
+                m._ui.activeSelections.removeByEntity(body)
+        except Exception:
+            pass
+
+    def select_rough_body(mark):
+        """Use Fusion's native selection highlight to identify the focused rough body."""
+        clear_rough_selection()
+        if mark is None or mark.get("tool") != "rough":
+            return False
+        try:
+            body = m._body.get(mark.get("id"))
+            if body is None:
+                return False
+            sels = m._ui.activeSelections
+            sels.add(body)
+            state["selected_rough_id"] = mark.get("id")
+            return True
+        except Exception:
+            return False
 
     # The existing Need Input edit launcher calls m._focus_camera immediately
     # before reopening the native manipulator. Mark that one call so the same
@@ -205,8 +248,13 @@ def install(m):
                 # Note / Conflict / lost-reference inspection. Consume the old
                 # pan-only action so it cannot immediately overwrite this zoom.
                 mark = m._find(data.get("id"))
-                if mark is not None and focus_mark(mark):
-                    return
+                if mark is not None:
+                    if mark.get("tool") == "rough":
+                        select_rough_body(mark)
+                    else:
+                        clear_rough_selection()
+                    if focus_mark(mark):
+                        return
 
             if action == "editManipulator":
                 try:
@@ -214,14 +262,27 @@ def install(m):
                     mark = m._find(mid)
                     # Rough Shape is Need Input semantically, but it intentionally
                     # has no geometric parameter/manipulator. Its card click is
-                    # therefore pure inspection/focus, not a failed reopen attempt.
+                    # therefore pure inspection/focus. Give it a native Fusion
+                    # selection highlight so the exact body stays obvious when
+                    # several rough placeholders are visible at once.
                     if mark is not None and mark.get("tool") == "rough":
                         state["pending_edit_id"] = None
+                        select_rough_body(mark)
                         if focus_mark(mark):
                             return
+                    clear_rough_selection()
                     state["pending_edit_id"] = mid
                 except Exception:
                     state["pending_edit_id"] = None
+
+            if action in ("accept", "reject"):
+                try:
+                    if int(data.get("id")) == int(state.get("selected_rough_id")):
+                        clear_rough_selection()
+                except Exception:
+                    pass
+            elif action == "tool":
+                clear_rough_selection()
 
             self._delegate.notify(args)
 
