@@ -3,9 +3,9 @@
 The proposal outline communicates WHAT geometry may change.  This layer makes
 HOW it changes immediately legible:
 - Move: one large translation arrow.
-- Rotate: a dashed sweep ruler + arrowhead around the active axis.
+- Rotate: one clean curved arrow around the active axis.
 - Scale: a fixed/pivot cue plus an outward/inward stretch arrow.
-- Axis Rotate: the same dashed sweep around the selected arbitrary axis.
+- Axis Rotate: the same clean curved arrow around the selected arbitrary axis.
 - Extrude: a depth arrow along the face normal.
 
 Orange is reserved for change locus/direction; proposal geometry stays gray.
@@ -19,7 +19,7 @@ def install(m):
     old_run = m.run
 
     ORANGE = (225, 126, 38)
-    QUIET = (125, 130, 135)
+    FRONT_DEPTH = 20
 
     def log(msg):
         try:
@@ -45,14 +45,24 @@ def install(m):
             return (0.0, 0.0, 0.0)
         return tuple(float(x) / n for x in v)
 
-    def arrow_head(group, start, end, size, seed, rgb=ORANGE):
+    def cue_stroke(group, pts, seed, size, rgb=ORANGE, weight=2.0, front=False):
+        """Draw an operation cue; rotation can opt into always-on-top rendering."""
+        if len(pts) < 2:
+            return
+        if front:
+            try:
+                fn = getattr(m, "_visual_stroke", None)
+                if fn is not None:
+                    return fn(group, pts, "operation_cue", seed, size=size, amp=0.0,
+                              rgb=rgb, weight=weight, strokes=1, depth=FRONT_DEPTH)
+            except Exception:
+                pass
+        m._sketchy(group, pts, rgb, 0.0, seed, weight=weight, strokes=1)
+
+    def arrow_head(group, start, end, size, seed, rgb=ORANGE, front=False):
         if dist(start, end) < 1e-7:
             return
         d = normalized((end[0] - start[0], end[1] - start[1], end[2] - start[2]))
-        try:
-            (_, _), = ()
-        except Exception:
-            pass
         # Pick a screen-friendly side vector so the arrowhead remains readable
         # from oblique CAD camera angles.
         try:
@@ -73,19 +83,44 @@ def install(m):
         base = add(end, d, -h)
         w1 = add(base, side, h * 0.48)
         w2 = add(base, side, -h * 0.48)
-        m._sketchy(group, [w1, tuple(end), w2], rgb, 0.0, seed,
-                   weight=2, strokes=1)
+        cue_stroke(group, [w1, tuple(end), w2], seed, size, rgb=rgb,
+                   weight=2.2, front=front)
 
-    def dashed(group, pts, seed, rgb=ORANGE):
-        if len(pts) < 2:
-            return
-        # Draw alternating small segments.  This is intentionally separate from
-        # the native manipulator ring: it reads as an annotation/ruler.
-        for i in range(len(pts) - 1):
-            if i % 2:
-                continue
-            m._sketchy(group, [pts[i], pts[i + 1]], rgb, 0.0,
-                       seed + i, weight=1, strokes=1)
+    def camera_view():
+        try:
+            cam = m._app.activeViewport.camera
+            eye, target = cam.eye, cam.target
+            return normalized((target.x - eye.x, target.y - eye.y, target.z - eye.z))
+        except Exception:
+            return (0.0, 0.0, -1.0)
+
+    def readable_sweep(angle_deg):
+        """Keep the communication glyph legible; the card carries the exact value."""
+        sign = -1.0 if float(angle_deg) < 0.0 else 1.0
+        return sign * max(55.0, min(abs(float(angle_deg)), 125.0))
+
+    def axis_is_face_on(axis):
+        a = normalized(axis)
+        v = camera_view()
+        return abs(a[0] * v[0] + a[1] * v[1] + a[2] * v[2]) >= 0.32
+
+    def billboard_arc(anchor, radius, angle_deg):
+        """Fallback for edge-on rotation planes: a camera-facing curved arrow."""
+        try:
+            (xx, xy, xz), (yx, yy, yz) = m._camera_xy()
+        except Exception:
+            (xx, xy, xz), (yx, yy, yz) = ((1, 0, 0), (0, 1, 0))
+        sweep = math.radians(readable_sweep(angle_deg))
+        start = math.radians(-55.0 if sweep >= 0.0 else 55.0)
+        steps = 28
+        pts = []
+        for i in range(steps + 1):
+            t = start + sweep * i / float(steps)
+            c, s = math.cos(t), math.sin(t)
+            pts.append((anchor[0] + radius * (c * xx + s * yx),
+                        anchor[1] + radius * (c * xy + s * yy),
+                        anchor[2] + radius * (c * xz + s * yz)))
+        return pts
 
     def circle_arc(anchor, axis, radius, angle_deg):
         ax = m._axis_unit(axis)
@@ -163,19 +198,20 @@ def install(m):
         if abs(angle) < 1e-6:
             return
         axis = "XYZ"[idx]
-        r = max(0.7, float(mark.get("size", 3.0)) * 0.72)
-        arc = circle_arc(mark.get("anchor") or [0, 0, 0], axis, r, angle)
-        dashed(group, arc, mark.get("id", 1) * 42001)
+        axis_vec = m._axis_unit(axis)
+        anchor = mark.get("anchor") or [0, 0, 0]
+        size = float(mark.get("size", 3.0))
+        r = max(0.72, size * 0.66)
+        sweep = readable_sweep(angle)
+        if axis_is_face_on(axis_vec):
+            arc = circle_arc(anchor, axis, r, sweep)
+        else:
+            arc = billboard_arc(anchor, r, sweep)
         if len(arc) >= 3:
-            arrow_head(group, arc[-3], arc[-1], mark.get("size", 3.0),
-                       mark.get("id", 1) * 42091)
-        # A quiet axis line makes the sweep's center unambiguous.
-        unit = m._axis_unit(axis)
-        a = mark.get("anchor") or [0, 0, 0]
-        h = max(0.8, float(mark.get("size", 3.0)) * 0.55)
-        p0 = add(a, unit, -h); p1 = add(a, unit, h)
-        m._sketchy(group, [p0, p1], QUIET, 0.0,
-                   mark.get("id", 1) * 42095, weight=1, strokes=1)
+            cue_stroke(group, arc, mark.get("id", 1) * 42001, size,
+                       weight=2.2, front=True)
+            arrow_head(group, arc[-3], arc[-1], size,
+                       mark.get("id", 1) * 42091, front=True)
 
     def draw_scale_cue(group, mark):
         f = max(0.05, float(mark.get("factor", 1.0)))
@@ -231,12 +267,18 @@ def install(m):
         g = m._geom.get(mark.get("id"), {})
         origin = g.get("axis_origin") or mark.get("axis_origin") or [0, 0, 0]
         direction = g.get("axis_dir") or mark.get("axis_dir") or [0, 0, 1]
-        r = max(0.7, float(mark.get("size", 3.0)) * 0.72)
-        arc = arbitrary_arc(origin, direction, r, angle)
-        dashed(group, arc, mark.get("id", 1) * 45001)
+        size = float(mark.get("size", 3.0))
+        r = max(0.72, size * 0.66)
+        sweep = readable_sweep(angle)
+        if axis_is_face_on(direction):
+            arc = arbitrary_arc(origin, direction, r, sweep)
+        else:
+            arc = billboard_arc(origin, r, sweep)
         if len(arc) >= 3:
-            arrow_head(group, arc[-3], arc[-1], mark.get("size", 3.0),
-                       mark.get("id", 1) * 45091)
+            cue_stroke(group, arc, mark.get("id", 1) * 45001, size,
+                       weight=2.2, front=True)
+            arrow_head(group, arc[-3], arc[-1], size,
+                       mark.get("id", 1) * 45091, front=True)
 
     def draw_extrude_cue(group, mark):
         g = m._geom.get(mark.get("id"), {})
@@ -270,7 +312,7 @@ def install(m):
 
     def run(context):
         result = old_run(context)
-        log("OPERATION CUES READY: Move arrow / Rotate dashed sweep / Scale stretch / Extrude depth")
+        log("OPERATION CUES READY: Move arrow / clean always-visible Rotate arrow / Scale stretch / Extrude depth")
         return result
 
     m.run = run
