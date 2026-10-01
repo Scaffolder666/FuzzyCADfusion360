@@ -204,12 +204,9 @@ def install(m):
         matrix = axis_rotate_matrix(mark)
         add_candidate(group, m._body.get(mark["id"]), matrix)
         draw_transformed_edges(group, mark, matrix, rgb, amp, 610)
-
-        g = m._geom.get(mark["id"], {})
-        origin = g.get("axis_origin") or mark.get("axis_origin") or [0.0, 0.0, 0.0]
-        direction = g.get("axis_dir") or mark.get("axis_dir") or [0.0, 0.0, 1.0]
-        draw_axis_guide(group, origin, direction, mark.get("size", 3.0), mark["id"] * 611)
-        callout(group, mark, "Axis Rotate = {:.1f}°".format(mark.get("angle", 0.0)), origin)
+        # The persistent rotation cue is owned by fuzzycad_operation_cues.
+        # Keep this layer geometry-only; the axis guide is still shown while
+        # choosing the circular edge, before a rotation proposal exists.
 
     m._DRAW["axis_rotate"] = draw_axis_rotate
 
