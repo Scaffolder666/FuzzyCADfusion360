@@ -165,19 +165,8 @@ def install(m):
         matrix = candidate_matrix(mark)
         add_candidate_body(group, body, matrix)
         outline_transformed(group, mark, matrix, rgb, amp, 220)
-
-        rot = mark.get("rot") or [0.0, 0.0, 0.0]
-        idx = max(range(3), key=lambda i: abs(rot[i]))
-        axis = "XYZ"[idx]
-        angle = rot[idx]
-        r = mark.get("size", 3.0) * 0.62
-        arc = arc_points(mark["anchor"], axis, r, angle)
-        if len(arc) >= 2:
-            m._sketchy(group, arc, CHANGE_RGB, 0.0,
-                       mark["id"] * 221, weight=3, strokes=1)
-            callout(group, mark, "Rotate {} = {:.1f}°".format(axis, angle), arc[-1])
-        else:
-            callout(group, mark, "Rotate {} = {:.1f}°".format(axis, angle))
+        # Rotation direction is drawn once, by fuzzycad_operation_cues. Keeping
+        # this layer geometry-only avoids the former double-arc visual.
 
     def farthest_point(mark):
         a = mark.get("anchor") or [0.0, 0.0, 0.0]
