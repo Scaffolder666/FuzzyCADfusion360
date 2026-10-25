@@ -234,7 +234,7 @@
     text.textContent = m.can_relink
       ? "This question is no longer linked to its original geometry."
       : (m.tool === "compare"
-          ? "This comparison lost an assembly reference. Recreate Compare to restore it."
+          ? "This conflict lost an assembly reference. Recreate Conflict to restore it."
           : "This question lost its geometry reference. Recreate the question on the intended geometry.");
     box.appendChild(title);
     box.appendChild(text);
@@ -251,7 +251,7 @@
   function render() {
     stopMoveHover(true);
 
-    els.count.textContent = state.marks.length + (state.marks.length === 1 ? " open question" : " open questions");
+    els.count.textContent = state.marks.length + (state.marks.length === 1 ? " unresolved decision" : " unresolved decisions");
     els.empty.style.display = state.marks.length ? "none" : "block";
     if (els.clearAll) els.clearAll.style.display = state.marks.length ? "inline-block" : "none";
     els.marks.innerHTML = "";
