@@ -3,7 +3,7 @@
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>FuzzyCAD</title>
+  <title>FuzzyCAD — Decisions</title>
   <link rel="stylesheet" href="palette.css?v=unctoggle" />
   <link rel="stylesheet" href="hardening.css" />
   <style>
@@ -50,13 +50,13 @@
 </head>
 <body>
   <header class="head">
-    <div class="brand">FuzzyCAD</div>
-    <div class="sub">Fuzzy · Conflict</div>
+    <div class="brand">Decisions</div>
+    <div class="sub">FuzzyCAD · Collaborative CAD</div>
   </header>
 
   <section class="list">
     <div class="list__head" style="display:flex;align-items:flex-start;justify-content:space-between;gap:8px">
-      <span id="count" class="chip">0 open questions</span>
+      <span id="count" class="chip">0 unresolved decisions</span>
       <span style="display:flex;gap:6px;flex:none;flex-wrap:wrap;justify-content:flex-end;max-width:210px">
         <button id="toggleUncertainty" type="button"
           title="Hide or show all uncertainty overlays in the viewport (display only; nothing is deleted)"
@@ -71,15 +71,15 @@
           title="Show where this document's FuzzyCAD state is stored and export the raw JSON"
           style="border:1px solid #d3d8df;color:#5a6672;background:#fff;font:600 11px/1 -apple-system,'Segoe UI',Roboto,sans-serif;padding:5px 9px;border-radius:6px;cursor:pointer">JSON</button>
         <button id="clearAll" type="button"
-          title="Delete every FuzzyCAD question stored in this document"
+          title="Delete every unresolved decision stored in this document"
           style="display:none;border:1px solid #e2b6b0;color:#d92f1c;background:#fff;font:600 11px/1 -apple-system,'Segoe UI',Roboto,sans-serif;padding:5px 9px;border-radius:6px;cursor:pointer">Clear all</button>
       </span>
     </div>
     <ul id="marks" class="marks"></ul>
     <p id="empty" class="empty">
-      No open questions yet.<br />
-      Use a Fuzzy mark for geometry changes, or Compare when two requirements
-      conflict.
+      No unresolved decisions yet.<br />
+      Use a Fuzzy tool to leave a decision open, add a Shape Constraint,
+      or declare a Conflict.
     </p>
   </section>
 
