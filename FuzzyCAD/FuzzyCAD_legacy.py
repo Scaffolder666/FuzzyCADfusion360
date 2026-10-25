@@ -47,8 +47,8 @@ GROUP_PREVIEW = "FuzzyCAD_Preview"
 COMMANDS = ("transform", "extrude", "fillet")
 CMD_ID = {c: "FuzzyCAD_" + c.capitalize() for c in COMMANDS}
 CMD_ID["note"] = "FuzzyCAD_Note"
-CMD_LABEL = {"transform": "Transform", "extrude": "Fuzzy Extrude",
-             "fillet": "Fuzzy Fillet", "note": "Constraint"}
+CMD_LABEL = {"transform": "Fuzzy Transform", "extrude": "Fuzzy Thickness",
+             "fillet": "Fuzzy Edge Rounding", "note": "Constraint"}
 CMD_FILTER = {"transform": "SolidBodies", "extrude": "Faces", "fillet": "Edges"}
 CMD_HINT = {"transform": "Select a body, then grab a move / rotate / scale handle.",
             "extrude": "Select a planar face, then drag it out.",
