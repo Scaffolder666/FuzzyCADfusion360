@@ -44,7 +44,7 @@
 
     var count = document.getElementById("count");
     if (count) {
-      count.textContent = marks.length + (marks.length === 1 ? " open question" : " open questions");
+      count.textContent = marks.length + (marks.length === 1 ? " unresolved decision" : " unresolved decisions");
     }
 
     for (var i = 0; i < marks.length; i += 1) {
