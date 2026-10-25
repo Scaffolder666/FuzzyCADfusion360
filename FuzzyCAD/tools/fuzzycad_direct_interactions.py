@@ -50,9 +50,9 @@ def install(m):
     m.CMD_ID["directional_scale"] = "FuzzyCAD_DirectionalScale"
     m.CMD_ID["axis_rotate"] = "FuzzyCAD_AxisRotate"
 
-    m.CMD_LABEL["scale"] = "Uniform Scale"
-    m.CMD_LABEL["directional_scale"] = "Scale X/Y/Z"
-    m.CMD_LABEL["axis_rotate"] = "Axis Rotate"
+    m.CMD_LABEL["scale"] = "Fuzzy Size"
+    m.CMD_LABEL["directional_scale"] = "Fuzzy Size (XYZ)"
+    m.CMD_LABEL["axis_rotate"] = "Fuzzy Orientation"
 
     m.CMD_HINT["scale"] = "Select a body, then drag the corner handle to scale the whole body."
     m.CMD_HINT["directional_scale"] = "Select a body, then drag X, Y, or Z to scale only that axis."
