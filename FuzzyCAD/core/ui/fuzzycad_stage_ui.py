@@ -127,7 +127,7 @@ def install(m):
                 {"label": "Drag to rotate", "done": False},
             ]
             active = 0 if not b else (1 if not a else 2)
-            send_stage(tool, steps, active, "Axis Rotate")
+            send_stage(tool, steps, active, "Fuzzy Orientation")
             return
 
         if tool == "directional_scale":
@@ -135,7 +135,7 @@ def install(m):
             send_stage(tool, [
                 {"label": "Select body", "done": b},
                 {"label": "Choose direction, then drag", "done": False},
-            ], 0 if not b else 1, "Scale X/Y/Z")
+            ], 0 if not b else 1, "Fuzzy Size (XYZ)")
             return
 
         if tool == "transform":
@@ -143,7 +143,7 @@ def install(m):
             send_stage(tool, [
                 {"label": "Select body", "done": b},
                 {"label": "Drag Move or Rotate", "done": False},
-            ], 0 if not b else 1, "Move / Rotate")
+            ], 0 if not b else 1, "Fuzzy Placement")
             return
 
         if tool == "scale":
@@ -151,7 +151,7 @@ def install(m):
             send_stage(tool, [
                 {"label": "Select body", "done": b},
                 {"label": "Drag corner handle", "done": False},
-            ], 0 if not b else 1, "Scale All")
+            ], 0 if not b else 1, "Fuzzy Size")
             return
 
         if tool == "extrude":
@@ -159,7 +159,7 @@ def install(m):
             send_stage(tool, [
                 {"label": "Select face", "done": b},
                 {"label": "Drag depth", "done": False},
-            ], 0 if not b else 1, "Extrude")
+            ], 0 if not b else 1, "Fuzzy Thickness")
             return
 
         if tool == "fillet":
@@ -167,7 +167,7 @@ def install(m):
             send_stage(tool, [
                 {"label": "Select edge", "done": b},
                 {"label": "Drag radius", "done": False},
-            ], 0 if not b else 1, "Fillet")
+            ], 0 if not b else 1, "Fuzzy Edge Rounding")
             return
 
         if tool == "hole":
@@ -175,7 +175,7 @@ def install(m):
             send_stage(tool, [
                 {"label": "Select face", "done": b},
                 {"label": "Set diameter & depth", "done": False, "hint": "both Fuzzy"},
-            ], 0 if not b else 1, "Hole")
+            ], 0 if not b else 1, "Fuzzy Hole")
             return
 
         if tool == "rough":
@@ -183,7 +183,7 @@ def install(m):
             send_stage(tool, [
                 {"label": "Select the rough body", "done": b,
                  "hint": "whole shape is flagged — then Confirm"},
-            ], 0, "Rough Shape")
+            ], 0, "Shape Constraint")
             return
 
         send_stage(None, [], None, "")
