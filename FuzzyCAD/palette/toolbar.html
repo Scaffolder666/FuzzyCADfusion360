@@ -65,17 +65,17 @@
     <div class="group">
       <span class="group__label">Fuzzy</span>
       <div class="group__grid">
-        <button class="tool tool--wide" data-tool="transform" title="Placement: select a body, then drag Move or Rotate handles">
-          <img class="tool__ico" src="icons/move.png" alt="Placement"/><small>Placement</small></button>
-        <button class="tool" data-tool="scale" title="Size: select a body, then drag the corner handle">
-          <img class="tool__ico" src="icons/scale-all.png" alt="Size"/><small>Size</small></button>
-        <button class="tool" data-tool="directional_scale" title="Directional Size: select a body, choose a direction, then drag">
-          <img class="tool__ico" src="icons/scale-xyz.png" alt="Directional Size"/><small>Directional Size</small></button>
-        <button class="tool tool--wide" data-tool="axis_rotate" title="Orientation: select body, select a circular edge, then drag the ring">
-          <img class="tool__ico" src="icons/axis-rotate.png" alt="Orientation"/><small>Orientation</small></button>
-        <button class="tool" data-tool="extrude"><img class="tool__ico" src="icons/extrude.png" alt="Thickness"/><small>Thickness</small></button>
-        <button class="tool" data-tool="fillet"><img class="tool__ico" src="icons/fillet.png" alt="Edge Rounding"/><small>Edge Rounding</small></button>
-        <button class="tool" data-tool="hole" title="Hole geometry: select a planar face; a hole is centred on it. Diameter and depth are Fuzzy"><img class="tool__ico" src="icons/hole.png" alt="Hole"/><small>Hole</small></button>
+        <button class="tool tool--wide" data-tool="transform" title="Fuzzy Placement: select a body and drag the Move or Rotate handles to leave its placement unresolved">
+          <img class="tool__ico" src="icons/move.png" alt="Fuzzy Placement"/><small>Fuzzy Placement</small></button>
+        <button class="tool" data-tool="scale" title="Fuzzy Size: select a body and drag the corner handle to leave its size unresolved">
+          <img class="tool__ico" src="icons/scale-all.png" alt="Fuzzy Size"/><small>Fuzzy Size</small></button>
+        <button class="tool" data-tool="directional_scale" title="Fuzzy Size (XYZ): select a body, choose a direction, then drag to leave that dimension unresolved">
+          <img class="tool__ico" src="icons/scale-xyz.png" alt="Fuzzy Size (XYZ)"/><small>Fuzzy Size (XYZ)</small></button>
+        <button class="tool tool--wide" data-tool="axis_rotate" title="Fuzzy Orientation: select a body and rotation axis, then drag the ring to leave its orientation unresolved">
+          <img class="tool__ico" src="icons/axis-rotate.png" alt="Fuzzy Orientation"/><small>Fuzzy Orientation</small></button>
+        <button class="tool" data-tool="extrude"><img class="tool__ico" src="icons/extrude.png" alt="Fuzzy Thickness"/><small>Fuzzy Thickness</small></button>
+        <button class="tool" data-tool="fillet"><img class="tool__ico" src="icons/fillet.png" alt="Fuzzy Edge Rounding"/><small>Fuzzy Edge Rounding</small></button>
+        <button class="tool" data-tool="hole" title="Fuzzy Hole: select a planar face; leave the hole diameter and depth unresolved"><img class="tool__ico" src="icons/hole.png" alt="Fuzzy Hole"/><small>Fuzzy Hole</small></button>
       </div>
     </div>
 
@@ -84,8 +84,8 @@
     <div class="group">
       <span class="group__label">Conflict</span>
       <div class="group__grid">
-        <button class="tool tool--wide" data-tool="compare_here" title="Two options already built at the same place — keep one, drop the other">
-          <img class="tool__ico" src="icons/compare.png" alt="Compare"/><small>Compare</small></button>
+        <button class="tool tool--wide" data-tool="compare_here" title="Conflict: preserve two competing design alternatives for a later decision">
+          <img class="tool__ico" src="icons/compare.png" alt="Conflict"/><small>Conflict</small></button>
       </div>
     </div>
 
@@ -94,7 +94,7 @@
     <div class="group">
       <span class="group__label">Constraint</span>
       <div class="group__grid">
-        <button class="tool tool--wide" data-tool="rough" title="Select a rough body to contribute it as a shape constraint — a crude envelope others build within"><img class="tool__ico" src="icons/rough.png" alt="Rough Shape"/><small>Rough Shape</small></button>
+        <button class="tool tool--wide" data-tool="rough" title="Shape Constraint: select an approximate body to define a geometric requirement for others"><img class="tool__ico" src="icons/rough.png" alt="Shape Constraint"/><small>Shape Constraint</small></button>
       </div>
     </div>
   </div>
