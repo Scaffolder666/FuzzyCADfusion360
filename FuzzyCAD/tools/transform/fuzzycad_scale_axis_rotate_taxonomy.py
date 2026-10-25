@@ -71,9 +71,9 @@ def install(m):
     m.COMMANDS = ("transform", "scale", "axis_rotate", "extrude", "fillet")
     m.CMD_ID["scale"] = "FuzzyCAD_Scale"
     m.CMD_ID["axis_rotate"] = "FuzzyCAD_AxisRotate"
-    m.CMD_LABEL["transform"] = "Move / Rotate"
-    m.CMD_LABEL["scale"] = "Scale"
-    m.CMD_LABEL["axis_rotate"] = "Axis Rotate"
+    m.CMD_LABEL["transform"] = "Fuzzy Placement"
+    m.CMD_LABEL["scale"] = "Fuzzy Size"
+    m.CMD_LABEL["axis_rotate"] = "Fuzzy Orientation"
     m.CMD_FILTER["scale"] = "SolidBodies"
     m.CMD_FILTER["axis_rotate"] = "SolidBodies"
     m.CMD_HINT["transform"] = "Select a body, then grab a move or rotate handle."
@@ -224,7 +224,7 @@ def install(m):
                       mark.get("angle", 0.0), mark["id"] * 613)
             except Exception:
                 pass
-        callout(group, mark, "Axis Rotate = {:.1f}°".format(mark.get("angle", 0.0)), origin)
+        callout(group, mark, "Fuzzy Orientation = {:.1f}°".format(mark.get("angle", 0.0)), origin)
 
     m._DRAW["axis_rotate"] = draw_axis_rotate
 
@@ -636,9 +636,9 @@ def install(m):
         if mark.get("mtype") == "alternative":
             out["mtype"] = "conflict"
         if mark.get("tool") == "scale_axis":
-            out["title"] = "Directional Scale {}".format(mark.get("num", 1))
+            out["title"] = "Fuzzy Size (XYZ) {}".format(mark.get("num", 1))
         elif mark.get("tool") == "axis_rotate":
-            out["title"] = "Axis Rotate {}".format(mark.get("num", 1))
+            out["title"] = "Fuzzy Orientation {}".format(mark.get("num", 1))
         return out
 
     m._public = public
@@ -647,7 +647,7 @@ def install(m):
         if mark.get("tool") == "scale_axis":
             old = mark.get("label", "")
             if not old:
-                mark["label"] = "Scale {} {}".format(mark.get("axis", "X"), mark.get("num", 1))
+                mark["label"] = "Fuzzy Size (XYZ) {} {}".format(mark.get("axis", "X"), mark.get("num", 1))
             try:
                 return old_draw_label(group, mark, rgb)
             finally:
@@ -655,7 +655,7 @@ def install(m):
         if mark.get("tool") == "axis_rotate":
             old = mark.get("label", "")
             if not old:
-                mark["label"] = "Axis Rotate {}".format(mark.get("num", 1))
+                mark["label"] = "Fuzzy Orientation {}".format(mark.get("num", 1))
             try:
                 return old_draw_label(group, mark, rgb)
             finally:
