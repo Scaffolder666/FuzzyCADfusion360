@@ -372,10 +372,15 @@ def install(m):
 
         # One state input -> one persistent output transaction.
         clear_idle_editing_graphics()
+        trace("RENDER_STAGE", "gen={} stage=persistent-marks".format(generation))
         draw_persistent_marks()
+        trace("RENDER_STAGE", "gen={} stage=comic-prepare".format(generation))
         comic_tokens = arm_complete_comic_rebuild()
+        trace("RENDER_STAGE", "gen={} stage=opacity".format(generation))
         apply_opacity()
+        trace("RENDER_STAGE", "gen={} stage=comic-draw".format(generation))
         comic_changed = apply_comic()
+        trace("RENDER_STAGE", "gen={} stage=silhouette".format(generation))
         apply_silhouette()
         # Non-authoritative persistent overlays that are not part of the core
         # mark/comic/silhouette state but must be redrawn on every transaction
@@ -460,19 +465,19 @@ def install(m):
     # wrappers captured earlier remain implementation history, not runtime owners.
     m._redraw_marks = render
 
-    # Directional Scale and Axis Rotate are custom toolbar commands whose legacy
-    # Execute/Destroy handlers used to redraw *before* clearing `_live` and
-    # `_active_cmd`. The visual authority therefore saw their final card as still
-    # Editing on the first Confirm. Reopened Confirm was fine because the reopen
-    # owner clears edit ownership before its persistent render. Keep the same
-    # lifecycle rule here: defer those two toolbar redraws until the command's
-    # existing Destroy handler has fully released ownership, then render once.
+    # Scale, Directional Scale, and Axis Rotate can request persistent redraw
+    # while Fusion still owns their native tool command. The Scale confirm path
+    # does this in FuzzyExecute, before command Destroy. Postpone their final
+    # persistent render until the command's Destroy handlers release ownership.
+    # This also avoids creating persistent CustomGraphics in the Scale Execute
+    # callback, which can terminate Fusion at the native layer.
     custom_finish = {
         "deferred": False,
         "command": None,
         "mark_id": None,
     }
     custom_live_key = {
+        "scale": "scale",
         "directional_scale": "scale_axis",
         "axis_rotate": "axis_rotate",
     }
@@ -480,6 +485,14 @@ def install(m):
 
     def finish_aware_redraw(*args, **kwargs):
         cmd_name = getattr(m, "_active_cmd", None)
+        # Scale's legacy Destroy clears _active_cmd BEFORE asking for a redraw.
+        # If Confirm has already deferred Scale's render, do not render from
+        # inside that Destroy callback either. The post-Destroy observer below
+        # performs exactly one authoritative redraw.
+        if (cmd_name is None and custom_finish.get("deferred")
+                and custom_finish.get("command") == "scale"):
+            trace("TOOL_RENDER_WAIT_FOR_DESTROY", "tool=scale")
+            return state.get("last_snapshot")
         live_key = custom_live_key.get(cmd_name)
         if live_key is not None:
             mid = (getattr(m, "_live", None) or {}).get(live_key)
