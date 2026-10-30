@@ -122,6 +122,49 @@ def install(m):
         mid = state.get("active_id")
         return m._find(mid) if mid is not None else None
 
+    # One unresolved placement decision can affect several ordinary CAD bodies.
+    # Keep their scope graphics separate from the editing preview: the latter is
+    # transformed per drag frame and must not be rebuilt just to show followers.
+    REOPEN_SCOPE_GID = "FuzzyCAD_ReopenRelatedScope"
+
+    def clear_reopen_scope():
+        try:
+            m._clear(REOPEN_SCOPE_GID)
+        except Exception:
+            pass
+
+    def show_reopen_scope(mark):
+        clear_reopen_scope()
+        if not mark or mark.get("tool") not in ("move", "rotate", "scale", "scale_axis"):
+            return
+        compute = getattr(m, "_follow_scope_bodies", None)
+        if compute is None:
+            return
+        try:
+            linked, added_later = compute(mark)
+            if not linked and not added_later:
+                return
+            group = m._group(REOPEN_SCOPE_GID)
+            if group is None:
+                return
+            # Orange denotes change impact, NOT a separate unresolved decision.
+            # New nearby bodies are lighter: their inclusion follows the current
+            # downstream-work rule, not an explicit selection at mark creation.
+            for bodies, rgb, opacity in (
+                    (linked, (225, 126, 38), 0.42),
+                    (added_later, (244, 179, 96), 0.25)):
+                for body in bodies:
+                    try:
+                        graphics = group.addBRepBody(body)
+                        graphics.color = m._solid(rgb)
+                        graphics.setOpacity(opacity, True)
+                    except Exception:
+                        continue
+            log("REOPEN SCOPE mark={} linked={} added_later={}".format(
+                mark.get("id"), len(linked), len(added_later)))
+        except Exception:
+            log("reopen scope highlight failed\\n{}".format(m.traceback.format_exc()))
+
     def is_editable(mark):
         return bool(mark and mark.get("status", "open") == "open" and
                     mark.get("mtype", "need_input") == "need_input" and
@@ -604,6 +647,7 @@ def install(m):
             try:
                 redraw_other_marks(state.get("active_id"))
                 sync_and_draw(False, force=True)
+                show_reopen_scope(active_mark())
                 m._app.activeViewport.refresh()
             except Exception:
                 pass
@@ -634,6 +678,7 @@ def install(m):
                 # re-edit rebuilds the outline.
                 state["xform_built"] = False
                 state["last_preview_signature"] = None
+                clear_reopen_scope()
                 try:
                     m._clear(m.GROUP_PREVIEW)
                 except Exception:
@@ -662,6 +707,7 @@ def install(m):
             # Genuine close of the current session (no successor edit command).
             owned_cmd = (getattr(m, "_active_cmd", None) == "edit_existing")
             log("DESTROY gen={} current owned_cmd={}".format(sess.get("gen"), owned_cmd))
+            clear_reopen_scope()
             try:
                 mark = m._find(sess.get("mark_id"))
                 if mark is not None and mark.get("tool") in ("extrude", "fillet"):
@@ -945,6 +991,7 @@ def install(m):
         return result
 
     def stop(context):
+        clear_reopen_scope()
         try:
             m._app.unregisterCustomEvent(EDIT_EVENT_ID)
         except Exception:
