@@ -132,6 +132,11 @@ def install(m):
     def draw_move(group, mark, rgb, amp):
         if old_draw_move is not None:
             old_draw_move(group, mark, rgb, amp)
+        # Selection-time scope feedback belongs to the original Transform edit.
+        # Do not keep orange related-body overlays visible in Proposed or after
+        # a card reopens: the reopened edit has its own on-demand scope highlight.
+        if getattr(m, "_active_cmd", None) != "transform":
+            return
         related, scope = relation_for(mark)
         if not related:
             return
