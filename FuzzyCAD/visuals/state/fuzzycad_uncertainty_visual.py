@@ -192,11 +192,9 @@ def install(m):
             except Exception:
                 pass
 
-        # Move Together is one proposal with several body subjects.
-        if mark.get("tool") == "move" and mark.get("move_scope") == "together":
-            for body in mark.get("related_bodies") or []:
-                add(body)
-
+        # Related parts follow the proposal but do not own its uncertainty.
+        # Only the primary body gets the persistent comic/badge appearance;
+        # relationships are shown on demand when the decision is reopened.
         # In-place Compare has no target body. Use the currently shown option as
         # the compact conflict subject; explicit Compare/Focus reveals both.
         if mark.get("tool") == "compare" and mark.get("inplace") and not out:
