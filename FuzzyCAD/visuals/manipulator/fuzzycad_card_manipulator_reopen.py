@@ -135,6 +135,8 @@ def install(m):
 
     def show_reopen_scope(mark):
         clear_reopen_scope()
+        if getattr(m, "_uncertainty_hidden", False):
+            return
         if not mark or mark.get("tool") not in ("move", "rotate", "scale", "scale_axis"):
             return
         compute = getattr(m, "_follow_scope_bodies", None)
@@ -962,6 +964,9 @@ def install(m):
 
     def run(context):
         result = old_run(context)
+        # Clean up a stale preview left by an interrupted Fusion session.
+        # This scope overlay is transient and must never survive startup.
+        clear_reopen_scope()
         try:
             existing = m._ui.commandDefinitions.itemById(EDIT_CMD_ID)
             if existing is not None:
