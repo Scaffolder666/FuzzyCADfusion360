@@ -1,4 +1,4 @@
-"""Crash-safe finishing for reopened proposal edits.
+"""Crash-safe finishing for reopened edits and new Uniform Size proposals.
 
 Fusion has hard-crashed when an active reopened card edit is closed through the
 legacy UserInterface.terminateActiveCommand() path. Reopened Confirm, Accept,
@@ -18,6 +18,12 @@ like leftover Editing lines over the comic baseline.
 
 The custom event carries only plain JSON data. No Fusion event/command wrapper is
 retained across the palette -> main-thread boundary.
+
+New Uniform Size Confirm also uses doExecute(True). Its legacy empty-launch
+event called terminateActiveCommand while a live scale manipulator/preview was
+owned by Fusion. The crash trace ended at RAIL_CONFIRM before Execute/Destroy.
+Keep this creation path separate from reopened-edit cleanup: its preview and live
+mark must remain intact until the command's own lifecycle handlers release them.
 """
 
 import json
@@ -30,6 +36,7 @@ def install(m):
     CurrentPaletteHTMLHandler = m.PaletteHTMLHandler
     old_run = m.run
     old_stop = m.stop
+    create_finish = {"pending_gen": None}
 
     def trace(event, detail=""):
         try:
@@ -102,6 +109,54 @@ def install(m):
             except Exception:
                 pass
             return False
+
+    def request_scale_finish():
+        session = getattr(m, "_cmd_session", None)
+        gen = session.get("gen") if isinstance(session, dict) else None
+        if gen is None:
+            trace("SAFE_CREATE_FINISH_NO_SESSION", "tool=scale")
+            return False
+        if create_finish["pending_gen"] == gen:
+            trace("SAFE_CREATE_FINISH_ALREADY_PENDING", "tool=scale gen={}".format(gen))
+            return True
+        create_finish["pending_gen"] = gen
+        try:
+            m._app.fireCustomEvent(EVENT_ID, json.dumps({
+                "reason": "confirm", "create_tool": "scale", "session_gen": gen,
+            }))
+            return True
+        except Exception:
+            create_finish["pending_gen"] = None
+            trace("SAFE_CREATE_FINISH_FIRE_EXCEPTION", m.traceback.format_exc())
+            return False
+
+    def finish_scale(data):
+        gen = data.get("session_gen")
+        try:
+            session = getattr(m, "_cmd_session", None)
+            if (gen is None or data.get("reason") != "confirm"
+                    or getattr(m, "_active_cmd", None) != "scale"
+                    or not isinstance(session, dict)
+                    or session.get("cmd") != "scale" or session.get("gen") != gen
+                    or session.get("inputs") is not getattr(m, "_inputs", None)):
+                trace("SAFE_CREATE_FINISH_STALE", "tool=scale gen={}".format(gen))
+                return
+            cmd = active_command()
+            if cmd is None:
+                trace("SAFE_CREATE_FINISH_NO_COMMAND", "tool=scale gen={}".format(gen))
+                return
+            trace("SAFE_CREATE_DOEXECUTE_BEGIN", "tool=scale gen={}".format(gen))
+            # Run only in this CustomEvent callback, not in an HTML or Command
+            # event. Do not clear graphics or detach the live mark here. Existing
+            # Execute/Destroy and post-Destroy rendering own that transition.
+            ok = bool(cmd.doExecute(True))
+            trace("SAFE_CREATE_DOEXECUTE_RETURN", "tool=scale gen={} ok={} active_cmd={}".format(
+                gen, ok, getattr(m, "_active_cmd", None)))
+        except Exception:
+            trace("SAFE_CREATE_FINISH_EXCEPTION", m.traceback.format_exc())
+        finally:
+            if create_finish["pending_gen"] == gen:
+                create_finish["pending_gen"] = None
 
     def prepare_visual_finish(reason, mid):
         """Remove ephemeral Editing-only state before the native command closes.
@@ -296,6 +351,9 @@ def install(m):
             try:
                 raw = args.additionalInfo or ""
                 data = json.loads(raw) if raw else {}
+                if data.get("create_tool") == "scale":
+                    finish_scale(data)
+                    return
                 reason = str(data.get("reason") or "confirm")
                 requested_mid = data.get("id")
             except Exception:
@@ -366,6 +424,13 @@ def install(m):
                 pass
 
             active = getattr(m, "_active_cmd", None) == "edit_existing"
+
+            if action == "confirm" and getattr(m, "_active_cmd", None) == "scale":
+                trace("RAIL_CONFIRM_CREATE_SAFE", "tool=scale")
+                request_scale_finish()
+                # Never fall back to the legacy terminate-only event, even if
+                # session resolution/event dispatch fails. Leave the tool open.
+                return
 
             # Reopened Confirm: finish through the command's own OK lifecycle.
             if action == "confirm" and active:
@@ -479,3 +544,4 @@ def install(m):
 
     m.run = run
     m.stop = stop
+
