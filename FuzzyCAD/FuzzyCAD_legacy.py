@@ -1178,11 +1178,19 @@ class LaunchHandler(adsk.core.CustomEventHandler):
             # mechanism, which the toolbar has always relied on.
             if _active_cmd == "edit_existing":
                 closer = globals().get("_close_active_edit_sync")
-                if closer is not None:
-                    try:
-                        closer("toolbar-switch")
-                    except Exception:
-                        pass
+                if closer is None or not closer("toolbar-switch"):
+                    if cmd_id == "FuzzyCAD_Commit":
+                        globals()["_pending_commit_id"] = None
+                    return
+            elif _active_cmd in globals().get("_safe_create_tools", ()):
+                if cd is None:
+                    closer = globals().get("_close_active_create_sync")
+                    if closer is None or not closer("toolbar-confirm"):
+                        return
+                # A successor command should pre-empt this one through Fusion's
+                # own command lifecycle. In particular an empty selection may not
+                # validate for doExecute, but must still allow switching tools.
+                # Never explicitly terminate the live native manipulator first.
             else:
                 try:
                     _ui.terminateActiveCommand()
@@ -1806,3 +1814,4 @@ def stop(context):
     except Exception:
         if _ui:
             _ui.messageBox("FuzzyCAD failed to stop:\n{}".format(traceback.format_exc()))
+

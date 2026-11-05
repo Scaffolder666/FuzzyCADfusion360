@@ -52,6 +52,7 @@ def install(m):
         "inputs": None,
         "pending": None,
         "finishing": False,
+        "generation": 0,
         "preview_cache": {},
         "thumb_cache": {},
     }
@@ -768,12 +769,18 @@ def install(m):
             return
         state["finishing"] = True
         try:
-            m._app.fireCustomEvent(FINISH_EVENT_ID, "done")
+            m._app.fireCustomEvent(FINISH_EVENT_ID, str(state["generation"]))
         except Exception:
             state["finishing"] = False
 
     class InputChanged(adsk.core.InputChangedEventHandler):
+        def __init__(self, generation):
+            super().__init__()
+            self.generation = generation
+
         def notify(self, args):
+            if self.generation != state["generation"]:
+                return
             try:
                 state["inputs"] = args.inputs
                 cid = args.input.id
@@ -799,7 +806,13 @@ def install(m):
                 log("input failed\n{}".format(m.traceback.format_exc()))
 
     class Destroy(adsk.core.CommandEventHandler):
+        def __init__(self, generation):
+            super().__init__()
+            self.generation = generation
+
         def notify(self, args):
+            if self.generation != state["generation"]:
+                return
             state["inputs"] = None
             clear_pick_graphics()
             try:
@@ -808,19 +821,24 @@ def install(m):
             except Exception:
                 pass
             log("command destroyed")
+            # Queue heavy sampling only after this command has released its
+            # native selection inputs. The event must never terminate whatever
+            # command the user may have opened in the meantime.
+            if state.get("pending") is not None:
+                request_finish()
 
     class Finish(adsk.core.CustomEventHandler):
         def notify(self, args):
+            if str(args.additionalInfo) != str(state["generation"]):
+                log("FINISH ignored: stale comparison session")
+                return
             pending = state.get("pending")
             state["pending"] = None
             log("FINISH fired pending={}".format("yes" if pending else "no"))
             try:
-                # Close Fusion's modal command first.  Heavy sampling/redraw is
-                # deliberately deferred until after the command has terminated.
-                try:
-                    m._ui.terminateActiveCommand()
-                except Exception:
-                    pass
+                if state.get("inputs") is not None:
+                    log("FINISH aborted: comparison command still owns inputs")
+                    return
                 if pending and all(pending[:3]):
                     create_mark(pending[0], pending[1], pending[2],
                                 pending[3] if len(pending) > 3 else None,
@@ -831,7 +849,13 @@ def install(m):
                 state["finishing"] = False
 
     class Execute(adsk.core.CommandEventHandler):
+        def __init__(self, generation):
+            super().__init__()
+            self.generation = generation
+
         def notify(self, args):
+            if self.generation != state["generation"]:
+                return
             # OK ("Create comparison") pressed: capture the three connectors and
             # each alternative's (optional) explicit body list, then defer the
             # heavy create/redraw until after the command closes.
@@ -845,14 +869,19 @@ def install(m):
                     tc is not None, ac is not None, bc is not None, len(ab), len(bb)))
                 if tc and ac and bc:
                     state["pending"] = (tc, ac, bc, ab, bb)
-                    request_finish()
                 else:
                     log("EXECUTE aborted: a connector is missing/invalid")
             except Exception:
                 log("execute failed\n{}".format(m.traceback.format_exc()))
 
     class Validate(adsk.core.ValidateInputsEventHandler):
+        def __init__(self, generation):
+            super().__init__()
+            self.generation = generation
+
         def notify(self, args):
+            if self.generation != state["generation"]:
+                return
             # Enable OK once all three connections have a selection. Keep it cheap
             # (no connector rebuild here) so OK does not flicker disabled.
             try:
@@ -869,6 +898,7 @@ def install(m):
     class Created(adsk.core.CommandCreatedEventHandler):
         def notify(self, args):
             try:
+                state["generation"] += 1
                 state["pending"] = None
                 state["finishing"] = False
                 cmd = args.command
@@ -917,16 +947,16 @@ def install(m):
                 state["inputs"] = inputs
                 set_focus("cmp_target")
                 stage()
-                ih = InputChanged()
+                ih = InputChanged(state["generation"])
                 cmd.inputChanged.add(ih)
                 m._handlers.append(ih)
-                eh = Execute()
+                eh = Execute(state["generation"])
                 cmd.execute.add(eh)
                 m._handlers.append(eh)
-                vh = Validate()
+                vh = Validate(state["generation"])
                 cmd.validateInputs.add(vh)
                 m._handlers.append(vh)
-                dh = Destroy()
+                dh = Destroy(state["generation"])
                 cmd.destroy.add(dh)
                 m._handlers.append(dh)
                 log("ACTIVE single-shell Compare")
@@ -1029,3 +1059,4 @@ def install(m):
 
     m.run = run
     m.stop = stop
+

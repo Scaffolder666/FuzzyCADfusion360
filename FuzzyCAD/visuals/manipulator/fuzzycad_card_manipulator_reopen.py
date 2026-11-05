@@ -729,6 +729,8 @@ def install(m):
                 state["active_id"] = None
             if getattr(m, "_active_edit_id", None) == sess.get("mark_id"):
                 m._active_edit_id = None
+            if getattr(m, "_active_edit_generation", None) == sess.get("gen"):
+                m._active_edit_generation = None
             if state.get("command") is sess.get("command"):
                 state["command"] = None
             if state.get("inputs") is sess.get("inputs"):
@@ -814,6 +816,7 @@ def install(m):
                 # Expose which mark is being re-edited so other layers (e.g. the
                 # fillet preview) can treat a reopened edit as "live".
                 m._active_edit_id = mark["id"]
+                m._active_edit_generation = session["gen"]
                 state["command"] = args.command
                 m._active_cmd = "edit_existing"
                 args.command.isRepeatable = False
@@ -1011,3 +1014,4 @@ def install(m):
 
     m.run = run
     m.stop = stop
+

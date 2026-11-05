@@ -1,4 +1,4 @@
-"""Crash-safe finishing for reopened edits and new Uniform Size proposals.
+"""Crash-safe finishing for reopened edits and new proposal commands.
 
 Fusion has hard-crashed when an active reopened card edit is closed through the
 legacy UserInterface.terminateActiveCommand() path. Reopened Confirm, Accept,
@@ -19,7 +19,7 @@ like leftover Editing lines over the comic baseline.
 The custom event carries only plain JSON data. No Fusion event/command wrapper is
 retained across the palette -> main-thread boundary.
 
-New Uniform Size Confirm also uses doExecute(True). Its legacy empty-launch
+New proposal Confirm also uses doExecute(True). Its legacy empty-launch
 event called terminateActiveCommand while a live scale manipulator/preview was
 owned by Fusion. The crash trace ended at RAIL_CONFIRM before Execute/Destroy.
 Keep this creation path separate from reopened-edit cleanup: its preview and live
@@ -29,6 +29,8 @@ mark must remain intact until the command's own lifecycle handlers release them.
 import json
 
 EVENT_ID = "FuzzyCADSafeReopenConfirm"
+CREATE_TOOLS = frozenset({"transform", "scale", "directional_scale", "axis_rotate",
+                          "extrude", "fillet", "hole", "rough"})
 
 
 def install(m):
@@ -95,6 +97,9 @@ def install(m):
 
     def request_finish(reason="confirm", mid=None):
         payload = {"reason": str(reason or "confirm")}
+        gen = getattr(m, "_active_edit_generation", None)
+        if gen is not None:
+            payload["edit_gen"] = gen
         if mid is not None:
             try:
                 payload["id"] = int(mid)
@@ -110,19 +115,20 @@ def install(m):
                 pass
             return False
 
-    def request_scale_finish():
+    def request_create_finish():
+        tool = getattr(m, "_active_cmd", None)
         session = getattr(m, "_cmd_session", None)
         gen = session.get("gen") if isinstance(session, dict) else None
         if gen is None:
-            trace("SAFE_CREATE_FINISH_NO_SESSION", "tool=scale")
+            trace("SAFE_CREATE_FINISH_NO_SESSION", "tool={}".format(tool))
             return False
         if create_finish["pending_gen"] == gen:
-            trace("SAFE_CREATE_FINISH_ALREADY_PENDING", "tool=scale gen={}".format(gen))
+            trace("SAFE_CREATE_FINISH_ALREADY_PENDING", "tool={} gen={}".format(tool, gen))
             return True
         create_finish["pending_gen"] = gen
         try:
             m._app.fireCustomEvent(EVENT_ID, json.dumps({
-                "reason": "confirm", "create_tool": "scale", "session_gen": gen,
+                "reason": "confirm", "create_tool": tool, "session_gen": gen,
             }))
             return True
         except Exception:
@@ -130,33 +136,64 @@ def install(m):
             trace("SAFE_CREATE_FINISH_FIRE_EXCEPTION", m.traceback.format_exc())
             return False
 
-    def finish_scale(data):
+    def finish_create(data):
+        tool = data.get("create_tool")
         gen = data.get("session_gen")
         try:
             session = getattr(m, "_cmd_session", None)
             if (gen is None or data.get("reason") != "confirm"
-                    or getattr(m, "_active_cmd", None) != "scale"
+                    or tool not in CREATE_TOOLS
+                    or getattr(m, "_active_cmd", None) != tool
                     or not isinstance(session, dict)
-                    or session.get("cmd") != "scale" or session.get("gen") != gen
+                    or session.get("cmd") != tool or session.get("gen") != gen
                     or session.get("inputs") is not getattr(m, "_inputs", None)):
-                trace("SAFE_CREATE_FINISH_STALE", "tool=scale gen={}".format(gen))
+                trace("SAFE_CREATE_FINISH_STALE", "tool={} gen={}".format(tool, gen))
                 return
             cmd = active_command()
             if cmd is None:
-                trace("SAFE_CREATE_FINISH_NO_COMMAND", "tool=scale gen={}".format(gen))
+                trace("SAFE_CREATE_FINISH_NO_COMMAND", "tool={} gen={}".format(tool, gen))
                 return
-            trace("SAFE_CREATE_DOEXECUTE_BEGIN", "tool=scale gen={}".format(gen))
+            trace("SAFE_CREATE_DOEXECUTE_BEGIN", "tool={} gen={}".format(tool, gen))
             # Run only in this CustomEvent callback, not in an HTML or Command
             # event. Do not clear graphics or detach the live mark here. Existing
             # Execute/Destroy and post-Destroy rendering own that transition.
             ok = bool(cmd.doExecute(True))
-            trace("SAFE_CREATE_DOEXECUTE_RETURN", "tool=scale gen={} ok={} active_cmd={}".format(
-                gen, ok, getattr(m, "_active_cmd", None)))
+            trace("SAFE_CREATE_DOEXECUTE_RETURN", "tool={} gen={} ok={} active_cmd={}".format(
+                tool, gen, ok, getattr(m, "_active_cmd", None)))
         except Exception:
             trace("SAFE_CREATE_FINISH_EXCEPTION", m.traceback.format_exc())
         finally:
             if create_finish["pending_gen"] == gen:
                 create_finish["pending_gen"] = None
+
+    def close_active_create_sync(reason="switch"):
+        """Finish an owned creation command from a CustomEvent callback only.
+
+        Do not fall back to forced termination on a failed or asynchronous close.
+        The caller must wait until ownership has actually been released.
+        """
+        tool = getattr(m, "_active_cmd", None)
+        if tool not in CREATE_TOOLS:
+            return False
+        session = getattr(m, "_cmd_session", None)
+        if (not isinstance(session, dict) or session.get("cmd") != tool
+                or session.get("inputs") is not getattr(m, "_inputs", None)):
+            trace("CLOSE_CREATE_SYNC_STALE", "reason={} tool={}".format(reason, tool))
+            return False
+        cmd = active_command()
+        if cmd is None:
+            return False
+        trace("CLOSE_CREATE_SYNC_BEGIN", "reason={} tool={}".format(reason, tool))
+        try:
+            ok = bool(cmd.doExecute(True))
+        except Exception:
+            trace("CLOSE_CREATE_SYNC_EXCEPTION", m.traceback.format_exc())
+            return False
+        closed = (ok and getattr(m, "_active_cmd", None) is None
+                  and getattr(m, "_cmd_session", None) is not session)
+        trace("CLOSE_CREATE_SYNC_RETURN", "reason={} tool={} closed={}".format(
+            reason, tool, closed))
+        return closed
 
     def prepare_visual_finish(reason, mid):
         """Remove ephemeral Editing-only state before the native command closes.
@@ -223,8 +260,8 @@ def install(m):
         inside a CustomEventHandler (the same context this module's doExecute runs in);
         do NOT call it directly from an HTML event (defer through request_finish there).
 
-        Returns True if an edit was active and closed; False if no edit was active
-        (the caller should then fall back to its normal path).
+        Returns True only after the edit has closed. Callers must abort a switch
+        or destructive action on False, never force-terminate the edit as fallback.
         """
         if getattr(m, "_active_cmd", None) != "edit_existing":
             return False
@@ -235,12 +272,15 @@ def install(m):
         trace("CLOSE_EDIT_SYNC_BEGIN", "reason={} active_edit={}".format(reason, mid))
         prepare_visual_finish(reason, mid)
         try:
-            cmd.doExecute(True)
+            ok = bool(cmd.doExecute(True))
         except Exception:
             try:
                 trace("CLOSE_EDIT_SYNC_EXCEPTION", m.traceback.format_exc())
             except Exception:
                 trace("CLOSE_EDIT_SYNC_EXCEPTION", "traceback unavailable")
+            return False
+        if not ok or getattr(m, "_active_cmd", None) is not None:
+            trace("CLOSE_EDIT_SYNC_NOT_CLOSED", "reason={}".format(reason))
             return False
         if str(reason) == "confirm":
             verify_confirm_visual(mid)
@@ -351,8 +391,8 @@ def install(m):
             try:
                 raw = args.additionalInfo or ""
                 data = json.loads(raw) if raw else {}
-                if data.get("create_tool") == "scale":
-                    finish_scale(data)
+                if data.get("create_tool") in CREATE_TOOLS:
+                    finish_create(data)
                     return
                 reason = str(data.get("reason") or "confirm")
                 requested_mid = data.get("id")
@@ -364,6 +404,11 @@ def install(m):
             if getattr(m, "_active_cmd", None) != "edit_existing":
                 trace("SAFE_FINISH_STALE", "reason={} active_cmd={}".format(
                     reason, getattr(m, "_active_cmd", None)))
+                return
+
+            if (data.get("edit_gen") is not None and data["edit_gen"]
+                    != getattr(m, "_active_edit_generation", None)):
+                trace("SAFE_FINISH_STALE_GENERATION", "reason={}".format(reason))
                 return
 
             mid = getattr(m, "_active_edit_id", None)
@@ -392,6 +437,10 @@ def install(m):
                     trace("SAFE_FINISH_EXCEPTION", m.traceback.format_exc())
                 except Exception:
                     trace("SAFE_FINISH_EXCEPTION", "traceback unavailable")
+                return
+
+            if not ok or getattr(m, "_active_cmd", None) is not None:
+                trace("SAFE_FINISH_NOT_CLOSED", "reason={} id={}".format(reason, mid))
                 return
 
             if reason == "confirm":
@@ -425,9 +474,9 @@ def install(m):
 
             active = getattr(m, "_active_cmd", None) == "edit_existing"
 
-            if action == "confirm" and getattr(m, "_active_cmd", None) == "scale":
-                trace("RAIL_CONFIRM_CREATE_SAFE", "tool=scale")
-                request_scale_finish()
+            if action == "confirm" and getattr(m, "_active_cmd", None) in CREATE_TOOLS:
+                trace("RAIL_CONFIRM_CREATE_SAFE", "tool={}".format(m._active_cmd))
+                request_create_finish()
                 # Never fall back to the legacy terminate-only event, even if
                 # session resolution/event dispatch fails. Leave the tool open.
                 return
@@ -484,7 +533,10 @@ def install(m):
                               "action={} id={} cmd={} -> settle command first".format(
                                   action, tid, create_cmd))
                         try:
-                            m._app.fireCustomEvent(m.LAUNCH_EVENT_ID, "")
+                            if create_cmd in CREATE_TOOLS:
+                                request_create_finish()
+                            else:
+                                m._app.fireCustomEvent(m.LAUNCH_EVENT_ID, "")
                         except Exception:
                             pass
                         return
@@ -515,6 +567,8 @@ def install(m):
     m.PaletteHTMLHandler = PaletteHTMLHandler
     m._safe_finish_reopen = request_finish
     m._close_active_edit_sync = close_active_edit_sync
+    m._safe_create_tools = CREATE_TOOLS
+    m._close_active_create_sync = close_active_create_sync
 
     def run(context):
         result = old_run(context)
@@ -544,4 +598,5 @@ def install(m):
 
     m.run = run
     m.stop = stop
+
 
