@@ -86,11 +86,12 @@ class ScaleConfirmTests(unittest.TestCase):
         self.deliver()
         self.command.doExecute.assert_not_called()
 
-    def test_replaced_inputs_are_not_executed(self):
+    def test_fresh_native_input_wrapper_does_not_block_confirm(self):
         self.confirm()
         self.m._inputs = NS(command=self.command)
+        self.assertIsNot(self.m._cmd_session["inputs"], self.m._inputs)
         self.deliver()
-        self.command.doExecute.assert_not_called()
+        self.command.doExecute.assert_called_once_with(True)
 
     def test_invalid_command_has_no_legacy_fallback(self):
         self.confirm()

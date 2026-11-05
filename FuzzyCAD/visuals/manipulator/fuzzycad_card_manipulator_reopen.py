@@ -808,6 +808,11 @@ def install(m):
                     "inputs": None,
                 }
                 state["current"] = session
+                # Reopening a card starts a different owner, even when it edits
+                # the creation command's own mark. Invalidate that old command's
+                # callbacks before the new native inputs can be installed.
+                m._cmd_session = None
+                m._live = {}
                 state["active_id"] = mark["id"]
                 # A fresh edit -> the transform preview outline must be rebuilt once
                 # for this session before per-frame re-transforming.

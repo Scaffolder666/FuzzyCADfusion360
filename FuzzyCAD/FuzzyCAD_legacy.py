@@ -1103,7 +1103,11 @@ class FuzzyDestroy(adsk.core.CommandEventHandler):
         global _pending, _inputs, _active_cmd, _live, _cmd_session
         sess = self.session
         my_live = sess.get("live") or {}
-        current = (_cmd_session is sess)
+        current = (_cmd_session is sess and _active_cmd == sess.get("cmd"))
+        if not current:
+            # A card edit can inherit this very mark. Do not remove its seed or
+            # touch native inputs once a successor owns the command lifecycle.
+            return
         # Remove THIS command's own orphan / default seed marks. Iterate the
         # session's own live dict, never the module global -- a successor command
         # replaces `_live` with a fresh dict, and clobbering that would delete the
@@ -1132,8 +1136,10 @@ class FuzzyDestroy(adsk.core.CommandEventHandler):
             pass
         if _active_cmd == sess.get("cmd"):
             _active_cmd = None
-        if _inputs is sess.get("inputs"):
-            _inputs = None
+        # InputChanged may provide a fresh Python wrapper for the same native
+        # CommandInputs. Session + command ownership, not wrapper identity, is
+        # what authorizes releasing the current inputs.
+        _inputs = None
         if _live is my_live:
             # Cleared BEFORE redrawing: the surviving mark just left the command, so
             # it must read as "proposed" (comic look), not "editing" (clean preview).

@@ -145,8 +145,7 @@ def install(m):
                     or tool not in CREATE_TOOLS
                     or getattr(m, "_active_cmd", None) != tool
                     or not isinstance(session, dict)
-                    or session.get("cmd") != tool or session.get("gen") != gen
-                    or session.get("inputs") is not getattr(m, "_inputs", None)):
+                    or session.get("cmd") != tool or session.get("gen") != gen):
                 trace("SAFE_CREATE_FINISH_STALE", "tool={} gen={}".format(tool, gen))
                 return
             cmd = active_command()
@@ -176,8 +175,7 @@ def install(m):
         if tool not in CREATE_TOOLS:
             return False
         session = getattr(m, "_cmd_session", None)
-        if (not isinstance(session, dict) or session.get("cmd") != tool
-                or session.get("inputs") is not getattr(m, "_inputs", None)):
+        if not isinstance(session, dict) or session.get("cmd") != tool:
             trace("CLOSE_CREATE_SYNC_STALE", "reason={} tool={}".format(reason, tool))
             return False
         cmd = active_command()

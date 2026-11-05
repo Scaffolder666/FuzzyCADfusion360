@@ -43,9 +43,47 @@ class LifecycleRaceTests(unittest.TestCase):
                 self.m._clear.assert_not_called()
                 self.m._remove_mark.assert_not_called()
 
+    def test_custom_destroy_does_not_clear_reopened_edit_with_old_session_token(self):
+        self.m._cmd_session = self.old
+        self.m._active_cmd = "edit_existing"
+        self.m._active_edit_id = 14
+        self.old["cmd"] = "axis_rotate"
+        env = {"m": self.m, "adsk": self.adsk}
+        cls = load_inner("FuzzyCAD/tools/fuzzycad_direct_interactions.py",
+                         "AxisRotateDestroy", env)
+        cls(self.old).notify(NS())
+        self.assertEqual(self.m._active_cmd, "edit_existing")
+        self.assertEqual(self.m._active_edit_id, 14)
+        self.m._clear.assert_not_called()
+
+    def test_standard_destroy_does_not_delete_mark_inherited_by_reopened_edit(self):
+        remove = Mock()
+        env = {"adsk": self.adsk, "_cmd_session": self.old,
+               "_active_cmd": "edit_existing", "_remove_mark": remove}
+        cls = load_inner("FuzzyCAD/FuzzyCAD_legacy.py", "FuzzyDestroy", env)
+        cls(self.old).notify(NS())
+        self.assertEqual(env["_active_cmd"], "edit_existing")
+        remove.assert_not_called()
+
+    def test_current_standard_destroy_clears_fresh_input_wrapper(self):
+        session = {"gen": 1, "cmd": "scale", "inputs": object(), "live": {"scale": 14}}
+        env = {"adsk": self.adsk, "_cmd_session": session,
+               "_active_cmd": "scale", "_inputs": object(), "_pending": {},
+               "_live": session["live"], "_switching": False,
+               "_find": lambda mid: {"factor": 1.2}, "_is_default": lambda cat, mark: False,
+               "_remove_mark": Mock(), "_clear": Mock(), "GROUP_PREVIEW": 1,
+               "_redraw_marks": Mock(), "_send_state": Mock()}
+        cls = load_inner("FuzzyCAD/FuzzyCAD_legacy.py", "FuzzyDestroy", env)
+        cls(session).notify(NS())
+        self.assertIsNone(env["_inputs"])
+        self.assertIsNone(env["_active_cmd"])
+        env["_remove_mark"].assert_not_called()
+
     def test_current_custom_destroy_releases_ownership(self):
         for name in ("DirectionalScaleDestroy", "AxisRotateDestroy"):
             with self.subTest(handler=name):
+                self.old["cmd"] = "directional_scale" if name.startswith("Directional") else "axis_rotate"
+                self.m._active_cmd = self.old["cmd"]
                 self.m._cmd_session = self.old
                 self.m._live = {"scale_axis": 14, "axis_rotate": 15}
                 env = {"m": self.m, "adsk": self.adsk}

@@ -218,7 +218,8 @@ def install(m):
 
         def notify(self, args):
             # Fusion may deliver callbacks after a successor command is created.
-            if getattr(m, "_cmd_session", None) is not self.session:
+            if (getattr(m, "_cmd_session", None) is not self.session
+                    or getattr(m, "_active_cmd", None) != self.session.get("cmd")):
                 return
             try:
                 m._inputs = args.inputs
@@ -268,7 +269,8 @@ def install(m):
 
         def notify(self, args):
             # Fusion may deliver callbacks after a successor command is created.
-            if getattr(m, "_cmd_session", None) is not self.session:
+            if (getattr(m, "_cmd_session", None) is not self.session
+                    or getattr(m, "_active_cmd", None) != self.session.get("cmd")):
                 return
             try:
                 if m._pending and state.get("dir_axis"):
@@ -285,7 +287,8 @@ def install(m):
 
         def notify(self, args):
             # Fusion may deliver callbacks after a successor command is created.
-            if getattr(m, "_cmd_session", None) is not self.session:
+            if (getattr(m, "_cmd_session", None) is not self.session
+                    or getattr(m, "_active_cmd", None) != self.session.get("cmd")):
                 return
             try:
                 if m._pending and state.get("dir_axis"):
@@ -303,7 +306,8 @@ def install(m):
 
         def notify(self, args):
             # Fusion may deliver callbacks after a successor command is created.
-            if getattr(m, "_cmd_session", None) is not self.session:
+            if (getattr(m, "_cmd_session", None) is not self.session
+                    or getattr(m, "_active_cmd", None) != self.session.get("cmd")):
                 return
             try:
                 mid = m._live.get("scale_axis")
@@ -465,7 +469,8 @@ def install(m):
 
         def notify(self, args):
             # Fusion may deliver callbacks after a successor command is created.
-            if getattr(m, "_cmd_session", None) is not self.session:
+            if (getattr(m, "_cmd_session", None) is not self.session
+                    or getattr(m, "_active_cmd", None) != self.session.get("cmd")):
                 return
             try:
                 m._inputs = args.inputs
@@ -516,7 +521,8 @@ def install(m):
 
         def notify(self, args):
             # Fusion may deliver callbacks after a successor command is created.
-            if getattr(m, "_cmd_session", None) is not self.session:
+            if (getattr(m, "_cmd_session", None) is not self.session
+                    or getattr(m, "_active_cmd", None) != self.session.get("cmd")):
                 return
             try:
                 if m._pending:
@@ -532,7 +538,8 @@ def install(m):
 
         def notify(self, args):
             # Fusion may deliver callbacks after a successor command is created.
-            if getattr(m, "_cmd_session", None) is not self.session:
+            if (getattr(m, "_cmd_session", None) is not self.session
+                    or getattr(m, "_active_cmd", None) != self.session.get("cmd")):
                 return
             try:
                 if m._pending:
@@ -550,7 +557,8 @@ def install(m):
 
         def notify(self, args):
             # Fusion may deliver callbacks after a successor command is created.
-            if getattr(m, "_cmd_session", None) is not self.session:
+            if (getattr(m, "_cmd_session", None) is not self.session
+                    or getattr(m, "_active_cmd", None) != self.session.get("cmd")):
                 return
             try:
                 mid = m._live.get("axis_rotate")

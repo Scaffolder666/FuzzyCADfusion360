@@ -24,6 +24,12 @@ def install(m):
     old_run = m.run
 
     HILITE_RGB = (225, 126, 38)
+    scope_state = {"asking": False}
+
+    def trace(event, detail=""):
+        fn = getattr(m, "_crash_trace", None)
+        if fn is not None:
+            fn(event, detail)
 
     def log(msg):
         try:
@@ -37,15 +43,19 @@ def install(m):
         except Exception:
             return str(id(b))
 
-    def highlight_related(related):
-        grp = m._group(m.GROUP_PREVIEW)
+    def highlight_related(related, gid):
+        # Do not put live BRepBody graphics into the manipulator's preview group.
+        # Fusion may recreate/delete that group while a modal question is open or
+        # when the command closes. Use sampled orange edges in a separate group.
+        grp = m._group(gid)
         if grp is None:
             return
-        for b in related:
+        for index, b in enumerate(related):
             try:
-                cg = grp.addBRepBody(b)
-                cg.color = m._solid(HILITE_RGB)
-                cg.setOpacity(0.45, True)
+                for edge, points in enumerate(m._sample_edges(b.edges)):
+                    m._sketchy(grp, points, HILITE_RGB, 0.0,
+                               910000 + index * 10000 + edge,
+                               weight=3, strokes=1)
             except Exception:
                 continue
         try:
@@ -86,6 +96,10 @@ def install(m):
 
     class FuzzyInputChanged(CurrentInputChanged):
         def notify(self, args):
+            # The native message box pumps events. Do not rebuild selection or
+            # open a second question recursively while the first is answering.
+            if scope_state["asking"]:
+                return
             cid = None
             try:
                 cid = args.input.id
@@ -111,10 +125,30 @@ def install(m):
                     m._pending["all_tokens"] = list(snap()) if snap else []
                     m._pending["scope_asked_for"] = ptok
                     if related:
-                        highlight_related(related)
-                        m._pending["move_scope"] = ask_scope(len(related))
+                        pending = m._pending
+                        session = getattr(m, "_cmd_session", None)
+                        gen = (session or {}).get("gen")
+                        gid = "FuzzyCAD_ScaleScope_{}".format(gen)
+                        scope_state["asking"] = True
+                        trace("SCALE_SCOPE_BEGIN", "gen={} neighbours={}".format(gen, len(related)))
+                        try:
+                            highlight_related(related, gid)
+                            trace("SCALE_SCOPE_QUESTION", "gen={}".format(gen))
+                            choice = ask_scope(len(related))
+                            trace("SCALE_SCOPE_ANSWER", "gen={} choice={}".format(gen, choice))
+                        finally:
+                            try:
+                                m._clear(gid)
+                            finally:
+                                scope_state["asking"] = False
+                        if (getattr(m, "_cmd_session", None) is not session
+                                or m._pending is not pending
+                                or getattr(m, "_active_cmd", None) != "scale"):
+                            trace("SCALE_SCOPE_STALE", "gen={}".format(gen))
+                            return
+                        pending["move_scope"] = choice
                         log("SCOPE picked={} for {} touching part(s)".format(
-                            m._pending["move_scope"], len(related)))
+                            choice, len(related)))
                     else:
                         m._pending["move_scope"] = "only"
                 # Stamp on EVERY scale inputChanged: the handle drag (which creates
@@ -143,3 +177,4 @@ def install(m):
         return result
 
     m.run = run
+

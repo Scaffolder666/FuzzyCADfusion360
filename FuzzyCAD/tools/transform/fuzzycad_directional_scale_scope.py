@@ -257,7 +257,8 @@ def install(m):
             self.session = session
 
         def notify(self, args):
-            if getattr(m, "_cmd_session", None) is not self.session:
+            if (getattr(m, "_cmd_session", None) is not self.session
+                    or getattr(m, "_active_cmd", None) != "directional_scale"):
                 return
             try:
                 cid = args.input.id
