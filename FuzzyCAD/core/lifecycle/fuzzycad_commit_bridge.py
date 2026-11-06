@@ -214,12 +214,15 @@ def install(m):
                 return
 
             m._pending_commit_id = mid
-            hide_live_inputs()
-            try:
-                m._clear(m.GROUP_PREVIEW)
-                m._app.activeViewport.refresh()
-            except Exception:
-                pass
+            # The HTML callback must not hide native manipulators or delete their
+            # graphics while a tool/edit still owns them. LaunchHandler settles
+            # that command first; CommitExecute performs the terminal cleanup.
+            if getattr(m, "_active_cmd", None) is None:
+                try:
+                    m._clear(m.GROUP_PREVIEW)
+                    m._app.activeViewport.refresh()
+                except Exception:
+                    pass
 
             dbg("PALETTE ACCEPT QUEUED mark={} tool={} -> {}".format(
                 mid, mark.get("tool"), COMMIT_CMD_ID))

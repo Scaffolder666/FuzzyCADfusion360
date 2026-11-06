@@ -475,6 +475,7 @@ def install(m):
         "deferred": False,
         "command": None,
         "mark_id": None,
+        "session": None,
     }
     custom_live_key = {
         "scale": "scale",
@@ -495,10 +496,13 @@ def install(m):
             return state.get("last_snapshot")
         live_key = custom_live_key.get(cmd_name)
         if live_key is not None:
-            mid = (getattr(m, "_live", None) or {}).get(live_key)
+            session = getattr(m, "_cmd_session", None)
+            live = getattr(m, "_live", None) or (session or {}).get("live") or {}
+            mid = live.get(live_key)
             custom_finish["deferred"] = True
             custom_finish["command"] = cmd_name
             custom_finish["mark_id"] = mid
+            custom_finish["session"] = session
             trace("TOOL_RENDER_DEFERRED", "tool={} id={}".format(cmd_name, mid))
             return state.get("last_snapshot")
         return render(*args, **kwargs)
@@ -510,17 +514,24 @@ def install(m):
 
     if CurrentFuzzyCommandCreated is not None:
         class PostCustomToolDestroy(m.adsk.core.CommandEventHandler):
-            def __init__(self, cmd_name):
+            def __init__(self, cmd_name, session):
                 super().__init__()
                 self.cmd_name = cmd_name
+                self.session = session
 
             def notify(self, args):
                 # Registered after the command's existing Destroy handlers, so
                 # direct_interactions has already set _active_cmd=None and _live={}
                 # here. Never manufacture phase state ourselves; ask the central
                 # resolver what the mark is *now* and render that state.
-                if getattr(m, "_active_cmd", None) == self.cmd_name:
-                    trace("TOOL_POST_DESTROY_EARLY", "tool={}".format(self.cmd_name))
+                if (getattr(m, "_active_cmd", None) is not None
+                        or getattr(m, "_switching", False)):
+                    # A successor owns the scene. Never rebuild the previous
+                    # command's persistent graphics in its teardown callback.
+                    if custom_finish.get("session") is self.session:
+                        custom_finish.update(deferred=False, command=None,
+                                             mark_id=None, session=None)
+                    trace("TOOL_POST_DESTROY_SKIPPED", "tool={}".format(self.cmd_name))
                     return
 
                 mid = custom_finish.get("mark_id")
@@ -543,10 +554,11 @@ def install(m):
                 trace("TOOL_POST_DESTROY_RENDERED", "tool={} id={} phase={}".format(
                     self.cmd_name, mid, phase))
 
-                if custom_finish.get("command") == self.cmd_name:
+                if custom_finish.get("session") is self.session:
                     custom_finish["deferred"] = False
                     custom_finish["command"] = None
                     custom_finish["mark_id"] = None
+                    custom_finish["session"] = None
 
         class FuzzyCommandCreated(CurrentFuzzyCommandCreated):
             def notify(self, args):
@@ -555,7 +567,7 @@ def install(m):
                 if cmd_name not in custom_live_key:
                     return
                 try:
-                    handler = PostCustomToolDestroy(cmd_name)
+                    handler = PostCustomToolDestroy(cmd_name, getattr(m, "_cmd_session", None))
                     args.command.destroy.add(handler)
                     m._handlers.append(handler)
                 except Exception:
@@ -792,3 +804,4 @@ def install(m):
     m._refresh_ghost = stable_refresh_ghost
 
     trace("CONTROLLER_READY", "one state -> one persistent render transaction")
+

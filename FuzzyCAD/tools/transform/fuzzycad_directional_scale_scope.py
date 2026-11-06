@@ -252,7 +252,14 @@ def install(m):
     m._DRAW["scale_axis"] = draw_axis_scale
 
     class ScopeInputChanged(adsk.core.InputChangedEventHandler):
+        def __init__(self, session):
+            super().__init__()
+            self.session = session
+
         def notify(self, args):
+            if (getattr(m, "_cmd_session", None) is not self.session
+                    or getattr(m, "_active_cmd", None) != "directional_scale"):
+                return
             try:
                 cid = args.input.id
                 if getattr(m, "_active_cmd", None) != "directional_scale":
@@ -306,7 +313,7 @@ def install(m):
                 side.listItems.add("+ side (opposite side fixed)", True)
                 side.listItems.add("- side (opposite side fixed)", False)
                 side.listItems.add("Both sides (symmetric)", False)
-                h = ScopeInputChanged()
+                h = ScopeInputChanged(getattr(m, "_cmd_session", None))
                 args.command.inputChanged.add(h)
                 m._handlers.append(h)
             except Exception:
@@ -361,3 +368,4 @@ def install(m):
         return result
 
     m.run = run
+

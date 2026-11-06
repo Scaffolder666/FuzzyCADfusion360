@@ -68,15 +68,20 @@ def install(m):
 
         if active is not None:
             try:
-                m._ui.terminateActiveCommand()
+                if active in getattr(m, "_safe_create_tools", ()):
+                    closer = getattr(m, "_close_active_create_sync", None)
+                    if closer is None or not closer("clear-all"):
+                        log("CLEAR aborted: creation command did not close")
+                        return False
+                else:
+                    m._ui.terminateActiveCommand()
             except Exception:
                 log("CLEAR active command terminate failed\n{}".format(
                     m.traceback.format_exc()))
                 return False
-            try:
-                m._active_cmd = None
-            except Exception:
-                pass
+            if getattr(m, "_active_cmd", None) is not None:
+                log("CLEAR aborted: active command still owns state")
+                return False
         return True
 
     def delete_attributes(design):
@@ -276,3 +281,4 @@ def install(m):
     m.run = run
     m.stop = stop
     log("CLEAR ALL + STATE DUMP READY")
+

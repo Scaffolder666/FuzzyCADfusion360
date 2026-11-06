@@ -212,7 +212,15 @@ def install(m):
         m._send_state()
 
     class DirectionalScaleInputChanged(adsk.core.InputChangedEventHandler):
+        def __init__(self, session):
+            super().__init__()
+            self.session = session
+
         def notify(self, args):
+            # Fusion may deliver callbacks after a successor command is created.
+            if (getattr(m, "_cmd_session", None) is not self.session
+                    or getattr(m, "_active_cmd", None) != self.session.get("cmd")):
+                return
             try:
                 m._inputs = args.inputs
                 cid = args.input.id
@@ -255,7 +263,15 @@ def install(m):
                 log("directional scale input failed\n{}".format(m.traceback.format_exc()))
 
     class DirectionalScalePreview(adsk.core.CommandEventHandler):
+        def __init__(self, session):
+            super().__init__()
+            self.session = session
+
         def notify(self, args):
+            # Fusion may deliver callbacks after a successor command is created.
+            if (getattr(m, "_cmd_session", None) is not self.session
+                    or getattr(m, "_active_cmd", None) != self.session.get("cmd")):
+                return
             try:
                 if m._pending and state.get("dir_axis"):
                     mark = sync_directional(state["dir_axis"])
@@ -265,7 +281,15 @@ def install(m):
                 log("directional scale preview failed\n{}".format(m.traceback.format_exc()))
 
     class DirectionalScaleExecute(adsk.core.CommandEventHandler):
+        def __init__(self, session):
+            super().__init__()
+            self.session = session
+
         def notify(self, args):
+            # Fusion may deliver callbacks after a successor command is created.
+            if (getattr(m, "_cmd_session", None) is not self.session
+                    or getattr(m, "_active_cmd", None) != self.session.get("cmd")):
+                return
             try:
                 if m._pending and state.get("dir_axis"):
                     sync_directional(state["dir_axis"])
@@ -276,7 +300,15 @@ def install(m):
                 log("directional scale execute failed\n{}".format(m.traceback.format_exc()))
 
     class DirectionalScaleDestroy(adsk.core.CommandEventHandler):
+        def __init__(self, session):
+            super().__init__()
+            self.session = session
+
         def notify(self, args):
+            # Fusion may deliver callbacks after a successor command is created.
+            if (getattr(m, "_cmd_session", None) is not self.session
+                    or getattr(m, "_active_cmd", None) != self.session.get("cmd")):
+                return
             try:
                 mid = m._live.get("scale_axis")
                 mark = m._find(mid) if mid is not None else None
@@ -291,6 +323,7 @@ def install(m):
             m._inputs = None
             m._active_cmd = None
             m._live = {}
+            m._cmd_session = None
 
     # ------------------------------------------------------------------
     # Axis Rotate: explicit two-step selection with automatic focus advance.
@@ -430,7 +463,15 @@ def install(m):
         m._send_state()
 
     class AxisRotateInputChanged(adsk.core.InputChangedEventHandler):
+        def __init__(self, session):
+            super().__init__()
+            self.session = session
+
         def notify(self, args):
+            # Fusion may deliver callbacks after a successor command is created.
+            if (getattr(m, "_cmd_session", None) is not self.session
+                    or getattr(m, "_active_cmd", None) != self.session.get("cmd")):
+                return
             try:
                 m._inputs = args.inputs
                 cid = args.input.id
@@ -474,7 +515,15 @@ def install(m):
                 log("axis rotate input failed\n{}".format(m.traceback.format_exc()))
 
     class AxisRotatePreview(adsk.core.CommandEventHandler):
+        def __init__(self, session):
+            super().__init__()
+            self.session = session
+
         def notify(self, args):
+            # Fusion may deliver callbacks after a successor command is created.
+            if (getattr(m, "_cmd_session", None) is not self.session
+                    or getattr(m, "_active_cmd", None) != self.session.get("cmd")):
+                return
             try:
                 if m._pending:
                     draw_axis_rotate_preview(sync_axis_rotate())
@@ -483,7 +532,15 @@ def install(m):
                 log("axis rotate preview failed\n{}".format(m.traceback.format_exc()))
 
     class AxisRotateExecute(adsk.core.CommandEventHandler):
+        def __init__(self, session):
+            super().__init__()
+            self.session = session
+
         def notify(self, args):
+            # Fusion may deliver callbacks after a successor command is created.
+            if (getattr(m, "_cmd_session", None) is not self.session
+                    or getattr(m, "_active_cmd", None) != self.session.get("cmd")):
+                return
             try:
                 if m._pending:
                     sync_axis_rotate()
@@ -494,7 +551,15 @@ def install(m):
                 log("axis rotate execute failed\n{}".format(m.traceback.format_exc()))
 
     class AxisRotateDestroy(adsk.core.CommandEventHandler):
+        def __init__(self, session):
+            super().__init__()
+            self.session = session
+
         def notify(self, args):
+            # Fusion may deliver callbacks after a successor command is created.
+            if (getattr(m, "_cmd_session", None) is not self.session
+                    or getattr(m, "_active_cmd", None) != self.session.get("cmd")):
+                return
             try:
                 mid = m._live.get("axis_rotate")
                 mark = m._find(mid) if mid is not None else None
@@ -509,6 +574,7 @@ def install(m):
             m._inputs = None
             m._active_cmd = None
             m._live = {}
+            m._cmd_session = None
 
     # ------------------------------------------------------------------
     # Command creation. Axis Rotate and Directional Scale are intentionally
@@ -526,6 +592,10 @@ def install(m):
                     cmd.okButtonText = "Add to panel"
                     inputs = cmd.commandInputs
                     m._inputs = inputs
+                    m._cmd_gen[0] += 1
+                    session = {"gen": m._cmd_gen[0], "cmd": self.cmd,
+                               "inputs": inputs, "live": m._live}
+                    m._cmd_session = session
 
                     sel = inputs.addSelectionInput(
                         "dsb", "Body", "Select the body to scale along X, Y, or Z")
@@ -553,10 +623,10 @@ def install(m):
                     axis_choice.isVisible = False
 
                     for handler, event in (
-                        (DirectionalScaleInputChanged(), cmd.inputChanged),
-                        (DirectionalScalePreview(), cmd.executePreview),
-                        (DirectionalScaleExecute(), cmd.execute),
-                        (DirectionalScaleDestroy(), cmd.destroy),
+                        (DirectionalScaleInputChanged(session), cmd.inputChanged),
+                        (DirectionalScalePreview(session), cmd.executePreview),
+                        (DirectionalScaleExecute(session), cmd.execute),
+                        (DirectionalScaleDestroy(session), cmd.destroy),
                     ):
                         event.add(handler)
                         m._handlers.append(handler)
@@ -576,6 +646,10 @@ def install(m):
                     cmd.okButtonText = "Add to panel"
                     inputs = cmd.commandInputs
                     m._inputs = inputs
+                    m._cmd_gen[0] += 1
+                    session = {"gen": m._cmd_gen[0], "cmd": self.cmd,
+                               "inputs": inputs, "live": m._live}
+                    m._cmd_session = session
 
                     bsel = inputs.addSelectionInput(
                         "arb", "1. Body", "First select the body to rotate")
@@ -599,10 +673,10 @@ def install(m):
                     ang.isEnabled = False
 
                     for handler, event in (
-                        (AxisRotateInputChanged(), cmd.inputChanged),
-                        (AxisRotatePreview(), cmd.executePreview),
-                        (AxisRotateExecute(), cmd.execute),
-                        (AxisRotateDestroy(), cmd.destroy),
+                        (AxisRotateInputChanged(session), cmd.inputChanged),
+                        (AxisRotatePreview(session), cmd.executePreview),
+                        (AxisRotateExecute(session), cmd.execute),
+                        (AxisRotateDestroy(session), cmd.destroy),
                     ):
                         event.add(handler)
                         m._handlers.append(handler)
@@ -634,3 +708,4 @@ def install(m):
         return result
 
     m.run = run
+

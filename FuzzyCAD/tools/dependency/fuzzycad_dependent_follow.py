@@ -454,6 +454,46 @@ def install(m):
     RIGID_TOOLS = ("move", "rotate")
     FLEX_TOOLS = ("scale", "scale_axis", "extrude")
 
+    def follow_scope_bodies(mark):
+        """Return (previously approved, added later) bodies that Accept will carry.
+
+        Reuse the existing proximity detector and saved creation-time tokens.
+        The viewport can inspect this exact scope without marking followers fuzzy.
+        This is proximity-based scope, not a mechanical-joint solver.
+        """
+        tool = mark.get("tool")
+        if tool not in ("move", "rotate", "scale", "scale_axis"):
+            return [], []
+        if tool in ("scale", "scale_axis") and not mark.get("scope_asked"):
+            return [], []
+        primary = m._body.get(mark.get("id"))
+        design = m._design()
+        if primary is None or design is None:
+            return [], []
+        related = resolve_token_bodies(design, mark.get("related_tokens") or [])
+        all_handles = list(mark.get("all_tokens_at_mark") or [])
+        original = resolve_token_bodies(design, all_handles)
+        try:
+            current = (detect_dependents(primary)
+                       if tool in ("move", "rotate")
+                       else detect_flex_deps(mark, primary))
+        except Exception:
+            current = []
+
+        approved, added_later = [], []
+        together = mark.get("move_scope", "only") == "together"
+        for body in current:
+            if contains_body(related, body):
+                if together:
+                    approved.append(body)
+            elif all_handles and not contains_body(original, body):
+                added_later.append(body)
+        return approved, added_later
+
+    # Shared scope for proposed-state inspection and final Accept; callers must
+    # never infer follower status from the appearance of an uncertainty mark.
+    m._follow_scope_bodies = follow_scope_bodies
+
     def accept(mark):
         tool = mark.get("tool")
 
@@ -475,37 +515,11 @@ def install(m):
             return old_accept(mark)
 
         if tool in RIGID_TOOLS:
-            primary = m._body.get(mark["id"])
             design = m._design()
-            scope = mark.get("move_scope", "only")
-            related_handles = list(mark.get("related_tokens", []) or [])
-            all_handles = list(mark.get("all_tokens_at_mark", []) or [])
-            related_snapshot = resolve_token_bodies(design, related_handles)
-            all_snapshot = resolve_token_bodies(design, all_handles)
-            specs = []
-            approved = 0
-            built_on = 0
-            try:
-                current = detect_dependents(primary)
-            except Exception:
-                current = []
-
-            for b in current:
-                was_related = contains_body(related_snapshot, b)
-                existed_at_mark = contains_body(all_snapshot, b)
-                if was_related:
-                    if scope == "together":
-                        specs.append((b, body_token(b)))
-                        approved += 1
-                elif all_handles and not existed_at_mark:
-                    # This body genuinely did not exist when the unresolved
-                    # decision was created and is now attached to the upstream
-                    # body. It is downstream work and must follow automatically.
-                    specs.append((b, body_token(b)))
-                    built_on += 1
-
+            approved_bodies, built_on_bodies = follow_scope_bodies(mark)
+            specs = [(b, body_token(b)) for b in approved_bodies + built_on_bodies]
             log("MOVE/ROTATE carry scope={} approved_neighbours={} built_on_top={}".format(
-                scope, approved, built_on))
+                mark.get("move_scope", "only"), len(approved_bodies), len(built_on_bodies)))
             ok = old_accept(mark)
             if ok and specs:
                 moved = carry_bodies(rigid_matrix(mark), specs, design)
@@ -516,31 +530,10 @@ def install(m):
             primary = m._body.get(mark["id"])
 
             if tool in ("scale", "scale_axis") and mark.get("scope_asked"):
-                design = m._design()
-                scope = mark.get("move_scope", "only")
-                related_handles = list(mark.get("related_tokens", []) or [])
-                all_handles = list(mark.get("all_tokens_at_mark", []) or [])
-                related_snapshot = resolve_token_bodies(design, related_handles)
-                all_snapshot = resolve_token_bodies(design, all_handles)
-                try:
-                    current = detect_flex_deps(mark, primary)
-                except Exception:
-                    current = []
-                chosen = []
-                attached = built_on = 0
-                for b in current:
-                    was_related = contains_body(related_snapshot, b)
-                    existed_at_mark = contains_body(all_snapshot, b)
-                    if was_related:
-                        if scope == "together":
-                            chosen.append(b)
-                            attached += 1
-                    elif all_handles and not existed_at_mark:
-                        chosen.append(b)
-                        built_on += 1
+                attached_bodies, built_on_bodies = follow_scope_bodies(mark)
                 log("SCALE carry scope={} attached={} built_on_top={}".format(
-                    scope, attached, built_on))
-                return apply_flex(mark, chosen)
+                    mark.get("move_scope", "only"), len(attached_bodies), len(built_on_bodies)))
+                return apply_flex(mark, attached_bodies + built_on_bodies)
 
             # Extrude (and any scale with no selection-time answer) keeps the
             # explicit confirmation path because no creation snapshot is available.
